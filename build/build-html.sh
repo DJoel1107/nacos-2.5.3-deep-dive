@@ -2,7 +2,7 @@
 # 批量将 Nacos 深度研究 MD 章节转为 guizang Swiss Style HTML
 set -euo pipefail
 
-REPO="/home/sandbox/.openclaw/workspace/repo"
+REPO="$(cd "$(dirname "$0")/.." && pwd)"
 TPL="$(dirname "$0")/pandoc-swiss-template.html"
 OUT="$REPO/chapter-html"
 ASSETS="$REPO/assets"
@@ -16,31 +16,54 @@ cat > "$TMPD/mermaid-snippet.html" <<'MERMAID'
   import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
   mermaid.initialize({
     startOnLoad: true,
-    theme: 'neutral',
+    theme: 'base',
     securityLevel: 'loose',
     fontFamily: '"Inter","Noto Sans SC","Helvetica Neue",Arial,sans-serif',
     themeVariables: {
+      fontSize: '15px',
       primaryColor: '#f0f0ee',
       primaryTextColor: '#0a0a0a',
       primaryBorderColor: '#002FA7',
-      lineColor: '#525252',
+      lineColor: '#8a8f99',
       secondaryColor: '#e8eaf6',
       tertiaryColor: '#fafaf8',
-      noteBkgColor: '#f0f0ee',
+      noteBkgColor: '#f4f6fb',
       noteBorderColor: '#002FA7',
       noteTextColor: '#0a0a0a',
       actorBkg: '#f0f0ee',
       actorBorder: '#002FA7',
       actorTextColor: '#0a0a0a',
-      signalColor: '#525252',
+      actorLineColor: '#c9cdd6',
+      signalColor: '#8a8f99',
       signalTextColor: '#0a0a0a',
       labelBoxBkgColor: '#e8eaf6',
       labelBoxBorderColor: '#002FA7',
       labelTextColor: '#0a0a0a',
       loopTextColor: '#0a0a0a',
-      sequenceNumberColor: '#ffffff'
+      activationBgColor: '#dbe3f5',
+      activationBorderColor: '#002FA7',
+      sequenceNumberColor: '#ffffff',
+      /* 时序图各部位字号 */
+      actorFontSize: '16px',
+      actorFontWeight: 600,
+      messageFontSize: '14px',
+      noteFontSize: '13px'
     },
-    sequence: { useMaxWidth: true, wrap: false, diagramMarginX: 8, diagramMarginY: 8 }
+    sequence: {
+      useMaxWidth: true,
+      wrap: true,
+      mirrorActors: false,
+      boxMargin: 14,
+      boxTextMargin: 6,
+      noteMargin: 12,
+      messageMargin: 42,
+      actorMargin: 64,
+      width: 170,
+      height: 50,
+      diagramMarginX: 16,
+      diagramMarginY: 14,
+      bottomMarginAdj: 10
+    }
   });
 </script>
 MERMAID
@@ -79,7 +102,7 @@ PY
     tag=""
   fi
 
-  echo "OK  $n -> $(basename "$html")  $(stat -c%s "$html") bytes${tag}"
+  echo "OK  $n -> $(basename "$html")  $(wc -c < "$html" | tr -d ' ') bytes${tag}"
 done
 
 echo "--- 完成 ---"
