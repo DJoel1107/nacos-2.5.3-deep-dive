@@ -12,42 +12,39 @@ Nacos 的核心定位可概括为三大能力域：服务发现、配置管理�
 
 **【核心类关系图】**
 
-```
-/* 图 1-1：Nacos 2.5.3 三大核心能力域与外部生态集成全景（基于 Nacos 2.5.3 源码） */
-                          ┌────────────────────────────┐
-                          │      Spring Cloud Alibaba    │
-                          │  (服务发现 + 配置管理)      │
-                          └────────────┬───────────────┘
-                                       │
-                          ┌────────────▼───────────────┐
-                          │          Dubbo               │
-                          │  (RPC 服务注册与发现)        │
-                          └────────────┬───────────────┘
-                                       │
-┌─────────────────────────────────────┼─────────────────────────────────────┐
-│                               Nacos 2.5.3                                   │
-│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────┐        │
-│  │   服务发现       │  │   配置管理       │  │   服务治理       │        │
-│  │  (Naming模块)   │  │  (Config模块)    │  │  (Sentinel集成)  │        │
-│  │  · 服务注册      │  │  · 配置发布      │  │  · 流量控制      │        │
-│  │  · 服务发现      │  │  · 配置订阅      │  │  · 熔断降级      │        │
-│  │  · 健康检查      │  │  · 灰度发布      │  │  · 负载均衡      │        │
-│  │  · AP(Distro)     │  │  · 历史回滚      │  │  · 热点防护      │        │
-│  │  · CP(JRaft)      │  │  · Beta/Tag发布   │  │  · 系统自适应    │        │
-│  └────────┬─────────┘  └────────┬─────────┘  └────────┬─────────┘        │
-│           │                     │                     │                  │
-│  ┌────────▼─────────────────────▼─────────────────────▼──────────┐     │
-│  │          底层能力：gRPC双向流 / HTTP REST / DNS-F              │     │
-│  │          存储后端：Derby（内置）/ MySQL（生产集群）            │     │
-│  │          一致性协议：Distro（AP）/ JRaft（CP）                  │     │
-│  └──────────────────────────────────────────────────────────────────┘     │
-└───────────────────────────────────────────────────────────────────────────┘
-                                       │
-                          ┌────────────▼───────────────┐
-                          │         gRPC Ecosystem         │
-                          │  (Bi-directional Stream)      │
-                          └────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-1</span><span class="tt">Nacos 2.5.3 三大核心能力域与外部生态集成全景</span><span class="src">基于 Nacos 2.5.3 源码</span></div>
+<div class="dgm-eco">
+<div class="dgm-ecochip"><b>Spring Cloud Alibaba</b><span>服务发现 + 配置管理</span></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-ecochip"><b>Dubbo</b><span>RPC 服务注册与发现</span></div>
+<div class="dgm-varrow dgm-varrow--accent"></div>
+</div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Nacos 2.5.3</span><span class="s">Dynamic Naming &amp; Configuration Service</span><span class="tag">ONE MIDDLEWARE</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="k">Discovery</span><span class="t">服务发现</span><span class="m">naming 模块</span></div><ul><li>服务注册</li><li>服务发现</li><li>健康检查</li><li>AP（Distro 协议）</li><li>CP（JRaft 协议）</li></ul></div>
+<div class="dgm-card dgm-card--bright"><div class="h"><span class="k">Configuration</span><span class="t">配置管理</span><span class="m">config 模块</span></div><ul><li>配置发布</li><li>配置订阅</li><li>灰度发布</li><li>历史回滚</li><li>Beta / Tag 发布</li></ul></div>
+<div class="dgm-card dgm-card--ink"><div class="h"><span class="k">Governance</span><span class="t">服务治理</span><span class="m">Sentinel 集成</span></div><ul><li>流量控制</li><li>熔断降级</li><li>负载均衡</li><li>热点防护</li><li>系统自适应保护</li></ul></div>
+</div>
+<div class="dgm-layer">
+<div class="dgm-layer-label"><span class="zh">底层能力</span><span class="en">Foundation</span></div>
+<div class="dgm-layer-body">
+<div class="dgm-cols dgm-cols-3">
+<div><div class="dgm-chip" style="border:none;padding:0 0 4px;font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-helper);text-transform:uppercase;">通信协议</div><div class="dgm-chips"><span class="dgm-chip"><b>gRPC</b> 双向流</span><span class="dgm-chip">HTTP REST</span><span class="dgm-chip">DNS-F</span></div></div>
+<div><div class="dgm-chip" style="border:none;padding:0 0 4px;font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-helper);text-transform:uppercase;">存储后端</div><div class="dgm-chips"><span class="dgm-chip">Derby（内置）</span><span class="dgm-chip">MySQL（生产集群）</span></div></div>
+<div><div class="dgm-chip" style="border:none;padding:0 0 4px;font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.1em;color:var(--text-helper);text-transform:uppercase;">一致性协议</div><div class="dgm-chips"><span class="dgm-chip">Distro <span class="dgm-badge dgm-badge--ap">AP</span></span><span class="dgm-chip">JRaft <span class="dgm-badge dgm-badge--cp">CP</span></span></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="dgm-eco">
+<div class="dgm-varrow"></div>
+<div class="dgm-ecochip"><b>gRPC Ecosystem</b><span>Bi-directional Stream 长连接推送</span></div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -101,29 +98,39 @@ Nacos 1.x 基于 HTTP 短连接 + UDP 广播架构，存在连接开销大（每
 
 **【核心类关系图】**
 
-```
-/* 图 1-2：Nacos 1.x vs 2.x 架构对比全景 */
-┌─────────────────────────────────────────────────────────────────┐
-│                     Nacos 1.x (HTTP 短连接)                      │
-│  ┌──────────┐    HTTP Request     ┌──────────────────────┐  │
-│  │  Client  │ ─────────────────▶ │  Nacos Server         │  │
-│  │  (SDK)   │ ◀────────────────── │  HTTP REST API        │  │
-│  │          │    HTTP Response    │  (无连接状态)         │  │
-│  └──────────┘                    │  UDP Broadcast ──▶ ?   │  │
-│                                  │  (不可靠推送)         │  │
-│  每次请求 = TCP握手 + TLS握手   └──────────────────────┘  │
-│  客户端轮询配置变更 / 服务列表                             │
-├─────────────────────────────────────────────────────────────────┤
-│                     Nacos 2.x (gRPC 长连接)                      │
-│  ┌──────────┐    gRPC Bi-di Stream   ┌──────────────────┐   │
-│  │  Client  │ ◄═══════════════════▶ │  Nacos Server     │   │
-│  │  (SDK)   │    一条长连接          │  GrpcSdkServer   │   │
-│  │          │    服务端主动推送       │  ConnectionMgr   │   │
-│  │          │    客户端能力协商       │  ClientAbilities │   │
-│  └──────────┘                        └──────────────────┘   │
-│  一次握手, 后续复用, 服务端推送延迟 < 1ms              │
-└─────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-2</span><span class="tt">Nacos 1.x vs 2.x 架构对比全景</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head dgm-panel-head--grey"><span class="t">Nacos 1.x</span><span class="s">HTTP 短连接</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;">
+<div class="dgm-card"><div class="h"><span class="t">Client</span><span class="m">SDK</span></div></div>
+<div class="dgm-link" style="justify-content:center;">
+<span class="lbl">HTTP Request →</span>
+<span class="lbl">← HTTP Response</span>
+</div>
+<div class="dgm-card"><div class="h"><span class="t">Nacos Server</span><span class="m">HTTP REST API</span></div><ul><li>无连接状态</li><li>UDP Broadcast 推送（不可靠）</li></ul></div>
+</div>
+<div class="dgm-note"><b>痛点：</b>每次请求 = TCP 握手 + TLS 握手；客户端轮询配置变更 / 服务列表，延迟高且浪费带宽</div>
+</div>
+</div>
+<div class="dgm-vs-divider"><span>演进</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Nacos 2.x</span><span class="s">gRPC 长连接</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;">
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="t">Client</span><span class="m">SDK</span></div></div>
+<div class="dgm-link" style="justify-content:center;">
+<span class="lbl" style="color:var(--accent);font-weight:600;">gRPC Bi-di Stream</span>
+<div style="display:flex;flex-direction:column;gap:4px;align-items:center;padding:6px 0;"><div class="dgm-harrow dgm-harrow--accent"></div><div class="dgm-harrow dgm-harrow--accent dgm-harrow--left"></div></div>
+<span class="lbl">一条长连接 · 双向推送</span>
+</div>
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="t">Nacos Server</span><span class="m">GrpcSdkServer</span></div><ul><li>ConnectionMgr 连接管理</li><li>ClientAbilities 能力协商</li></ul></div>
+</div>
+<div class="dgm-note"><b>收益：</b>一次握手，后续复用；服务端主动推送，延迟 &lt; 1ms</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -225,53 +232,60 @@ Nacos 2.5.3 采用严格的四层架构设计：接入层（Access Layer）、�
 
 **【核心类关系图】**
 
-```
-/* 图 1-3：Nacos 2.5.3 四层架构全景图 */
-┌───────────────────────────────────────────────────────────────────┐
-│                         接入层 (Access Layer)                      │
-│ ┌──────────────────────┐  ┌──────────────────────┐            │
-│ │   GrpcSdkServer     │  │   HTTP REST API     │            │
-│ │  (core/remote/grpc) │  │ (naming/controllers │            │
-│ │   Bi-directional    │  │  config/controllers)│            │
-│ │   Stream 推送       │  │  OpenAPI 兼容      │            │
-│ └──────────┬─────────┘  └──────────┬─────────┘            │
-├────────────┼───────────────────────┼──────────────────────────┤
-│            │       业务层 (Business Layer)                       │
-│ ┌──────────▼──────────┐  ┌───────▼────────────────┐        │
-│ │   Naming Module     │  │   Config Module        │        │
-│ │  (naming/ 247files) │  │  (config/ 217 files)  │        │
-│ │  InstanceController │  │  ConfigController     │        │
-│ │  ServiceManager     │  │  ConfigCacheService   │        │
-│ │  HealthCheck        │  │  LongPollingService  │        │
-│ │ ClientOperationService │  │  AsyncNotifyService  │        │
-│ └──────────┬─────────┘  └───────┬────────────────┘        │
-├────────────┼───────────────────────┼──────────────────────────┤
-│            │       引擎层 (Engine Layer)                        │
-│ ┌──────────▼──────────────────────────▼───────────────────┐   │
-│ │                  Core Module (core/ 230 files)            │   │
-│ │ ┌────────────┐ ┌─────────────┐ ┌───────────────────┐ │   │
-│ │ │ Consistency │ │  Cluster   │ │  Remote (gRPC)    │ │   │
-│ │ │ Service    │ │  Member    │ │  ConnectionMgr    │ │   │
-│ │ │ ┌────────┐│ │  Manager   │ │  GrpcSdkServer   │ │   │
-│ │ │ │ Distro ││ │  ServerList│ │  GrpcClusterSrv │ │   │
-│ │ │ │ (AP)   ││ │  Finder    │ │  RequestAcceptor │ │   │
-│ │ │ ├────────┤│ └─────────────┘ └───────────────────┘ │   │
-│ │ │ │ JRaft  ││                                        │   │
-│ │ │ │ (CP)   ││  NotifyCenter  +  NamespaceManager      │   │
-│ │ │ └────────┘│                                        │   │
-│ │ └────────────┘                                        │   │
-│ └───────────────────────┬───────────────────────────────┘   │
-├─────────────────────────┼──────────────────────────────────────┤
-│                         │  存储层 (Storage Layer)               │
-│ ┌───────────────────────▼───────────────────────────────┐   │
-│ │            persistence/ 模块 (2.5.3 新增, 37 files)      │   │
-│ │ ┌──────────────────┐  ┌──────────────────────────────┐ │   │
-│ │ │  Embedded Derby  │  │  External MySQL (生产集群)  │ │   │
-│ │ │  (单机内置)     │  │  主从复制 + 读写分离       │ │   │
-│ │ └──────────────────┘  └──────────────────────────────┘ │   │
-│ └──────────────────────────────────────────────────────┘   │
-└───────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-3</span><span class="tt">Nacos 2.5.3 四层架构全景图</span></div>
+<div class="dgm-layer">
+<div class="dgm-layer-label"><span class="zh">接入层</span><span class="en">Access Layer</span></div>
+<div class="dgm-layer-body">
+<div class="dgm-cols dgm-cols-2">
+<div class="dgm-card"><div class="h"><span class="t">GrpcSdkServer</span><span class="m">core/remote/grpc</span></div><ul><li>Bi-directional Stream 推送</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">HTTP REST API</span><span class="m">naming/controllers · config/controllers</span></div><ul><li>OpenAPI 兼容</li></ul></div>
+</div>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-layer">
+<div class="dgm-layer-label"><span class="zh">业务层</span><span class="en">Business Layer</span></div>
+<div class="dgm-layer-body">
+<div class="dgm-cols dgm-cols-2">
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="t">Naming Module</span><span class="m">naming/ 247 files</span></div><ul><li>InstanceController</li><li>ServiceManager</li><li>HealthCheck</li><li>ClientOperationService</li></ul></div>
+<div class="dgm-card dgm-card--bright"><div class="h"><span class="t">Config Module</span><span class="m">config/ 217 files</span></div><ul><li>ConfigController</li><li>ConfigCacheService</li><li>LongPollingService</li><li>AsyncNotifyService</li></ul></div>
+</div>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-layer">
+<div class="dgm-layer-label"><span class="zh">引擎层</span><span class="en">Engine Layer</span></div>
+<div class="dgm-layer-body">
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">Core Module</span><span class="s">core/ 230 files</span></div>
+<div class="dgm-box-b">
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-card"><div class="h"><span class="t">Consistency Service</span></div><ul><li>Distro（AP）</li><li>JRaft（CP）</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">Cluster</span></div><ul><li>Member Manager</li><li>ServerList Finder</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">Remote（gRPC）</span></div><ul><li>ConnectionMgr</li><li>GrpcSdkServer / GrpcClusterSrv</li><li>RequestAcceptor</li></ul></div>
+</div>
+<div class="dgm-note">横切组件：<b>NotifyCenter</b> 事件总线 + <b>NamespaceManager</b> 命名空间管理</div>
+</div>
+</div>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-layer">
+<div class="dgm-layer-label"><span class="zh">存储层</span><span class="en">Storage Layer</span></div>
+<div class="dgm-layer-body">
+<div class="dgm-box dgm-box-h--blue">
+<div class="dgm-box-h dgm-box-h--blue"><span class="t">persistence/ 模块</span><span class="s">2.5.3 新增 · 37 files</span><span class="dgm-badge dgm-badge--new" style="margin-left:auto;">NEW</span></div>
+<div class="dgm-box-b">
+<div class="dgm-cols dgm-cols-2">
+<div class="dgm-card"><div class="h"><span class="t">Embedded Derby</span><span class="m">单机内置</span></div></div>
+<div class="dgm-card"><div class="h"><span class="t">External MySQL</span><span class="m">生产集群</span></div><ul><li>主从复制 + 读写分离</li></ul></div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -388,65 +402,57 @@ Nacos 2.5.3 采用 Maven 多模块工程结构，共 22 个 Maven 模块（相�
 
 **【核心类关系图】**
 
-```
-/* 图 1-4：Nacos 2.5.3 Maven 模块依赖关系图 */
-                        ┌────────────────────────┐
-                        │   nacos (根 POM)       │
-                        │   revision: 2.5.3      │
-                        └───────────┬────────────┘
-                                    │
-            ┌───────────────────────┼───────────────────────┐
-            │                       │                       │
-   ┌────────▼────────┐  ┌───────▼────────┐  ┌────────▼────────┐
-   │   api (171 files) │  │ common (210)    │  │  client (136)    │
-   │   gRPC Proto定义  │  │  通用工具类     │  │  ConfigService   │
-   │   SPI 接口定义   │  │  NotifyCenter   │  │  NamingService   │
-   └────────┬────────┘  └───────┬────────┘  └────────┬────────┘
-            │                       │                       │
-   ┌────────▼────────────────────────▼───────────────────────▼──┐
-   │                     业务模块                                  │
-   │  ┌────────────────────┐  ┌────────────────────┐            │
-   │  │ naming (247)      │  │ config (217)      │            │
-   │  │ 服务注册/发现     │  │ 配置发布/订阅     │            │
-   │  │ 健康检查/推送    │  │ 长轮询/灰度发布   │            │
-   │  └────────┬─────────┘  └────────┬─────────┘            │
-   │           │                     │                          │
-   │  ┌────────▼─────────────────────▼──────────┐            │
-   │  │           core (230)                      │            │
-   │  │  集群管理 / gRPC通信 / 连接管理         │            │
-   │  │  一致性协议路由 / 命名空间管理           │            │
-   │  └────────────────┬──────────────────────────┘            │
-   └─────────────────┼──────────────────────────────────────────┘
-                     │
-   ┌─────────────────┼──────────────────────────────────────────┐
-   │                 │         基础设施模块                    │
-   │  ┌──────────────▼──────────────┐  ┌────────────────┐ │
-   │  │ persistence (37) [2.5.3新增]  │  │ auth (27)      │ │
-   │  │ 数据源管理 / Derby/MySQL    │  │ JWT/AK-SK/RBAC│ │
-   │  └─────────────────────────────┘  └────────────────┘ │
-   │  ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
-   │  │ plugin (7)   │ │ plugin-def-  │ │ address (8) │  │
-   │  │ SPI 扩展点   │ │ impl (60)    │ │ 节点寻址    │  │
-   │  └──────────────┘ └──────────────┘ └────────────┘  │
-   │  ┌──────────────┐ ┌──────────────┐ ┌────────────┐  │
-   │  │ istio (30)   │ │ prometheus(7)│ │ sys (19)    │  │
-   │  │ MCP over gRPC│ │ Metrics 导出  │ │ 系统过滤器  │  │
-   │  └──────────────┘ └──────────────┘ └────────────┘  │
-   │  ┌────────────────────────────────────────────────────┐  │
-   │  │ logger-adapter-impl (5) [2.5.3新增]           │  │
-   │  │ log4j2 日志适配器实现                           │  │
-   │  └────────────────────────────────────────────────────┘  │
-   └──────────────────────────────────────────────────────────┘
-                     │
-   ┌─────────────────▼──────────────────────────────────────────┐
-   │                   辅助模块                              │
-   │  ┌──────────────┐  ┌──────────────┐  ┌────────────┐  │
-   │  │ console (12) │  │ console-ui   │  │distribution │  │
-   │  │ 启动入口     │  │ 前端界面     │  │ 打包部署    │  │
-   │  │ Nacos.java   │  │              │  │             │  │
-   │  └──────────────┘  └──────────────┘  └────────────┘  │
-   └──────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-4</span><span class="tt">Nacos 2.5.3 Maven 模块依赖关系图</span><span class="src">自上而下 = 依赖方向</span></div>
+<div class="dgm-eco"><div class="dgm-ecochip"><b>nacos（根 POM）</b><span>revision: 2.5.3 · 统一依赖版本管理</span></div><div class="dgm-varrow"></div></div>
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-card"><div class="h"><span class="t">api</span><span class="m">171 files</span></div><ul><li>gRPC Proto 定义</li><li>SPI 接口定义</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">common</span><span class="m">210 files</span></div><ul><li>通用工具类</li><li>NotifyCenter</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">client</span><span class="m">136 files</span></div><ul><li>ConfigService</li><li>NamingService</li></ul></div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">业务模块</span><span class="s">依赖 api / common / client</span></div>
+<div class="dgm-box-b">
+<div class="dgm-cols dgm-cols-2">
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="t">naming</span><span class="m">247 files</span></div><ul><li>服务注册 / 发现</li><li>健康检查 / 推送</li></ul></div>
+<div class="dgm-card dgm-card--bright"><div class="h"><span class="t">config</span><span class="m">217 files</span></div><ul><li>配置发布 / 订阅</li><li>长轮询 / 灰度发布</li></ul></div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-box"><div class="dgm-box-h"><span class="t">core</span><span class="s">230 files</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">集群管理 / gRPC 通信 / 连接管理 / 一致性协议路由 / 命名空间管理</div></div></div>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">基础设施模块</span></div>
+<div class="dgm-box-b">
+<div class="dgm-cols dgm-cols-4">
+<div class="dgm-card"><div class="h"><span class="t">persistence</span><span class="m">37 files</span> <span class="dgm-badge dgm-badge--new">2.5.3 新增</span></div><ul><li>数据源管理</li><li>Derby / MySQL</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">auth</span><span class="m">27 files</span></div><ul><li>JWT / AK-SK / RBAC</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">plugin</span><span class="m">7 files</span></div><ul><li>SPI 扩展点</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">plugin-default-impl</span><span class="m">60 files</span></div></div>
+</div>
+<div class="dgm-cols dgm-cols-4">
+<div class="dgm-card"><div class="h"><span class="t">address</span><span class="m">8 files</span></div><ul><li>节点寻址</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">istio</span><span class="m">30 files</span></div><ul><li>MCP over gRPC</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">prometheus</span><span class="m">7 files</span></div><ul><li>Metrics 导出</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">sys</span><span class="m">19 files</span></div><ul><li>系统过滤器</li></ul></div>
+</div>
+<div class="dgm-cols"><div class="dgm-card"><div class="h"><span class="t">logger-adapter-impl</span><span class="m">5 files</span> <span class="dgm-badge dgm-badge--new">2.5.3 新增</span></div><ul><li>log4j2 日志适配器实现</li></ul></div></div>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">辅助模块</span></div>
+<div class="dgm-box-b">
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-card"><div class="h"><span class="t">console</span><span class="m">12 files</span></div><ul><li>启动入口 Nacos.java</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">console-ui</span></div><ul><li>前端界面</li></ul></div>
+<div class="dgm-card"><div class="h"><span class="t">distribution</span></div><ul><li>打包部署</li></ul></div>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -509,17 +515,15 @@ Nacos 2.5.3 相比 2.2.3，升级了以下关键依赖版本：
 
 新增模块依赖：
 
-```
-persistence/
-├── configuration/       # 数据源配置 + 存储条件注解
-├── datasource/        # DataSourceService 接口 + DynamicDataSource
-├── model/            # 分页模型 + Derby 事件
-├── monitor/          # 数据源 Metrics 监控
-└── repository/       # 嵌入式 Derby 存储实现
+<div class="dgm-tree"><span class="new">persistence/</span>                          <span class="cmt"># 2.5.3 新增模块</span>
+├── <span class="dir">configuration/</span>   <span class="cmt"># 数据源配置 + 存储条件注解</span>
+├── <span class="dir">datasource/</span>      <span class="cmt"># DataSourceService 接口 + DynamicDataSource</span>
+├── <span class="dir">model/</span>           <span class="cmt"># 分页模型 + Derby 事件</span>
+├── <span class="dir">monitor/</span>         <span class="cmt"># 数据源 Metrics 监控</span>
+└── <span class="dir">repository/</span>      <span class="cmt"># 嵌入式 Derby 存储实现</span>
 
-logger-adapter-impl/
-└── log4j2-adapter/  # Log4j2 日志适配器（实现 common 的 SPI 接口）
-```
+<span class="new">logger-adapter-impl/</span>                   <span class="cmt"># 2.5.3 新增模块</span>
+└── <span class="dir">log4j2-adapter/</span>  <span class="cmt"># Log4j2 日志适配器（实现 common 的 SPI 接口）</span></div>
 
 **【trade-off 分析】**
 
@@ -551,47 +555,46 @@ Nacos 2.5.3 服务端基于 Spring Boot 2.7.18 构建。启动入口 `Nacos` 类
 
 **【核心类关系图】**
 
-```
-/* 图 1-5：Nacos 2.5.3 启动类与自动配置机制 */
-┌────────────────────────────────────────────────────────────┐
-│                  Nacos.java (console/)                       │
-│  @SpringBootApplication                                │
-│  @ComponentScan(basePackages = "com.alibaba.nacos",   │
-│    excludeFilters = {                                   │
-│      @Filter(type = CUSTOM,                             │
-│        classes = {NacosTypeExcludeFilter.class}),       │
-│      @Filter(type = CUSTOM,                             │
-│        classes = {TypeExcludeFilter.class}),            │
-│      @Filter(type = CUSTOM,                             │
-│        classes = {AutoConfigurationExcludeFilter.class}) │
-│  })                                                    │
-│  @ServletComponentScan                                  │
-│  public static void main(String[] args)                 │
-│    → SpringApplication.run(Nacos.class, args)          │
-└──────────────────────┬─────────────────────────────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   Spring Boot 启动流程    │
-          │   1. 容器初始化           │
-          │   2. Environment 准备      │
-          │   3. @ComponentScan 扫描   │
-          │      └─ NacosTypeExclude  │
-          │         Filter 过滤模块    │
-          │   4. @EnableAutoConfig    │
-          │      └─ spring.factories  │
-          │         加载各模块配置     │
-          └────────────┬────────────┘
-                       │
-          ┌────────────▼────────────┐
-          │   各模块自动配置类加载     │
-          │   ├─ naming/               │
-          │   ├─ config/               │
-          │   ├─ core/                │
-          │   ├─ auth/                │
-          │   ├─ persistence/          │
-          │   └─ ...                 │
-          └──────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-5</span><span class="tt">Nacos 2.5.3 启动类与自动配置机制</span><span class="src">自上而下 = 启动顺序</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Nacos.java</span><span class="s">console/</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-kv">
+<li><span class="fld">@SpringBootApplication</span></li>
+<li><span class="fld">@ComponentScan</span><span class="typ">(basePackages = "com.alibaba.nacos"</span>，排除三类 Filter：<span class="fld">NacosTypeExcludeFilter</span> / <span class="fld">TypeExcludeFilter</span> / <span class="fld">AutoConfigurationExcludeFilter</span><span class="typ">)</span></li>
+<li><span class="fld">@ServletComponentScan</span></li>
+<li><span class="fld">main(args)</span> → <span class="fld">SpringApplication.run(Nacos.class, args)</span></li>
+</div>
+</div>
+</div>
+<div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Spring Boot 启动流程</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-stages">
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">容器初始化</div><div class="sd">SpringApplication.run() → ApplicationContext 创建</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">Environment 准备</div><div class="sd">加载 application.properties 配置</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">@ComponentScan 扫描</div><div class="sd"><code>NacosTypeExcludeFilter</code> 按模块过滤扫描范围</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">@EnableAutoConfiguration</div><div class="sd">通过 <code>spring.factories</code> 加载各模块自动配置类</div></div></div>
+</div>
+</div>
+</div>
+<div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">各模块自动配置类加载</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-chips">
+<span class="dgm-chip"><b>naming/</b></span>
+<span class="dgm-chip"><b>config/</b></span>
+<span class="dgm-chip"><b>core/</b></span>
+<span class="dgm-chip"><b>auth/</b></span>
+<span class="dgm-chip"><b>persistence/</b></span>
+<span class="dgm-chip">…</span>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -710,32 +713,24 @@ Nacos 2.5.3 支持各业务模块独立启动——除了启动完整 Nacos 服�
 
 **【核心类关系图】**
 
-```
-/* 图 1-6：Nacos 2.5.3 模块独立启动机制 */
-┌────────────────────────────────────────────────────────────┐
-│                   Nacos.java (完整启动)                    │
-│  @SpringBootApplication                                  │
-│  @ComponentScan("com.alibaba.nacos")                    │
-│  └─ 加载全部模块 (naming + config + core + ...)       │
-└────────────────────────────────────────────────────────────┘
-                       │
-          ┌────────────┼────────────┐
-          │            │            │
-┌─────────▼──────┐ ┌──▼────────────┐ ┌▼──────────────────┐
-│ NamingApp.java │ │ConfigApp.java │ │ (其他独立启动类) │
-│ @SpringBootApp │ │@SpringBootApp│ │                    │
-│ @ComponentScan │ │@ComponentScan│ │                    │
-│ ("com.alibaba │ │("com.alibaba │ │                    │
-│  .nacos.naming│ │ .nacos.config│ │                    │
-│  .nacos.core") │ │ .nacos.core")│ │                    │
-│                │ │              │ │                    │
-│ 仅加载:        │ │ 仅加载:      │ │                    │
-│ · naming       │ │ · config     │ │                    │
-│ · core（部分）  │ │ · core（部分）│ │                    │
-│ · common       │ │ · common     │ │                    │
-│ · api         │ │ · api       │ │                    │
-└────────────────┘ └──────────────┘ └──────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-6</span><span class="tt">Nacos 2.5.3 模块独立启动机制</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Nacos.java</span><span class="s">完整启动</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-kv">
+<li><span class="fld">@SpringBootApplication</span></li>
+<li><span class="fld">@ComponentScan("com.alibaba.nacos")</span> → 加载全部模块（naming + config + core + …）</li>
+</div>
+</div>
+</div>
+<div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">按启动类拆分扫描范围</span></div>
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="t">NamingApp.java</span><span class="m">@SpringBootApplication</span></div><ul><li>@ComponentScan("com.alibaba.nacos.naming" + "com.alibaba.nacos.core")</li></ul><div class="dgm-box-b" style="padding-top:0;"><div class="dgm-note"><b>仅加载：</b>naming · core（部分）· common · api</div></div></div>
+<div class="dgm-card dgm-card--bright"><div class="h"><span class="t">ConfigApp.java</span><span class="m">@SpringBootApplication</span></div><ul><li>@ComponentScan("com.alibaba.nacos.config" + "com.alibaba.nacos.core")</li></ul><div class="dgm-box-b" style="padding-top:0;"><div class="dgm-note"><b>仅加载：</b>config · core（部分）· common · api</div></div></div>
+<div class="dgm-card dgm-card--ink"><div class="h"><span class="t">其他独立启动类</span></div><ul><li>按同样模式缩小扫描范围</li><li>实现单模块轻量部署</li></ul></div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -802,44 +797,22 @@ Nacos 2.5.3 的启动初始化是一个严格分阶段的过程：从 Spring 容
 
 **【核心类关系图】**
 
-```
-/* 图 1-7：Nacos 2.5.3 启动初始化 7 阶段流程 */
-┌─────────────────────────────────────────────────────────────────┐
-│ 阶段 1: 容器初始化 (Container Initialization)              │
-│ SpringApplication.run() → ApplicationContext 创建            │
-│ → 加载 application.properties 配置                           │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 2: 环境准备 (Environment Preparation)                   │
-│ → NacosEnvironment 初始化                                   │
-│ → ${nacos.home} 目录创建 (/data/nacos/)                    │
-│ → Derby 嵌入式数据库初始化（如使用内置存储）               │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 3: 集群成员加载 (Cluster Member Loading)               │
-│ → ServerMemberManager.init()                                │
-│ → cluster.conf 集群节点列表加载                             │
-│ → ServerListManager 服务端地址列表初始化                     │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 4: 一致性协议启动 (Consistency Protocol Init)          │
-│ → RaftCore.init() — JRaft Leader 选举 + 日志回放          │
-│ → DistroProtocol.init() — 一致性哈希环构建                  │
-│ → EphemeralClientOperationServiceImpl（临时）/ PersistentClientOperationServiceImpl（持久） — AP/CP 路由就绪             │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 5: 通信层启动 (Communication Layer Start)               │
-│ → GrpcSdkServer.start() — gRPC SDK 服务端口绑定            │
-│ → GrpcClusterServer.start() — gRPC 集群同步端口绑定        │
-│ → ConnectionManager.init() — 连接管理器初始化                │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 6: 业务模块加载 (Business Module Loading)               │
-│ → NamingModule 注册服务注册 API                             │
-│ → ConfigModule 注册配置管理 API                             │
-│ → AuthModule 注册认证 API                                   │
-├─────────────────────────────────────────────────────────────────┤
-│ 阶段 7: HTTP 服务暴露 (HTTP Service Exposure)               │
-│ → EmbeddedTomcat 绑定 server.port (默认 8848)               │
-│ → Servlet 注册：InstanceController / ConfigController         │
-│ → ApplicationReadyEvent 发布 → 服务就绪                       │
-└─────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-7</span><span class="tt">Nacos 2.5.3 启动初始化 7 阶段流程</span><span class="src">顺序执行</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-body" style="gap:0;">
+<div class="dgm-stages">
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">容器初始化<span class="en">Container Initialization</span></div><div class="sd"><code>SpringApplication.run()</code> → ApplicationContext 创建 → 加载 application.properties 配置</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">环境准备<span class="en">Environment Preparation</span></div><div class="sd">NacosEnvironment 初始化 → <code>${nacos.home}</code> 目录创建（/data/nacos/）→ Derby 嵌入式数据库初始化（如使用内置存储）</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">集群成员加载<span class="en">Cluster Member Loading</span></div><div class="sd"><code>ServerMemberManager.init()</code> → cluster.conf 集群节点列表加载 → ServerListManager 服务端地址列表初始化</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">一致性协议启动<span class="en">Consistency Protocol Init</span></div><div class="sd"><code>RaftCore.init()</code> — JRaft Leader 选举 + 日志回放；<code>DistroProtocol.init()</code> — 一致性哈希环构建；AP/CP 路由就绪</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">通信层启动<span class="en">Communication Layer Start</span></div><div class="sd"><code>GrpcSdkServer.start()</code> — gRPC SDK 服务端口绑定；<code>GrpcClusterServer.start()</code> — gRPC 集群同步端口绑定；<code>ConnectionManager.init()</code> — 连接管理器初始化</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">业务模块加载<span class="en">Business Module Loading</span></div><div class="sd">NamingModule 注册服务注册 API；ConfigModule 注册配置管理 API；AuthModule 注册认证 API</div></div></div>
+<div class="dgm-stage"><span class="sn"></span><div><div class="st">HTTP 服务暴露<span class="en">HTTP Service Exposure</span></div><div class="sd">EmbeddedTomcat 绑定 <code>server.port</code>（默认 8848）→ Servlet 注册：InstanceController / ConfigController → <code>ApplicationReadyEvent</code> 发布，服务就绪</div></div></div>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -958,42 +931,47 @@ Nacos 2.x 的核心通信基于 gRPC，采用双通道架构：`GrpcSdkServer`�
 
 **【核心类关系图】**
 
-```
-/* 图 1-8：Nacos 2.5.3 gRPC 双通道架构 */
-┌────────────────────────────────────────────────────────────┐
-│                    Nacos Server                              │
-│                                                            │
-│  ┌──────────────────────┐  ┌──────────────────────┐        │
-│  │   GrpcSdkServer     │  │ GrpcClusterServer    │        │
-│  │   port: 8848+1000   │  │ port: 8848+2000     │        │
-│  │   = 9848            │  │ = 10848              │        │
-│  │                      │  │                      │        │
-│  │  ┌────────────────┐  │  │  ┌────────────────┐  │        │
-│  │  │ BiRequestStream │  │  │ │ ClusterSync    │  │        │
-│  │  │ Acceptor       │  │  │ │ RequestHandler  │  │        │
-│  │  └───────┬────────┘  │  │ └───────┬────────┘  │        │
-│  │          │           │  │          │           │        │
-│  │  ┌───────▼────────┐  │  │  ┌───────▼────────┐  │        │
-│  │  │ GrpcConnection  │  │  │  │ GrpcConnection  │  │        │
-│  │  │ (per client)   │  │  │  │ (per node)     │  │        │
-│  │  └────────────────┘  │  │  └────────────────┘  │        │
-│  └──────────────────────┘  └──────────────────────┘        │
-│                                                            │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │              BaseGrpcServer                          │    │
-│  │  · start() — 绑定端口 + 拦截器注册               │    │
-│  │  · addInterceptor() — 参数校验/认证过滤            │    │
-│  │  · handleRequest() — 请求分发到 RequestHandler    │    │
-│  └──────────────────────────────────────────────────────┘    │
-└────────────────────────────────────────────────────────────┘
-         │                              │
-         │ (Bi-di Stream)               │ (Cluster Sync)
-         ▼                              ▼
-   ┌──────────┐                ┌──────────┐
-   │  Client  │                │  Node B  │
-   │  (SDK)   │                │          │
-   └──────────┘                └──────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-8</span><span class="tt">Nacos 2.5.3 gRPC 双通道架构</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Nacos Server</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-cols dgm-cols-2">
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">GrpcSdkServer</span><span class="s">面向 SDK 客户端</span><span class="dgm-badge dgm-badge--ap" style="margin-left:auto;">8848+1000 = 9848</span></div>
+<div class="dgm-box-b">
+<div class="dgm-card"><div class="h"><span class="t">BiRequestStream Acceptor</span></div></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-card"><div class="h"><span class="t">GrpcConnection</span><span class="m">per client</span></div></div>
+</div>
+</div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">GrpcClusterServer</span><span class="s">面向集群节点同步</span><span class="dgm-badge dgm-badge--cp" style="margin-left:auto;">8848+2000 = 10848</span></div>
+<div class="dgm-box-b">
+<div class="dgm-card"><div class="h"><span class="t">ClusterSync RequestHandler</span></div></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-card"><div class="h"><span class="t">GrpcConnection</span><span class="m">per node</span></div></div>
+</div>
+</div>
+</div>
+<div class="dgm-box">
+<div class="dgm-box-h dgm-box-h--blue"><span class="t">BaseGrpcServer</span><span class="s">公共基类</span></div>
+<div class="dgm-box-b">
+<div class="dgm-kv">
+<li><span class="fld">start()</span> — 绑定端口 + 拦截器注册</li>
+<li><span class="fld">addInterceptor()</span> — 参数校验 / 认证过滤</li>
+<li><span class="fld">handleRequest()</span> — 请求分发到 RequestHandler</li>
+</div>
+</div>
+</div>
+</div>
+</div>
+<div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;align-items:center;">
+<div class="dgm-eco"><div class="dgm-link"><span class="lbl">Bi-di Stream</span><div class="dgm-varrow dgm-varrow--accent dgm-varrow--up"></div></div><div class="dgm-ecochip"><b>Client</b><span>SDK</span></div></div>
+<span></span>
+<div class="dgm-eco"><div class="dgm-link"><span class="lbl">Cluster Sync</span><div class="dgm-varrow dgm-varrow--up"></div></div><div class="dgm-ecochip"><b>Node B</b><span>集群节点</span></div></div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -1116,35 +1094,39 @@ Nacos 2.x 引入 `ConnectionManager`（core/src/main/java/com/alibaba/nacos/core
 
 **【核心类关系图】**
 
-```
-/* 图 1-9：ConnectionManager 连接生命周期管理 */
-┌────────────────────────────────────────────────────────────┐
-│                  ConnectionManager                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ connections: Map<String, Connection>                  │  │
-│  │  · connectionId → Connection                        │  │
-│  │  · 每个客户端一条 gRPC 长连接                      │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  生命周期管理:                                              │
-│  ┌─────────┐   ┌─────────┐   ┌─────────┐   ┌────────┐  │
-│  │ REGISTER │──▶│ ACTIVE  │──▶│ TIMEOUT │──▶│ UNREG  │  │
-│  │ 注册连接 │   │ 活跃心跳 │   │ 心跳超时 │   │ 注销连接 │  │
-│  └─────────┘   └─────────┘   └─────────┘   └────────┘  │
-│       │             │              │              │          │
-│       │             │              │              │          │
-│  ┌────▼────┐ ┌────▼────┐ ┌────▼────┐ ┌────▼──────┐ │
-│  │clientId │ │refresh()│ │eject()  │ │unregister()│ │
-│  │abilities│ │beat()   │ │超时剔除  │ │释放资源    │ │
-│  └─────────┘ └─────────┘ └─────────┘ └───────────┘ │
-│                                                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │  RuntimeConnectionEjector                           │  │
-│  │  · 定时扫描超时连接（默认20秒无心跳 → eject）    │  │
-│  │  · 剔除过期连接 → ConnectionEventListener 通知     │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-9</span><span class="tt">ConnectionManager 连接生命周期管理</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">ConnectionManager</span><span class="s">core/remote</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">connections</span><span class="s">Map&lt;String, Connection&gt;</span></div>
+<div class="dgm-box-b">
+<div class="dgm-kv">
+<li><span class="fld">connectionId</span> <span class="typ">→</span> Connection</li>
+<li>每个客户端一条 gRPC 长连接</li>
+</div>
+</div>
+</div>
+<div class="dgm-flow">
+<div class="dgm-step"><span class="n">STATE 1</span><span class="t">REGISTER</span><span class="s">注册连接</span></div>
+<div class="dgm-far"></div>
+<div class="dgm-step"><span class="n">STATE 2</span><span class="t">ACTIVE</span><span class="s">活跃心跳</span></div>
+<div class="dgm-far"></div>
+<div class="dgm-step"><span class="n">STATE 3</span><span class="t">TIMEOUT</span><span class="s">心跳超时</span></div>
+<div class="dgm-far"></div>
+<div class="dgm-step"><span class="n">STATE 4</span><span class="t">UNREG</span><span class="s">注销连接</span></div>
+</div>
+<div class="dgm-cols dgm-cols-4">
+<div class="dgm-box"><div class="dgm-box-h"><span class="t" style="font-family:var(--mono);font-size:.8em;">clientId<br>abilities</span></div></div>
+<div class="dgm-box"><div class="dgm-box-h"><span class="t" style="font-family:var(--mono);font-size:.8em;">refresh()<br>beat()</span></div></div>
+<div class="dgm-box"><div class="dgm-box-h"><span class="t" style="font-family:var(--mono);font-size:.8em;">eject()<br>超时剔除</span></div></div>
+<div class="dgm-box"><div class="dgm-box-h"><span class="t" style="font-family:var(--mono);font-size:.8em;">unregister()<br>释放资源</span></div></div>
+</div>
+<div class="dgm-note"><b>RuntimeConnectionEjector：</b>定时扫描超时连接（默认 20 秒无心跳 → eject）；剔除过期连接后通过 ConnectionEventListener 通知下游</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -1264,38 +1246,42 @@ Nacos 2.5.3 的数据模型采用五层级树状结构：Namespace（命名空�
 
 **【核心类关系图】**
 
-```
-/* 图 1-10：Nacos 2.5.3 五层级数据模型 */
-┌────────────────────────────────────────────────────────────┐
-│                  Namespace (命名空间)                       │
-│  实现租户/环境隔离（如：dev / test / prod）               │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Group (分组)                                      │  │
-│  │ 服务/配置的逻辑分类（如：ORDER / PAYMENT）         │  │
-│  │ ┌────────────────────────────────────────────────┐  │  │
-│  │ │ Service (服务)                               │  │  │
-│  │ │ 注册中心的逻辑服务单元                        │  │  │
-│  │ │ · serviceName: "order-service"               │  │  │
-│  │ │ · protectThreshold: 0.8 (保护阈值)           │  │  │
-│  │ │ ┌──────────────────────────────────────────┐  │  │  │
-│  │ │ │ Cluster (集群)                         │  │  │  │
-│  │ │ │ 物理部署分组（如：BJ / SH / GZ）      │  │  │  │
-│  │ │ │ · clusterName: "DEFAULT"               │  │  │  │
-│  │ │ │ · healthChecker: TCP/HTTP/MySQL        │  │  │  │
-│  │ │ │ ┌────────────────────────────────────┐  │  │  │  │
-│  │ │ │ │ Instance (实例)                   │  │  │  │  │
-│  │ │ │ │ 网络端点 (IP:Port)               │  │  │  │  │
-│  │ │ │ │ · ip: "192.168.1.100"          │  │  │  │  │
-│  │ │ │ │ · port: 8080                    │  │  │  │  │
-│  │ │ │ │ · ephemeral: true → AP(Distro)  │  │  │  │  │
-│  │ │ │ │ · weight: 1.0                   │  │  │  │  │
-│  │ │ │ │ · healthy: true                 │  │  │  │  │
-│  │ │ │ └────────────────────────────────────┘  │  │  │  │
-│  │ │ └──────────────────────────────────────────┘  │  │  │
-│  │ └────────────────────────────────────────────────┘  │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-10</span><span class="tt">Nacos 2.5.3 五层级数据模型</span><span class="src">由外向内 = 包含关系</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">Namespace</span><span class="s">命名空间</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-nest">
+<div class="dgm-nest-t"><span class="t">Namespace（命名空间）</span><span class="s">租户 / 环境隔离（dev · test · prod）</span></div>
+<div class="dgm-nest">
+<div class="dgm-nest-t"><span class="t">Group（分组）</span><span class="s">服务 / 配置的逻辑分类（ORDER · PAYMENT）</span></div>
+<div class="dgm-nest">
+<div class="dgm-nest-t"><span class="t">Service（服务）</span><span class="s">注册中心的逻辑服务单元</span></div>
+<ul class="dgm-kv">
+<li><span class="fld">serviceName</span> <span class="typ">= "order-service"</span></li>
+<li><span class="fld">protectThreshold</span> <span class="typ">= 0.8（保护阈值）</span></li>
+</ul>
+<div class="dgm-nest">
+<div class="dgm-nest-t"><span class="t">Cluster（集群）</span><span class="s">物理部署分组（BJ · SH · GZ）</span></div>
+<ul class="dgm-kv">
+<li><span class="fld">clusterName</span> <span class="typ">= "DEFAULT"</span></li>
+<li><span class="fld">healthChecker</span> <span class="typ">= TCP / HTTP / MySQL</span></li>
+</ul>
+<div class="dgm-nest" style="border-color:var(--blue-tint-border);background:var(--blue-tint);">
+<div class="dgm-nest-t"><span class="t">Instance（实例）</span><span class="s">网络端点 IP:Port</span></div>
+<ul class="dgm-kv" style="margin-bottom:2px;">
+<li><span class="fld">ip</span> <span class="typ">= "192.168.1.100"</span> · <span class="fld">port</span> <span class="typ">= 8080</span></li>
+<li><span class="fld">ephemeral</span> <span class="typ">= true →</span> <span class="dgm-badge dgm-badge--ap">AP</span> Distro</li>
+<li><span class="fld">weight</span> <span class="typ">= 1.0</span> · <span class="fld">healthy</span> <span class="typ">= true</span></li>
+</ul>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -1401,45 +1387,40 @@ Nacos 2.5.3 的五层级数据模型通过 Namespace（租户隔离）→ Group�
 
 **【核心类关系图】**
 
-```
-/* 图 1-11：Instance 模型 ephemeral AP/CP 路由决策 */
-                    ┌──────────────────────┐
-                    │   Instance (Instance)   │
-                    │ · instanceId          │
-                    │ · ip:port             │
-                    │ · ephemeral: boolean   │────────┐
-                    │ · weight: double      │        │
-                    │ · healthy: boolean    │        │
-                    │ · metadata: Map       │        │
-                    └──────────────────────┘        │
-                                                  │
-                    ┌─────────────────────────────┘
-                    │
-                    ▼
-        ┌───────────────────────┐
-        │ ephemeral == true ?    │
-        └───────────────────────┘
-            │               │
-         YES│               │NO
-            ▼               ▼
-   ┌────────────────┐ ┌────────────────┐
-   │ AP (Distro)    │ │ CP (JRaft)     │
-   │ · 去中心化同步  │ │ · Leader 选举    │
-   │ · 一致性哈希    │ │ · 日志复制      │
-   │ · 最终一致性    │ │ · 强一致性      │
-   │ · 自动健康检查  │ │ · 手动注销      │
-   │ · 心跳超时剔除  │ │ · 持久化存储    │
-   └────────────────┘ └────────────────┘
-            │               │
-            ▼               ▼
-   ┌────────────────────────────────────┐
-   │  EphemeralClientOperationServiceImpl（临时）/ PersistentClientOperationServiceImpl（持久）    │
-   │  .put(key, instances)            │
-   │  → 根据 ephemeral 路由到:         │
-   │    EphemeralClientOperationServiceImpl    │
-   │    或 PersistentClientOperationServiceImpl  │
-   └────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-11</span><span class="tt">Instance 模型 ephemeral AP/CP 路由决策</span><span class="src">自上而下 = 决策流程</span></div>
+<div class="dgm-eco">
+<div class="dgm-box" style="min-width:340px;">
+<div class="dgm-box-h"><span class="t">Instance</span></div>
+<div class="dgm-box-b">
+<ul class="dgm-kv">
+<li><span class="fld">instanceId</span> · <span class="fld">ip:port</span></li>
+<li><span class="fld">ephemeral</span><span class="typ">: boolean</span></li>
+<li><span class="fld">weight</span><span class="typ">: double</span> · <span class="fld">healthy</span><span class="typ">: boolean</span> · <span class="fld">metadata</span><span class="typ">: Map</span></li>
+</ul>
+</div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-ecochip" style="border-color:var(--accent);"><b>ephemeral == true ?</b></div>
+</div>
+<div class="dgm-cols dgm-cols-2" style="margin-top:14px;">
+<div class="dgm-eco" style="align-items:stretch;">
+<div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">YES · 临时实例</span><div class="dgm-varrow dgm-varrow--accent"></div></div>
+<div class="dgm-card dgm-card--deep"><div class="h"><span class="k">AP</span><span class="t">Distro 协议</span></div><ul><li>去中心化同步</li><li>一致性哈希</li><li>最终一致性</li><li>自动健康检查</li><li>心跳超时剔除</li></ul></div>
+</div>
+<div class="dgm-eco" style="align-items:stretch;">
+<div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--ink);font-weight:700;">NO · 持久实例</span><div class="dgm-varrow" style="background:var(--ink);"></div><span style="display:none;"></span></div>
+<div class="dgm-card dgm-card--ink"><div class="h"><span class="k">CP</span><span class="t">JRaft 协议</span></div><ul><li>Leader 选举</li><li>日志复制</li><li>强一致性</li><li>手动注销</li><li>持久化存储</li></ul></div>
+</div>
+</div>
+<div class="dgm-link" style="margin-top:14px;"><div class="dgm-varrow"></div></div>
+<div class="dgm-box">
+<div class="dgm-box-h dgm-box-h--blue"><span class="t">ClientOperationService.put(key, instances)</span><span class="s">策略路由</span></div>
+<div class="dgm-box-b">
+<div class="dgm-note">根据 <code>ephemeral</code> 路由到 <b>EphemeralClientOperationServiceImpl</b>（临时）或 <b>PersistentClientOperationServiceImpl</b>（持久）</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -1523,36 +1504,38 @@ Nacos Config 模块的配置数据模型以 `ConfigInfo`（config/src/main/java/
 
 **【核心类关系图】**
 
-```
-/* 图 1-12：ConfigInfo → HisConfigInfo 配置数据模型 */
-┌────────────────────────────────────────────────────────────┐
-│                    ConfigInfo (当前版本)                       │
-│  · id: long (自增主键)                                  │
-│  · dataId: String (配置唯一标识)                         │
-│  · groupId: String (分组)                                │
-│  · tenantId: String (命名空间)                           │
-│  · content: String (配置内容)                            │
-│  · md5: String (内容 MD5 校验值)                         │
-│  · type: String (配置类型: json/xml/text/...)             │
-│  · encryptedDataKey: String (加密数据密钥)                │
-│  └──────────────────────────────────────────────────────┘    │
-│                          │                                  │
-│                          │ 每次发布/更新自动创建历史版本      │
-│                          ▼                                  │
-│  ┌──────────────────────────────────────────────────────┐    │
-│  │                HisConfigInfo (历史版本)                 │
-│  │  · nid: long (关联 ConfigInfo.id)                    │
-│  │  · content: String (历史版本配置内容)                 │
-│  │  · md5: String (历史版本 MD5)                        │
-│  │  · gmtCreate: timestamp (创建时间)                    │
-│  │  · srcUser: String (变更用户)                         │
-│  │  · opType: String (操作类型: INSERT/UPDATE/DELETE)   │
-│  └──────────────────────────────────────────────────────┘    │
-│                                                            │
-│  历史版本保留策略: 默认保留最近 30 天                      │
-│  回滚操作: ConfigController.rollback() → 恢复历史版本    │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-12</span><span class="tt">ConfigInfo → HisConfigInfo 配置数据模型</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">config_info / his_config_info</span><span class="s">配置数据模型</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">ConfigInfo</span><span class="s">当前版本</span></div>
+<div class="dgm-box-b">
+<ul class="dgm-kv">
+<li><span class="fld">id</span><span class="typ">: long（自增主键）</span></li>
+<li><span class="fld">dataId</span><span class="typ">: String（配置唯一标识）</span> · <span class="fld">groupId</span><span class="typ">: String（分组）</span> · <span class="fld">tenantId</span><span class="typ">: String（命名空间）</span></li>
+<li><span class="fld">content</span><span class="typ">: String（配置内容）</span> · <span class="fld">md5</span><span class="typ">: String（MD5 校验值）</span></li>
+<li><span class="fld">type</span><span class="typ">: String（json / xml / text / …）</span> · <span class="fld">encryptedDataKey</span><span class="typ">: String（加密数据密钥）</span></li>
+</ul>
+</div>
+</div>
+<div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">每次发布 / 更新自动创建历史版本</span></div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">HisConfigInfo</span><span class="s">历史版本</span></div>
+<div class="dgm-box-b">
+<ul class="dgm-kv">
+<li><span class="fld">nid</span><span class="typ">: long（关联 ConfigInfo.id）</span></li>
+<li><span class="fld">content</span><span class="typ">: String（历史版本配置内容）</span> · <span class="fld">md5</span><span class="typ">: String（历史版本 MD5）</span></li>
+<li><span class="fld">gmtCreate</span><span class="typ">: timestamp（创建时间）</span> · <span class="fld">srcUser</span><span class="typ">: String（变更用户）</span></li>
+<li><span class="fld">opType</span><span class="typ">: String（INSERT / UPDATE / DELETE）</span></li>
+</ul>
+</div>
+</div>
+<div class="dgm-note"><b>历史版本保留策略：</b>默认保留最近 30 天　·　<b>回滚操作：</b><code>ConfigController.rollback()</code> → 恢复历史版本</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 
@@ -1656,39 +1639,45 @@ Nacos 2.5.3 内部模块间通信的核心机制是 `NotifyCenter`（common/src/
 
 **【核心类关系图】**
 
-```
-/* 图 1-13：NotifyCenter 事件驱动架构 */
-┌────────────────────────────────────────────────────────────┐
-│                      NotifyCenter                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ publishEvent(Event)                                 │  │
-│  │ · 根据 Event 类型查找 Subscriber 列表               │  │
-│  │ · 逐个调用 Subscriber.onEvent(event)               │  │
-│  │ · 支持同步/异步发布 (Async/FastNotifyCenter)       │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Subscriber 注册表                                    │  │
-│  │  Map<Class<? extends Event>,                         │  │
-│  │      List<Subscriber>>                               │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                          │                                  │
-│     ┌────────────────────┼────────────────────┐            │
-│     │                    │                    │            │
-│  ┌──▼──────────┐ ┌─────▼────────┐ ┌──────▼─────────┐ │
-│  │ ConfigData   │ │ ServiceChange │ │ Connection     │ │
-│  │ ChangeEvent  │ │ Event        │ │ Event          │ │
-│  │ · dataId    │ │ · serviceName│ │ · connectionId  │ │
-│  │ · groupId   │ │ · instances  │ │ · eventType    │ │
-│  └──┬──────────┘ └─────┬────────┘ └──────┬─────────┘ │
-│     │                   │                   │              │
-│  ┌──▼──────────┐ ┌─────▼────────┐ ┌──────▼─────────┐ │
-│  │ AsyncNotify  │ │ PushService  │ │ Connection     │ │
-│  │ Service     │ │             │ │ EventListener  │ │
-│  │ (Subscriber)│ │ (Subscriber)│ │ (Subscriber)  │ │
-│  └─────────────┘ └─────────────┘ └────────────────┘ │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm">
+<div class="dgm-cap"><span class="no">图 1-13</span><span class="tt">NotifyCenter 事件驱动架构</span></div>
+<div class="dgm-panel">
+<div class="dgm-panel-head"><span class="t">NotifyCenter</span><span class="s">common/notify</span></div>
+<div class="dgm-panel-body">
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">publishEvent(Event)</span></div>
+<div class="dgm-box-b">
+<ul class="dgm-kv">
+<li>根据 Event 类型查找 Subscriber 列表</li>
+<li>逐个调用 <span class="fld">Subscriber.onEvent(event)</span></li>
+<li>支持同步 / 异步发布（Async / FastNotifyCenter）</li>
+</ul>
+</div>
+</div>
+<div class="dgm-box">
+<div class="dgm-box-h"><span class="t">Subscriber 注册表</span><span class="s">Map&lt;Class&lt;? extends Event&gt;, List&lt;Subscriber&gt;&gt;</span></div>
+</div>
+<div class="dgm-varrow"></div>
+<div class="dgm-cols dgm-cols-3">
+<div class="dgm-eco" style="align-items:stretch;">
+<div class="dgm-card" style="width:100%;"><div class="h"><span class="k">Event</span><span class="t">ConfigDataChangeEvent</span></div><ul><li>dataId</li><li>groupId</li></ul></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">Subscriber</span><span class="t">AsyncNotifyService</span></div></div>
+</div>
+<div class="dgm-eco" style="align-items:stretch;">
+<div class="dgm-card" style="width:100%;"><div class="h"><span class="k">Event</span><span class="t">ServiceChangeEvent</span></div><ul><li>serviceName</li><li>instances</li></ul></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">Subscriber</span><span class="t">PushService</span></div></div>
+</div>
+<div class="dgm-eco" style="align-items:stretch;">
+<div class="dgm-card" style="width:100%;"><div class="h"><span class="k">Event</span><span class="t">ConnectionEvent</span></div><ul><li>connectionId</li><li>eventType</li></ul></div>
+<div class="dgm-varrow"></div>
+<div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">Subscriber</span><span class="t">ConnectionEventListener</span></div></div>
+</div>
+</div>
+</div>
+</div>
+</div>
 
 **【源码走读】**
 

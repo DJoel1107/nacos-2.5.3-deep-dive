@@ -18,51 +18,7 @@
 
 图 5-1 展示 `ServerMemberManager` 与寻址层、事件总线的协作关系：
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     ServerMemberManager (@Component)                │
-│  ┌────────────────────────────────────────────────────────────────┐  │
-│  │ serverList: ConcurrentSkipListMap<String, Member>            │  │
-│  │              ◆ 集群全部成员，key = "ip:port"，按地址有序      │  │
-│  │ memberAddressInfos: ConcurrentHashSet<String>                │  │
-│  │              ◆ 仅 state=UP 的地址集合（健康集合）             │  │
-│  │ self: Member   lookup: MemberLookup   localAddress: String   │  │
-│  ├────────────────────────────────────────────────────────────────┤  │
-│  │ init()  : 构造 self → initAndStartLookup() → registerClusterEvent│
-│  │ initAndStartLookup(): LookupFactory.createLookUp(this).start() │  │
-│  │ memberChange(): 重建列表 → syncToFile() → publishEvent()        │  │
-│  │ update()  : 单成员状态/元数据更新 → notifyMemberChange()        │  │
-│  │ MemberInfoReportTask / UnhealthyMemberInfoReportTask           │  │
-│  └────────────────────────────────────────────────────────────────┘  │
-└───────────────┬──────────────────────────────────────┬──────────────┘
-                │ initAndStartLookup()                 │ publishEvent
-                ▼                                      ▼
-┌────────────────────────────┐        ┌──────────────────────────────┐
-│   LookupFactory (final)    │        │   NotifyCenter 事件总线      │
-│  createLookUp(memberMgr)   │        │      │                       │
-│  switchLookup(name,mgr)    │        │      ▼                       │
-│  chooseLookup(type)→枚举   │        │  MembersChangeEvent         │
-│  LookupType: FILE_CONFIG / │        │  ─ members / triggers       │
-│             ADDRESS_SERVER │        │      │ 订阅方               │
-└──────────────┬─────────────┘        │  ProtocolManager (JRaft)   │
-               │ create                 │  DistroMapper (naming)      │
-               ▼                        │  RaftPeerSet (naming)      │
-┌────────────────────────────┐        └──────────────────────────────┘
-│  <<interface>> MemberLookup│
-│  start / destroy           │
-│  afterLookup(Collection)   │
-│  useAddressServer()        │
-│  injectMemberManager(mgr)  │
-│  info()                    │
-└──────────────┬─────────────┘
-               ▲
-┌──────────────┴───────────────────────────────────────┐
-│            AbstractMemberLookup (abstract)          │
-│  ◆ memberManager 字段   afterLookup→memberChange    │
-│  ◆ start()→doStart()（模板） destroy()→doDestroy()  │
-│  ◆ 各子类仅需实现 doStart / doDestroy               │
-└──────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServerMemberManager (@Component)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">serverList</span><span class="typ">: ConcurrentSkipListMap&lt;String, Member&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">◆ 集群全部成员，key = "ip:port"，按地址有序</div><ul class="dgm-kv"><li><span class="fld">memberAddressInfos</span><span class="typ">: ConcurrentHashSet&lt;String&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">◆ 仅 state=UP 的地址集合（健康集合）</div><ul class="dgm-kv"><li><span class="fld">self</span><span class="typ">: Member   lookup: MemberLookup   localAddress: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: 构造 self → initAndStartLookup() → registerClusterEvent</span></li></ul><ul class="dgm-kv"><li><span class="fld">initAndStartLookup()</span><span class="typ">: LookupFactory.createLookUp(this).start()</span></li></ul><ul class="dgm-kv"><li><span class="fld">memberChange()</span><span class="typ">: 重建列表 → syncToFile() → publishEvent()</span></li></ul><ul class="dgm-kv"><li><span class="fld">update()</span><span class="typ">: 单成员状态/元数据更新 → notifyMemberChange()</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">MemberInfoReportTask / UnhealthyMemberInfoReportTask</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">LookupFactory (final)</span><span class="s">createLookUp(memberMgr)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">switchLookup(name,mgr)</div><div class="dgm-note" style="border:none;background:none;padding:0;">chooseLookup(type)→枚举</div><ul class="dgm-kv"><li><span class="fld">LookupType</span><span class="typ">: FILE_CONFIG /</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">ADDRESS_SERVER</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; MemberLookup</span><span class="s">start / destroy</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(Collection)</div><div class="dgm-note" style="border:none;background:none;padding:0;">useAddressServer()</div><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)</div><div class="dgm-note" style="border:none;background:none;padding:0;">info()</div></div></div><div class="dgm-note">▲</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractMemberLookup (abstract)</span><span class="s">◆ memberManager 字段   afterLookup→memberChange</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">◆ start()→doStart()（模板） destroy()→doDestroy()</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ 各子类仅需实现 doStart / doDestroy</div></div></div></div>
 
 类图要点文字解释如下。
 
@@ -195,52 +151,7 @@ protected void init() throws NacosException {
 
 图 5-2 展示 `Member` 模型、`NodeState` 枚举与 `ServerMemberManager` 的关系：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                       ServerMemberManager                      │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ serverList: ConcurrentSkipListMap<String, Member>       │  │
-│  │   ├─ "192.168.0.1:8848" → Member{state=UP}           │  │
-│  │   ├─ "192.168.0.2:8848" → Member{state=UP}           │  │
-│  │   └─ "192.168.0.3:8848" → Member{state=SUSPICIOUS}    │  │
-│  │                                                        │  │
-│  │ memberAddressInfos: ConcurrentHashSet<String>           │  │
-│  │   └─ 仅含 state=UP 的地址集合                           │  │
-│  ├──────────────────────────────────────────────────────────┤  │
-│  │ memberChange()/update()/allMembers()/getServerList()    │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└───────────────┬────────────────────────────────────────────────┘
-                │ 持有 / 操作
-                ▼
-┌────────────────────────────────────────────────────────────────┐
-│                       Member (Comparable, Cloneable)           │
-│  ├─ ip: String                ← 网络标识                     │
-│  ├─ port: int = -1            ← 端口，默认 8848              │
-│  ├─ state: NodeState = UP     ← 健康状态（volatile）        │
-│  ├─ extendInfo: synchronizedMap(TreeMap<String,Object>)     │
-│  │    └─ SITE_KEY / AD_WEIGHT / WEIGHT / RAFT_PORT / VERSION │
-│  ├─ address: String           ← "ip:port" 缓存串           │
-│  ├─ failAccessCnt: int        ← 连续访问失败计数           │
-│  ├─ getAddress()/setState()/getExtendVal()/setExtendVal()   │
-│  └─ copy() / MemberBuilder                                  │
-└───────────────┬────────────────────────────────────────────────┘
-                │ state 字段
-                ▼
-┌────────────────────────────────────────────────────────────────┐
-│              NodeState (enum)：五态状态机                     │
-│  ┌────────────┐  就绪   ┌────────┐  心跳失败 ┌─────────────┐  │
-│  │  STARTING  │ ──────→ │   UP   │ ────────→ │  SUSPICIOUS │  │
-│  └────────────┘         └────────┘           └──────┬──────┘  │
-│            ▲            ▲       │ 恢复              │          │
-│            │            │       │                  │ 连续失败  │
-│       恢复/重注册        │恢复    │                  │ > 阈值    │
-│            │            │       ▼                  ▼          │
-│            │            └──── DOWN ◄───────────────┘          │
-│            │                     │                             │
-│            │             主动/运维 隔离                        │
-│            └──────────────────────► ISOLATION                 │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServerMemberManager</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">serverList</span><span class="typ">: ConcurrentSkipListMap&lt;String, Member&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.1:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.2:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.3:8848" → Member{state=SUSPICIOUS}</div><ul class="dgm-kv"><li><span class="fld">memberAddressInfos</span><span class="typ">: ConcurrentHashSet&lt;String&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">仅含 state=UP 的地址集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">memberChange()/update()/allMembers()/getServerList()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Comparable, Cloneable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                ← 网络标识</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1            ← 端口，默认 8848</span></li></ul><ul class="dgm-kv"><li><span class="fld">state</span><span class="typ">: NodeState = UP     ← 健康状态（volatile）</span></li></ul><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: synchronizedMap(TreeMap&lt;String,Object&gt;)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">SITE_KEY / AD_WEIGHT / WEIGHT / RAFT_PORT / VERSION</div><ul class="dgm-kv"><li><span class="fld">address</span><span class="typ">: String           ← "ip:port" 缓存串</span></li></ul><ul class="dgm-kv"><li><span class="fld">failAccessCnt</span><span class="typ">: int        ← 连续访问失败计数</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getAddress()/setState()/getExtendVal()/setExtendVal()</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy() / MemberBuilder</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NodeState (enum)：五态状态机</span><span class="s">主动/运维 隔离</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">► ISOLATION</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UP</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 文字解释：
 
@@ -360,54 +271,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 
 图 5-3 展示 `LookupFactory` 工厂、`MemberLookup` 接口与 `AbstractMemberLookup` 模板及三种实现的静态关系：
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                   LookupFactory (final)                        │
-│  ◆ LOOK_UP: MemberLookup   currentLookupType: LookupType     │
-│  LOOKUP_MODE_TYPE = "nacos.core.member.lookup.type"         │
-│  ├─ createLookUp(memberManager):                            │
-│  │    standalone? → new StandaloneMemberLookup()            │
-│  │    else → chooseLookup(type) → find(type)                │
-│  │    → LOOK_UP.injectMemberManager(memberManager)          │
-│  ├─ switchLookup(name, memberManager):                      │
-│  │    → LookupType.sourceOf(name) → find(type).start()      │
-│  ├─ chooseLookup(str): 缺省→文件存在→FILE / 否则 ADDRESS    │
-│  ├─ find(type): FILE→new FileConfigMemberLookup()           │
-│  │              ADDRESS→new AddressServerMemberLookup()     │
-│  └─ Getter: getLookUp() / destroy()                         │
-└───────────────┬────────────────────────────────────────────────┘
-                │ 生产
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│              <<interface>> MemberLookup                          │
-│  ├─ start()                                      (MemberLookup:31)│
-│  ├─ useAddressServer(): boolean                 (MemberLookup:38)│
-│  ├─ injectMemberManager(mgr)                    (MemberLookup:44)│
-│  ├─ afterLookup(Collection<Member>)             (MemberLookup:49)│
-│  ├─ destroy()                                   (MemberLookup:54)│
-│  └─ info()（default，返回空 Map）              (MemberLookup:59)│
-└───────────────┬──────────────────────────────────────────────────┘
-                ▲
-                │ implements
-┌───────────────┴──────────────────────────────────────────────────┐
-│            AbstractMemberLookup (abstract)                       │
-│  ◆ protected ServerMemberManager memberManager  (Lookup:31)     │
-│  ├─ injectMemberManager(mgr)→this.memberManager  (Lookup:36)    │
-│  ├─ afterLookup(members)→memberManager           (Lookup:41)    │
-│  │      .memberChange(members)                                   │
-│  ├─ start(): 幂等 + doStart()（模板）           (Lookup:53)     │
-│  └─ destroy(): doDestroy()（模板）              (Lookup:46)     │
-│  ◇ abstract doStart() / doDestroy()            (Lookup:63,69)   │
-└───────────────┬──────────────────────────────────────────────────┘
-                ▲            ▲                 ▲
-    ┌───────────┴────┐ ┌─────┴─────────┐ ┌─────┴──────────┐
-    │ FileConfig      │ │ AddressServer  │ │ Standalone     │
-    │ MemberLookup    │ │ MemberLookup   │ │ MemberLookup   │
-    │ 文件+inotify    │ │ HTTP 定时拉取  │ │ 单成员自发现   │
-    │ (FileConfig.java │ │ (Address.java  │ │ (Standalone.java │
-    │   :29)           │ │   :29)         │ │   :24)          │
-    └─────────────────┘ └───────────────┘ └────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LookupFactory (final)</span><span class="s">◆ LOOK_UP: MemberLookup   currentLookupType: LookupType</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">LOOKUP_MODE_TYPE = "nacos.core.member.lookup.type"</div><div class="dgm-note" style="border:none;background:none;padding:0;">createLookUp(memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">standalone? → new StandaloneMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">else → chooseLookup(type) → find(type)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LOOK_UP.injectMemberManager(memberManager)</div><div class="dgm-note" style="border:none;background:none;padding:0;">switchLookup(name, memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LookupType.sourceOf(name) → find(type).start()</div><div class="dgm-note" style="border:none;background:none;padding:0;">chooseLookup(str): 缺省→文件存在→FILE / 否则 ADDRESS</div><div class="dgm-note" style="border:none;background:none;padding:0;">find(type): FILE→new FileConfigMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">ADDRESS→new AddressServerMemberLookup()</div><ul class="dgm-kv"><li><span class="fld">Getter</span><span class="typ">: getLookUp() / destroy()</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; MemberLookup</span><span class="s">start()                                      (MemberLookup:31</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">useAddressServer()</span><span class="typ">: boolean                 (MemberLookup:38)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)                    (MemberLookup:44)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(Collection&lt;Member&gt;)             (MemberLookup:49)</div><div class="dgm-note" style="border:none;background:none;padding:0;">destroy()                                   (MemberLookup:54)</div><div class="dgm-note" style="border:none;background:none;padding:0;">info()（default，返回空 Map）              (MemberLookup:59)</div></div></div><div class="dgm-note">▲                  implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractMemberLookup (abstract)</span><span class="s">◆ protected ServerMemberManager memberManager  (Lookup:31)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)→this.memberManager  (Lookup:36)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(members)→memberManager           (Lookup:41)</div><div class="dgm-note" style="border:none;background:none;padding:0;">.memberChange(members)</div><ul class="dgm-kv"><li><span class="fld">start()</span><span class="typ">: 幂等 + doStart()（模板）           (Lookup:53)</span></li></ul><ul class="dgm-kv"><li><span class="fld">destroy()</span><span class="typ">: doDestroy()（模板）              (Lookup:46)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">◇ abstract doStart() / doDestroy()            (Lookup:63,69)</div></div></div><div class="dgm-note">▲            ▲                 ▲</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Standalone</span><span class="s">MemberLookup</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">自发现</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Standalone.</div><div class="dgm-note" style="border:none;background:none;padding:0;">:24)</div></div></div></div>
 
 文字解释：
 
@@ -535,49 +399,7 @@ protected abstract void doDestroy() throws NacosException; // :69
 
 图 5-4 展示 `FileConfigMemberLookup` 基于文件监控与解析的成员发现流程：
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│               FileConfigMemberLookup                            │
-│  extends AbstractMemberLookup   (FileConfig.java:29)          │
-│  ├─ DEFAULT_SEARCH_SEQ = "cluster.conf"  (FileConfig.java:33) │
-│  ├─ watcher: FileWatcher {                                     │
-│  │     onChange(event)→readClusterConfFromDisk()    :36-40    │
-│  │     interest(context)→ contains "cluster.conf"   :41-43    │
-│  │  }                                                        │
-│  ├─ doStart(): readClusterConfFromDisk() +                   │
-│  │    WatchFileCenter.registerWatcher(confPath, watcher)      │
-│  │    （inotify 监控，FileConfig.java:46-58）                │
-│  ├─ useAddressServer() = false                    :63-65      │
-│  ├─ doDestroy(): WatchFileCenter.deregisterWatcher :68-72     │
-│  └─ readClusterConfFromDisk(): 读取→解析→afterLookup :74-89  │
-└───────────────┬────────────────────────────────────────────────┘
-                │ registerWatcher / deregisterWatcher
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│          WatchFileCenter（sys 模块，文件监控）                 │
-│  ◆ 底层：linux inotify / 其它轮询 fallback                    │
-│  ├─ registerWatcher(path, watcher)                            │
-│  └─ 文件变更 → 回调 watcher.onChange(FileChangeEvent)         │
-└───────────────┬────────────────────────────────────────────────┘
-                │ onChange
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  readClusterConfFromDisk()                                     │
-│  1. EnvUtil.readClusterConf() → List<String>（每行地址）      │
-│  2. MemberUtil.readServerConf(list) → Collection<Member>       │
-│  3. afterLookup(tmpMembers) → memberManager.memberChange()    │
-│     （AbstractMemberLookup.java:41-44）                      │
-└──────────────────────────────────────────────────────────────────┘
-        ▲
-        │ 数据源
-┌───────┴──────────────────────────────────────────────────────────┐
-│  conf/cluster.conf（示例）                                     │
-│  # 时间戳注释                                                     │
-│  192.168.0.11:8848                                             │
-│  192.168.0.12:8848                                             │
-│  192.168.0.13:8848                                             │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">FileConfigMemberLookup</span><span class="s">extends AbstractMemberLookup   (FileConfig.java:29)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DEFAULT_SEARCH_SEQ = "cluster.conf"  (FileConfig.java:33)</div><ul class="dgm-kv"><li><span class="fld">watcher</span><span class="typ">: FileWatcher {</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">onChange(event)→readClusterConfFromDisk()    :36-40</div><div class="dgm-note" style="border:none;background:none;padding:0;">interest(context)→ contains "cluster.conf"   :41-43</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><ul class="dgm-kv"><li><span class="fld">doStart()</span><span class="typ">: readClusterConfFromDisk() +</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">WatchFileCenter.registerWatcher(confPath, watcher)</div><div class="dgm-note" style="border:none;background:none;padding:0;">（inotify 监控，FileConfig.java:46-58）</div><div class="dgm-note" style="border:none;background:none;padding:0;">useAddressServer() = false                    :63-65</div><ul class="dgm-kv"><li><span class="fld">doDestroy()</span><span class="typ">: WatchFileCenter.deregisterWatcher :68-72</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">readClusterConfFromDisk(): 读取→解析→afterLookup :74-89</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">WatchFileCenter（sys 模块，文件监控）</span><span class="s">◆ 底层：linux inotify / 其它轮询 fallback</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">registerWatcher(path, watcher)</div><div class="dgm-note" style="border:none;background:none;padding:0;">文件变更 → 回调 watcher.onChange(FileChangeEvent)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">readClusterConfFromDisk()</span><span class="s">1. EnvUtil.readClusterConf() → List&lt;String&gt;（每行地址）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">2. MemberUtil.readServerConf(list) → Collection&lt;Member&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. afterLookup(tmpMembers) → memberManager.memberChange()</div><div class="dgm-note" style="border:none;background:none;padding:0;">（AbstractMemberLookup.java:41-44）</div></div></div><div class="dgm-note">▲          数据源</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">conf/cluster.conf（示例）</span><span class="s"># 时间戳注释</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.11:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.12:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.13:8848</div></div></div></div>
 
 文字解释：
 
@@ -714,57 +536,7 @@ private void readClusterConfFromDisk() {
 
 图 5-5 展示 `AddressServerMemberLookup` 的启动同步、周期任务与健康判定：
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│            AddressServerMemberLookup  (AddressServer.java:29)  │
-│  ◆ domainName / addressPort / addressUrl / envIdUrl           │
-│    / addressServerUrl                    (AddressServer:67-71) │
-│  ◆ isAddressServerHealth=true        (AddressServer:74)       │
-│  ◆ addressServerFailCount=0          (AddressServer:76)       │
-│  ◆ maxFailCount=12                   (AddressServer:78)       │
-│  ◆ restTemplate: NacosRestTemplate   (AddressServer:80)       │
-│  ├─ doStart()→maxFailCount+initAddressSys()+run()   :120-126  │
-│  ├─ useAddressServer()=true            :128-130               │
-│  ├─ initAddressSys()：解析域名/端口/URL 各来源       :133-159  │
-│  ├─ run()：启动同步(≤5次重试)+调度周期任务        :161-180  │
-│  ├─ syncFromAddressUrl()：HTTP GET+解析+健康判定   :198-226  │
-│  ├─ doDestroy()→shutdown=true           :182-184               │
-│  └─ info()：暴露健康/URL/失败计数        :189-201               │
-└───────────────┬────────────────────────────────────────────────┘
-                │ doStart 内 run()
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  run() 启动流程                                               │
-│  ① for i in 0..maxRetry(=5): syncFromAddressUrl()             │
-│      成功→success=true,break；失败→累计日志                  │
-│  ② 全部失败→抛 NacosException(SERVER_ERROR)                  │
-│  ③ 成功→ GlobalExecutor.scheduleByCommon(                     │
-│        new AddressServerSyncTask(), 5000ms)                   │
-└───────────────┬────────────────────────────────────────────────┘
-                │ 周期调度
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│        AddressServerSyncTask (implements Runnable)             │
-│            class AddressServer.java:228-249                  │
-│  run():                                                        │
-│    if(shutdown) return;                                        │
-│    syncFromAddressUrl();                                       │
-│    finally: scheduleByCommon(this, 5000ms)  ← 自调度          │
-└───────────────┬────────────────────────────────────────────────┘
-                │ HTTP GET /<ctx>/serverlist
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  地址服务器（外部）：返回文本行列表                             │
-│  192.168.0.21:8848                                            │
-│  192.168.0.22:8848                                            │
-└───────────────┬────────────────────────────────────────────────┘
-                ▼
-┌──────────────────────────────────────────────────────────────────┐
-│  syncFromAddressUrl()：                                        │
-│  ok → isHealth=true；解析→afterLookup→memberChange；failCnt=0 │
-│  失败 → failCnt++；>=maxFailCount → isHealth=false            │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerMemberLookup  (AddressServer.java:29)</span><span class="s">◆ domainName / addressPort / addressUrl / envIdUrl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">/ addressServerUrl                    (AddressServer:67-71)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ isAddressServerHealth=true        (AddressServer:74)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ addressServerFailCount=0          (AddressServer:76)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ maxFailCount=12                   (AddressServer:78)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ restTemplate: NacosRestTemplate   (AddressServer:80)</div><div class="dgm-note" style="border:none;background:none;padding:0;">doStart()→maxFailCount+initAddressSys()+run()   :120-126</div><div class="dgm-note" style="border:none;background:none;padding:0;">useAddressServer()=true            :128-130</div><ul class="dgm-kv"><li><span class="fld">initAddressSys()</span><span class="typ">: 解析域名/端口/URL 各来源       :133-159</span></li></ul><ul class="dgm-kv"><li><span class="fld">run()</span><span class="typ">: 启动同步(≤5次重试)+调度周期任务        :161-180</span></li></ul><ul class="dgm-kv"><li><span class="fld">syncFromAddressUrl()</span><span class="typ">: HTTP GET+解析+健康判定   :198-226</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">doDestroy()→shutdown=true           :182-184</div><ul class="dgm-kv"><li><span class="fld">info()</span><span class="typ">: 暴露健康/URL/失败计数        :189-201</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">run() 启动流程</span><span class="s">① for i in 0..maxRetry(=5): syncFromAddressUrl()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">成功→success=true,break；失败→累计日志</div><div class="dgm-note" style="border:none;background:none;padding:0;">② 全部失败→抛 NacosException(SERVER_ERROR)</div><div class="dgm-note" style="border:none;background:none;padding:0;">③ 成功→ GlobalExecutor.scheduleByCommon(</div><div class="dgm-note" style="border:none;background:none;padding:0;">new AddressServerSyncTask(), 5000ms)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerSyncTask (implements Runnable)</span><span class="s">class AddressServer.java:228-249</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">run():</div><div class="dgm-note" style="border:none;background:none;padding:0;">if(shutdown) return;</div><div class="dgm-note" style="border:none;background:none;padding:0;">syncFromAddressUrl();</div><ul class="dgm-kv"><li><span class="fld">finally</span><span class="typ">: scheduleByCommon(this, 5000ms)  ← 自调度</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">地址服务器（外部）：返回文本行列表</span><span class="s">192.168.0.21:8848</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.22:8848</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">syncFromAddressUrl()：</span><span class="s">ok → isHealth=true；解析→afterLookup→memberChange；failCnt=0</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">失败 → failCnt++；&gt;=maxFailCount → isHealth=false</div></div></div></div>
 
 文字解释：
 
@@ -927,39 +699,7 @@ class AddressServerSyncTask implements Runnable {
 
 图 5-6 展示了 `StandaloneMemberLookup` 的单成员自发现流程。该实现继承 `AbstractMemberLookup`，复用其持有 `ServerMemberManager` 引用与 `afterLookup()` 回调骨架，仅需实现三个方法即可完成单机寻址：
 
-```
-┌────────────────────────────────────────────────────────────┐
-│              StandaloneMemberLookup                        │
-│  extends AbstractMemberLookup                             │
-│  ├─ doStart(): EnvUtil.getLocalAddress()               │
-│  │      → MemberUtil.readServerConf([localAddress])     │
-│  │      → afterLookup(selfMemberList)                   │
-│  ├─ doDestroy(): 空实现（单机无需清理外部资源）           │
-│  └─ useAddressServer(): return false                     │
-└────────────────────────────────────────────────────────────┘
-        │
-        │ doStart()
-        ▼
-┌────────────────────────────────────────────────────────────┐
-│  EnvUtil.getLocalAddress() (env/EnvUtil.java:216-219)    │
-│    → InetUtils.getSelfIP() + ":" + getPort()            │
-│    端口默认 8848，可经 nacos.server.port 配置覆盖        │
-└────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────┐
-│  MemberUtil.readServerConf([address]) (MemberUtil.java)  │
-│    → 逐个 singleParse("ip:port")                         │
-│      → Member(ip, port, state=UP) + raft_port 扩展元数据 │
-└────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────┐
-│  AbstractMemberLookup.afterLookup([self])                │
-│    → serverMemberManager.memberChange(selfMemberList)     │
-│    → 触发 ServerMemberManager 初始化 + MembersChangeEvent │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">StandaloneMemberLookup</span><span class="s">extends AbstractMemberLookup</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">doStart()</span><span class="typ">: EnvUtil.getLocalAddress()</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ MemberUtil.readServerConf([localAddress])</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ afterLookup(selfMemberList)</div><ul class="dgm-kv"><li><span class="fld">doDestroy()</span><span class="typ">: 空实现（单机无需清理外部资源）</span></li></ul><ul class="dgm-kv"><li><span class="fld">useAddressServer()</span><span class="typ">: return false</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EnvUtil.getLocalAddress() (env/EnvUtil.java:216-219)</span><span class="s">→ InetUtils.getSelfIP() + ":" + getPort()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">端口默认 8848，可经 nacos.server.port 配置覆盖</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberUtil.readServerConf([address]) (MemberUtil.java)</span><span class="s">→ 逐个 singleParse("ip:port")</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Member(ip, port, state=UP) + raft_port 扩展元数据</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractMemberLookup.afterLookup([self])</span><span class="s">→ serverMemberManager.memberChange(selfMemberList)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 触发 ServerMemberManager 初始化 + MembersChangeEvent</div></div></div></div>
 
 图中数据流说明：`doStart()` 是唯一入口，本机地址的解析交由 `EnvUtil.getLocalAddress()` 完成，地址到 `Member` 的映射交由 `MemberUtil.readServerConf()/singleParse()` 完成，地址结构统一为 `ip:port` 字符串。`afterLookup()` 继承自 `AbstractMemberLookup`（`core/.../AbstractMemberLookup.java`），内部持有 `ServerMemberManager` 引用并将解析结果上抛，后续成员增删通知（`MembersChangeEvent`）由 `ServerMemberManager.memberChange()` 驱动，供 `ClusterRpcClientProxy` 等监听者消费。
 
@@ -1049,47 +789,7 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 `Member` 是核心域模型，周边围绕三类协同对象：构建器 `MemberBuilder`、状态枚举 `NodeState`、工具类 `MemberUtil`。图 5-7 展示其字段构成、与周边对象的关系及状态机：
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│                       Member (Member.java:40)              │
-│  implements Comparable, Cloneable, Serializable            │
-│  ├─ ip: String                          ← 节点 IP 地址     │
-│  ├─ port: int = -1                      ← 节点端口         │
-│  ├─ volatile state: NodeState = UP      ← 健康状态          │
-│  ├─ extendInfo: Map<String,Object>                          │
-│  │     = Collections.synchronizedMap(new TreeMap<>())       │
-│  │     └─ site / adWeight? weight / raftPort /             │
-│  │         readyToUpgrade ... (构造/解析时注入)              │
-│  ├─ volatile grpcReportEnabled: boolean ← gRPC 上报能力     │
-│  ├─ getAddress(): "ip:port"             ← 节点坐标          │
-│  ├─ setExtendVal/getExtendVal/delExtendVal ← 扩展读写       │
-│  └─ copy(): 深拷贝                       ← Java 序列化深拷贝│
-└──────────────┬──────────────────────────────┬───────────────┘
-               │ builder()                    │ setState()
-               ▼                              ▼
-┌──────────────────────────┐   ┌──────────────────────────────┐
-│   MemberBuilder          │   │   NodeState (enum, :27-54)  │
-│  - ip/port/state/        │   │  STARTING → UP                │
-│    extendInfo 字段        │   │     ↑      │                 │
-│  - build(): 组装 Member  │   │     │      ▼                 │
-└──────────────────────────┘   │  UP ←→ SUSPICIOUS            │
-                               │     │      │                 │
-                               │     ▼      ▼                 │
-                               │   DOWN     ISOLATION          │
-                               └──────────────────────────────┘
-               │ 地址解析 / 序列化
-               ▼
-┌──────────────────────────────┐
-│  MemberUtil (MemberUtil.java)│
-│  ├─ singleParse("ip:port")   │  :79-107
-│  ├─ multiParse(Collection)   │  :129
-│  ├─ calculateRaftPort()      │  :119-127
-│  ├─ readServerConf(Collection)│ :228-238
-│  ├─ copy(newMember,old)      │  :62
-│  ├─ simpleMembers()          │  :256-260
-│  └─ isBasicInfoChanged()     │  :268
-└──────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Member.java:40)</span><span class="s">implements Comparable, Cloneable, Serializable</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                          ← 节点 IP 地址</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1                      ← 节点端口</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">volatile state: NodeState = UP      ← 健康状态</div><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: Map&lt;String,Object&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">= Collections.synchronizedMap(new TreeMap&lt;&gt;())</div><div class="dgm-note" style="border:none;background:none;padding:0;">site / adWeight? weight / raftPort /</div><div class="dgm-note" style="border:none;background:none;padding:0;">readyToUpgrade ... (构造/解析时注入)</div><div class="dgm-note" style="border:none;background:none;padding:0;">volatile grpcReportEnabled: boolean ← gRPC 上报能力</div><ul class="dgm-kv"><li><span class="fld">getAddress()</span><span class="typ">: "ip:port"             ← 节点坐标</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">setExtendVal/getExtendVal/delExtendVal ← 扩展读写</div><ul class="dgm-kv"><li><span class="fld">copy()</span><span class="typ">: 深拷贝                       ← Java 序列化深拷贝</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberBuilder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ip/port/state/</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">extendInfo 字段</div><ul class="dgm-kv"><li>build(): 组装 Member</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberUtil (MemberUtil.java)</span><span class="s">singleParse("ip:port")</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">multiParse(Collection)</div><div class="dgm-note" style="border:none;background:none;padding:0;">calculateRaftPort()</div><div class="dgm-note" style="border:none;background:none;padding:0;">readServerConf(Collection</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy(newMember,old)</div><div class="dgm-note" style="border:none;background:none;padding:0;">simpleMembers()</div><div class="dgm-note" style="border:none;background:none;padding:0;">isBasicInfoChanged()</div></div></div></div>
 
 图中关系说明：`Member` 通过 `builder()`（`Member.java:89`）与 `MemberBuilder` 协作完成实例构建；通过 `setState()` 触发 `NodeState` 状态流转；通过 `MemberUtil` 完成从地址字符串到对象的解析（`singleParse`）、端口偏移计算（`calculateRaftPort`）、成员集合扁平化（`simpleMembers`）等不归属对象职责的纯函数操作。序列化路径上，`Member` 依赖 `Serializable` 接口与 Java 原生序列化实现深拷贝（`copy()`），未引入独立 JSON 注解，跨协议传输时由上层模块负责字段映射。
 
@@ -1237,39 +937,7 @@ Nacos 2.5.3 以 gRPC 作为集群间 RPC 的传输底座，`ClusterRpcClientProx
 
 图 5-8 展示 `ClusterRpcClientProxy` 的架构——继承 `MemberChangeListener` 订阅成员变更，内部以 `RpcClientFactory` 为中心管理每成员的 gRPC `RpcClient`：
 
-```
-┌──────────────────────────────────────────────────────────────┐
-│              ClusterRpcClientProxy                           │
-│  extends MemberChangeListener (ClusterRpcClientProxy.java:60)│
-│  ├─ serverMemberManager: ServerMemberManager (注入)          │
-│  ├─ authConfigs: AuthConfigs (注入，供服务端身份注入)          │
-│  ├─ @PostConstruct init()            :76-91                │
-│  │    注册 Subscriber + 首次 refresh()                       │
-│  ├─ refresh(List<Member>)           :96-120                 │
-│  │    新增成员建链 + 离场成员销毁                               │
-│  ├─ memberClientKey(member)         :122-124                │
-│  │    "Cluster-" + member.getAddress()                     │
-│  ├─ createRpcClientAndStart()       :125-161                 │
-│  ├─ buildRpcClient()                :164-176                 │
-│  ├─ sendRequest(member, req)        :181-184 (默认 3000ms)  │
-│  ├─ sendRequest(member, req, to)    :193-207 (可指定超时)    │
-│  ├─ asyncRequest(member, req, cb)   :211-220                 │
-│  ├─ sendRequestToAllMembers(req)    :227-231 (广播)         │
-│  ├─ onEvent(MembersChangeEvent)     :235-242 (成员变更触发)  │
-│  ├─ isRunning(member)               :250-256                │
-│  └─ injectorServerIdentity(req)     :258-264                │
-└──────────────┬───────────────────────────────┬──────────────┘
-               │ RpcClientFactory                 │ onEvent
-               ▼                                 ▼
-┌──────────────────────────────────────────────┐  ┌──────────────────────┐
-│  RpcClient (每成员一个 gRPC Client)           │  │ MembersChangeEvent │
-│  ├─ serverListFactory → 固定为 member.address│  │ 由 ServerMemberManager│
-│  ├─ request(req, timeout)   同步            │  │ .memberChange() 发布 │
-│  ├─ asyncRequest(req, cb)   异步            │  └──────────────────────┘
-│  ├─ start() / shutdown()                     │
-│  └─ threadPoolCoreSize=cpucount*2, max=*8   │
-└──────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClusterRpcClientProxy</span><span class="s">extends MemberChangeListener (ClusterRpcClientProxy.java:60)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">serverMemberManager</span><span class="typ">: ServerMemberManager (注入)</span></li></ul><ul class="dgm-kv"><li><span class="fld">authConfigs</span><span class="typ">: AuthConfigs (注入，供服务端身份注入)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">@PostConstruct init()            :76-91</div><div class="dgm-note" style="border:none;background:none;padding:0;">注册 Subscriber + 首次 refresh()</div><div class="dgm-note" style="border:none;background:none;padding:0;">refresh(List&lt;Member&gt;)           :96-120</div><div class="dgm-note" style="border:none;background:none;padding:0;">新增成员建链 + 离场成员销毁</div><div class="dgm-note" style="border:none;background:none;padding:0;">memberClientKey(member)         :122-124</div><div class="dgm-note" style="border:none;background:none;padding:0;">"Cluster-" + member.getAddress()</div><div class="dgm-note" style="border:none;background:none;padding:0;">createRpcClientAndStart()       :125-161</div><ul class="dgm-kv"><li><span class="fld">buildRpcClient()</span><span class="typ">: 164-176</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">sendRequest(member, req)        :181-184 (默认 3000ms)</div><div class="dgm-note" style="border:none;background:none;padding:0;">sendRequest(member, req, to)    :193-207 (可指定超时)</div><div class="dgm-note" style="border:none;background:none;padding:0;">asyncRequest(member, req, cb)   :211-220</div><div class="dgm-note" style="border:none;background:none;padding:0;">sendRequestToAllMembers(req)    :227-231 (广播)</div><div class="dgm-note" style="border:none;background:none;padding:0;">onEvent(MembersChangeEvent)     :235-242 (成员变更触发)</div><div class="dgm-note" style="border:none;background:none;padding:0;">isRunning(member)               :250-256</div><div class="dgm-note" style="border:none;background:none;padding:0;">injectorServerIdentity(req)     :258-264</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">RpcClient (每成员一个 gRPC Client)</span><span class="s">serverListFactory → 固定为 member.address</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">request(req, timeout)   同步</div><div class="dgm-note" style="border:none;background:none;padding:0;">asyncRequest(req, cb)   异步</div><div class="dgm-note" style="border:none;background:none;padding:0;">start() / shutdown()</div><div class="dgm-note" style="border:none;background:none;padding:0;">threadPoolCoreSize=cpucount*2, max=*8</div></div></div></div>
 
 图中数据流：`init()` 启动时以 `allMembersWithoutSelf()` 为输入构建所有成员的 gRPC Client；此后成员拓扑变化以 `MembersChangeEvent` 事件形式到达 `onEvent()`，`onEvent()` 重新读取成员列表并调用 `refresh()`；`refresh()` 分两路处理——为新增成员 `createRpcClientAndStart()`，对已不在成员列表中的 `"Cluster-"` 前缀 Client 执行 `shutdown()`。业务侧 `sendRequest`/`asyncRequest`/`sendRequestToAllMembers` 均以 `memberClientKey(member)` 从 `RpcClientFactory` 取回对应 Client 后转发请求。
 
@@ -1423,41 +1091,7 @@ private void createRpcClientAndStart(Member member, ConnectionType type) throws 
 
 图 5-9 展示 `NacosConfigService` 的门面结构——实现 `ConfigService` 接口，内部委托 `ClientWorker`（内含 `ConfigRpcTransportClient`），并持有 `ConfigFilterChainManager`：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              <<interface>> ConfigService                    │
-│  + getConfig(dataId, group, timeoutMs): String              │
-│  + publishConfig(dataId, group, content): boolean           │
-│  + removeConfig(dataId, group): boolean                     │
-│  + addListener(dataId, group, listener): void               │
-│  + removeListener(dataId, group, listener): void            │
-│  + getConfigAndSignListener(...): String                    │
-└───────────────────────────────┬────────────────────────────────┘
-                                △ implements
-┌───────────────────────────────┴────────────────────────────────┐
-│                NacosConfigService (NacosConfigService.java:52)│
-│  ├─ worker: ClientWorker           (核心，内含 gRPC 传输)     │
-│  ├─ @Deprecated agent: ServerHttpAgent                        │
-│  ├─ namespace: String               (由 initNamespace 解析)   │
-│  ├─ configFilterChainManager: ConfigFilterChainManager        │
-│  ├─ 构造器 :75-89 → 参数校验→namespace→过滤器链→              │
-│  │          ConfigServerListManager→worker→agent              │
-│  ├─ getConfig/getConfigAndSignListener                       │
-│  ├─ addListener → worker.addTenantListeners                  │
-│  ├─ publishConfig/publishConfigCas                             │
-│  ├─ removeConfig/removeListener                                 │
-│  ├─ getServerStatus :246-250 (健康度 UP/DOWN)                │
-│  └─ shutDown :261 (关闭 worker)                              │
-└───────────────┬──────────────────────────────┬────────────────┘
-                ▼                              ▼
-┌─────────────────────────────┐   ┌──────────────────────────────┐
-│  ClientWorker (5.10 节)      │   │  ConfigFilterChainManager    │
-│  ├─ ConfigRpcTransportClient │   │  ├─ addFilter / doFilter    │
-│  ├─ cacheMap: AtomicRef<Map>│   │  └─ 加密/校验/占位处理器      │
-│  ├─ getServerConfig(...)    │   └──────────────────────────────┘
-│  └─ LongPolling + 本地快照   │
-└─────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; ConfigService</span><span class="s">+ getConfig(dataId, group, timeoutMs): String</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ publishConfig(dataId, group, content): boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ removeConfig(dataId, group): boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ addListener(dataId, group, listener): void</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ removeListener(dataId, group, listener): void</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getConfigAndSignListener(...): String</div></div></div><div class="dgm-note">△ implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosConfigService (NacosConfigService.java:52)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">worker</span><span class="typ">: ClientWorker           (核心，内含 gRPC 传输)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">@Deprecated agent: ServerHttpAgent</div><ul class="dgm-kv"><li><span class="fld">namespace</span><span class="typ">: String               (由 initNamespace 解析)</span></li></ul><ul class="dgm-kv"><li><span class="fld">configFilterChainManager</span><span class="typ">: ConfigFilterChainManager</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">构造器 :75-89 → 参数校验→namespace→过滤器链→</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConfigServerListManager→worker→agent</div><div class="dgm-note" style="border:none;background:none;padding:0;">getConfig/getConfigAndSignListener</div><div class="dgm-note" style="border:none;background:none;padding:0;">addListener → worker.addTenantListeners</div><div class="dgm-note" style="border:none;background:none;padding:0;">publishConfig/publishConfigCas</div><div class="dgm-note" style="border:none;background:none;padding:0;">removeConfig/removeListener</div><ul class="dgm-kv"><li><span class="fld">getServerStatus</span><span class="typ">: 246-250 (健康度 UP/DOWN)</span></li></ul><ul class="dgm-kv"><li><span class="fld">shutDown</span><span class="typ">: 261 (关闭 worker)</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientWorker (5.10 节)</span><span class="s">ConfigRpcTransportClient</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">cacheMap</span><span class="typ">: AtomicRef&lt;Map&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getServerConfig(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">LongPolling + 本地快照</div></div></div></div>
 
 图中关系说明：`NacosConfigService` 的门面职责是"接口适配 + 参数归一 + 过滤器链"，真正的配置读写（`getServerConfig`、`publishConfig`、`removeConfig`）全部委托 `ClientWorker` 完成，后者再下沉到 `ConfigRpcTransportClient` 走 gRPC 与本地快照。`ConfigFilterChainManager` 独立于通信链路，在发布前（`doFilter(cr, null)`）与获取后（`doFilter(null, cr)`）两处介入，对配置内容做对称的预处理与后处理。
 
@@ -1617,40 +1251,7 @@ private boolean publishConfigInner(String tenant, String dataId, String group, S
 
 图 5-10 展示 `ClientWorker` 的结构——外部 `CacheData` 缓存、内部 `ConfigRpcTransportClient` 长轮询引擎、以及 `CacheData` 的通知语义：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                         ClientWorker                        │
-│  implements Closeable (ClientWorker.java:112)                 │
-│  ├─ cacheMap: AtomicReference<Map<String, CacheData>>  :131  │
-│  ├─ configFilterChainManager                              :137│
-│  └─ agent: ConfigRpcTransportClient (内部类)             :145/611│
-│      ├─ multiTaskExecutor: Map<taskId, ExecutorService>       │
-│      ├─ listenExecutebell: ArrayBlockingQueue<Object>(1) :615  │
-│      ├─ start(): 启动调度线程                        :506/804│
-│      ├─ notifyListenConfig(): bell 写信号             :833-835│
-│      └─ executeConfigListen(): 全量监听检查           :838-890│
-├────────────────────────────────────────────────────────────────┤
-│  Worker 调度（constructor :506-517）                           │
-│  ScheduledExecutorService(initWorkerThreadCount)              │
-│   → agent.start() → startInternal()  →  while(...)           │
-│       listenExecutebell.poll(5s) → executeConfigListen()     │
-└────────────────────────────────────────────────────────────────┘
-        │ 持有 / 增删
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│  CacheData (CacheData.java:55)                                │
-│  ├─ dataId/group/tenant: final                            :127/129/131│
-│  ├─ listeners: CopyOnWriteArrayList<ManagerListenerWrap>  :133 │
-│  ├─ volatile md5: String                                 :135 │
-│  ├─ volatile content: String                              :147 │
-│  ├─ AtomicBoolean receiveNotifyChanged: (推送标记)        :160 │
-│  ├─ volatile isInitializing: (初始化态)                   :164 │
-│  ├─ AtomicBoolean isConsistentWithServer                  :169 │
-│  ├─ setContent(): 更新内容并重算 MD5                      :198-201│
-│  └─ checkListenerMd5(): 逐监听器比对 lastCallMd5 并回调  :342-348│
-│       → safeNotifyListener(): classloader 隔离+解密+receive  :419 │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientWorker</span><span class="s">implements Closeable (ClientWorker.java:112)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">cacheMap</span><span class="typ">: AtomicReference&lt;Map&lt;String, CacheData&gt;&gt;  :131</span></li></ul><ul class="dgm-kv"><li><span class="fld">configFilterChainManager</span><span class="typ">: 137</span></li></ul><ul class="dgm-kv"><li><span class="fld">agent</span><span class="typ">: ConfigRpcTransportClient (内部类)             :145/611</span></li></ul><ul class="dgm-kv"><li><span class="fld">multiTaskExecutor</span><span class="typ">: Map&lt;taskId, ExecutorService&gt;</span></li></ul><ul class="dgm-kv"><li><span class="fld">listenExecutebell</span><span class="typ">: ArrayBlockingQueue&lt;Object&gt;(1) :615</span></li></ul><ul class="dgm-kv"><li><span class="fld">start()</span><span class="typ">: 启动调度线程                        :506/804</span></li></ul><ul class="dgm-kv"><li><span class="fld">notifyListenConfig()</span><span class="typ">: bell 写信号             :833-835</span></li></ul><ul class="dgm-kv"><li><span class="fld">executeConfigListen()</span><span class="typ">: 全量监听检查           :838-890</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Worker 调度（constructor :506-517）</div><div class="dgm-note" style="border:none;background:none;padding:0;">ScheduledExecutorService(initWorkerThreadCount)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ agent.start() → startInternal()  →  while(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">listenExecutebell.poll(5s) → executeConfigListen()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CacheData (CacheData.java:55)</span><span class="s">dataId/group/tenant: final                            :127/</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">listeners</span><span class="typ">: CopyOnWriteArrayList&lt;ManagerListenerWrap&gt;  :133</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">volatile md5: String                                 :135</div><div class="dgm-note" style="border:none;background:none;padding:0;">volatile content: String                              :147</div><div class="dgm-note" style="border:none;background:none;padding:0;">AtomicBoolean receiveNotifyChanged: (推送标记)        :160</div><div class="dgm-note" style="border:none;background:none;padding:0;">volatile isInitializing: (初始化态)                   :164</div><div class="dgm-note" style="border:none;background:none;padding:0;">AtomicBoolean isConsistentWithServer                  :169</div><ul class="dgm-kv"><li><span class="fld">setContent()</span><span class="typ">: 更新内容并重算 MD5                      :198-201</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkListenerMd5()</span><span class="typ">: 逐监听器比对 lastCallMd5 并回调  :342-348</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ safeNotifyListener(): classloader 隔离+解密+receive  :419</div></div></div></div>
 
 图中数据流：`ClientWorker` 构造器新建 `ConfigRpcTransportClient` 并注入 `ScheduledExecutorService`，随后 `agent.start()`。`ConfigRpcTransportClient.startInternal()` 起一个长驻线程，阻塞在 `listenExecutebell.poll(5s)`——要么收到信号（推送/建连/增删监听），要么 5 秒超时兜底——随即执行 `executeConfigListen()`。该方法遍历 `cacheMap`，将缓存按键 `taskId` 分组，提交到 `multiTaskExecutor` 的各任务线程执行 `checkListenCache()` / `checkRemoveListenCache()`，通过 `ConfigBatchListenRequest` 与服务器批量比对，命中变更的 `CacheData` 走 `refreshContentAndCheck()` → `checkListenerMd5()` 回调监听器。
 
@@ -1849,50 +1450,9 @@ void checkListenerMd5() {
 
 图 5-11（ASCII）——`NacosNamingService` 组件协作：
 
-```
-┌────────────────────────────────────────────────────────────┐
-│                 <<interface>> NamingService               │
-│  registerInstance / batchRegisterInstance / subscribe     │
-│  getAllInstances / selectOneHealthyInstance              │
-│  deregisterInstance / getServicesOfServer / shutDown     │
-└──────────────────────────▲─────────────────────────────────┘
-                           │ implements
-┌──────────────────────────┴─────────────────────────────────┐
-│                    NacosNamingService                     │
-│  - namespace / notifierEventScope(UUID)                   │
-│  - serviceInfoHolder : ServiceInfoHolder   (本地缓存)     │
-│  - changeNotifier    : InstancesChangeNotifier (订阅表)   │
-│  - clientProxy       : NamingClientProxy    (远程代理)    │
-├────────────────────────────────────────────────────────────┤
-│  registerInstance  ─► NamingUtils.checkInstanceIsLegal    │
-│                       ─► clientProxy.registerService(...) │
-│  doSubscribe       ─► changeNotifier.registerListener     │
-│                       ─► clientProxy.subscribe(...)       │
-│  getServiceInfo    ─► serviceInfoHolder / FailoverReactor │
-│  getAllInstances   ─► getServiceInfo(...).getHosts()      │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; NamingService</span><span class="s">registerInstance / batchRegisterInstance / subscribe</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">getAllInstances / selectOneHealthyInstance</div><div class="dgm-note" style="border:none;background:none;padding:0;">deregisterInstance / getServicesOfServer / shutDown</div></div></div><div class="dgm-note">implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosNamingService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>namespace / notifierEventScope(UUID)</li><li>serviceInfoHolder : ServiceInfoHolder   (本地缓存)</li><li>changeNotifier    : InstancesChangeNotifier (订阅表)</li><li>clientProxy       : NamingClientProxy    (远程代理)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">registerInstance  ► NamingUtils.checkInstanceIsLegal</div><div class="dgm-note" style="border:none;background:none;padding:0;">► clientProxy.registerService(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">doSubscribe       ► changeNotifier.registerListener</div><div class="dgm-note" style="border:none;background:none;padding:0;">► clientProxy.subscribe(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">getServiceInfo    ► serviceInfoHolder / FailoverReactor</div><div class="dgm-note" style="border:none;background:none;padding:0;">getAllInstances   ► getServiceInfo(...).getHosts()</div></div></div></div>
 
-```
-┌──────────────┐   ┌─────────────────┐   ┌─────────────────────────┐
-│ServiceInfo   │   │InstancesChange   │   │NamingClientProxy        │
-│Holder(缓存)  │   │Notifier(订阅表)  │   │  ▲ 接口                 │
-└──────┬───────┘   └────────┬────────┘   └──────┬──────────────────┘
-       │                    │                   │ implements
-       └────────┬───────────┘                   │
-                ▼                               │
-   ┌────────────────────┐        ┌──────────────┴────────────────┐
-   │ FailoverReactor    │        │ NamingClientProxyDelegate     │
-   │ └ SPI→FailoverDS   │        │  ├ NamingGrpcClientProxy     │
-   └────────────────────┘        │  └ NamingHttpClientProxy      │
-                                 └──────────────┬────────────────┘
-                                                │ gRPC 双向流
-                                                ▼
-                                 ┌──────────────────────────────┐
-                                 │ NamingPushRequestHandler     │
-                                 │ (服务端推送 → ServiceInfoHolder)│
-                                 └──────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NamingClientProxy</span><span class="s">接口</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NamingClientProxyDelegate</span><span class="s">NamingGrpcClientProxy</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NamingHttpClientProxy</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NamingPushRequestHandler</span><span class="s">(服务端推送 → ServiceInfoHolder)</span></div><div class="dgm-box-b"></div></div></div>
 
 从关系图可提炼三条主线：其一，公开 API 与远程实现通过 `NamingClientProxy` 解耦，上层调接口、底层换通道互不影响；其二，缓存（`ServiceInfoHolder`）与订阅表（`InstancesChangeNotifier`）分离，订阅状态独立于数据缓存而存在，`getAllInstances` 无订阅时也可走一次查询；其三，容灾数据源从缓存中分流（`FailoverReactor`），避免故障场景污染健康缓存。整体是"门面 → 缓存/订阅 → 代理 → gRPC"四个层次单向依赖、低耦合的架构。
 
@@ -2043,49 +1603,7 @@ private ServiceInfo getServiceInfo(String serviceName, String groupName, List<St
 
 图 5-12 呈现客户端心跳的完整链路。连接层与实例层分开，图自上而下依次是客户端连接层、服务端连接层处理器、实例心跳调度框架、SPI 判定器、事件传播。
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│  客户端：RpcClient (gRPC 双向流长连接)                              │
-│    ├─ 定时 HealthCheckRequest → 服务端（连接保活，默认 5s）        │
-│    └─ heartbeat/InstanceRequest → 维持实例心跳                      │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ gRPC HealthCheckRequest
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│  服务端连接层：HealthCheckRequestHandler                           │
-│    handle(request, meta) → new HealthCheckResponse()  // 空响应    │
-│    @TpsControl(pointName = "HealthCheck")                          │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ 实例健康判定由 ClientBeatCheckTaskV2 承接
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│  IpPortBasedClient.init()                                          │
-│    ephemeral? → new ClientBeatCheckTaskV2(this)                    │
-│                → HealthCheckReactor.scheduleCheck(beatCheckTask)   │
-│    persistent → new HealthCheckTaskV2(this) // 主动探测分支        │
-└───────────────────────────────┬────────────────────────────────────┘
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│  ClientBeatCheckTaskV2.doHealthCheck()                             │
-│    for each service in client.getAllPublishedService():            │
-│      interceptorChain.doInterceptor(                               │
-│          new InstanceBeatCheckTask(client, service, instance))     │
-└───────────────────────────────┬────────────────────────────────────┘
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│  InstanceBeatCheckTask (static 初始化)                              │
-│    CHECKERS = [UnhealthyInstanceChecker, ExpiredInstanceChecker]   │
-│              + NacosServiceLoader.load(InstanceBeatChecker.class)  │
-│    passIntercept(): for each in CHECKERS: each.doCheck(...)        │
-└───────────────────────────────┬────────────────────────────────────┘
-                                ▼
-┌────────────────────┐      ┌───────────────────────────┐
-│ UnhealthyInstance   │      │ ExpiredInstanceChecker    │
-│  isHealthy && 超时   │      │ expire && 超时            │
-│  → setHealthy(false)│      │ → client.removeServiceInstance│
-│  → 发布 3 类事件     │      │ → 发布 3 类事件            │
-└────────────────────┘      └───────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 图左侧另有一条"上报恢复"路径：客户端通过心跳接口上报 beat 后，`InstanceOperatorClientImpl` 构造 `ClientBeatProcessorV2` 提交执行，在其 `run()` 中更新实例最后心跳时间，若实例此前不健康则置回健康并发布事件——这与右侧的超时判定构成"双向闭环"。
 
@@ -2304,48 +1822,7 @@ Nacos 客户端的本地缓存快照是一种客户端侧容灾能力：当 Naco
 
 图 5-13 展示本地缓存快照机制的组件结构。配置侧与命名侧并行，图为便于聚焦，以命名侧为主、配置侧为辅呈现。
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                          配置侧（Config）                          │
-│  LocalConfigInfoProcessor（静态工具类）                            │
-│    ├─ LOCAL_SNAPSHOT_PATH = {user.home}/nacos/config              │
-│    ├─ getFailover(server, dataId, group, tenant) → data路径读取   │
-│    ├─ getSnapshot(name, dataId, group, tenant) → snapshot读取     │
-│    ├─ saveSnapshot(env, dataId, group, tenant, config) → 落盘     │
-│    └─ getFailoverFile/getSnapshotFile → 路径计算                  │
-└────────────────────────────────────────────────────────────────────┘
-
-┌────────────────────────────────────────────────────────────────────┐
-│                          命名侧（Naming）                          │
-│  FailoverReactor（Closeable）                                      │
-│    ├─ NacosServiceLoader.load(FailoverDataSource.class) → 取首个  │
-│    ├─ init(): scheduleWithFixedDelay(FailoverSwitchRefresher)     │
-│    ├─ isFailoverSwitch() / isFailoverSwitch(serviceName)          │
-│    ├─ getService(key)  → serviceMap                              │
-│    └─ shutDown(): 关闭线程池                                      │
-│         │                                                         │
-│         │ inner class FailoverSwitchRefresher（每 5s）            │
-│         │  ├─ fSwitch = failoverDataSource.getSwitch()            │
-│         │  ├─ if enabled: 读 getFailoverData() → diff → 发事件    │
-│         │  └─ if disable(从true回切): diff 对比缓存 → 发事件 → 清空│
-└────────────────────────────────────────────────────────────────────┘
-         │
-         │ SPI 装载（取第一个实现）
-         ▼
-┌────────────────────────────────────────────────────────────────────┐
-│  FailoverDataSource <<interface>>                                 │
-│    ├─ FailoverSwitch getSwitch()        // 容灾开关              │
-│    └─ Map<String, FailoverData> getFailoverData() // 容灾数据     │
-│                  ▲                                                  │
-│                  │ implements                                      │
-│  DiskFailoverDataSource（默认实现）                                │
-│    ├─ failoverDir = CacheDirUtil.getCacheDir() + "/failover"      │
-│    ├─ FAILOVER_SWITCH = "failover-mode"（开关文件）               │
-│    ├─ getSwitch(): 读开关文件 lastModified 变化触发重新解析       │
-│    ├─ getFailoverData(): 返回已装载的 serviceMap                 │
-│    └─ FailoverFileReader: 扫描目录 → DiskCache.parseServiceInfo   │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 图中关键协作点：`FailoverReactor` 只依赖 `FailoverDataSource` 接口，数据源的选择由 SPI 决定；容灾开关（switch）与容灾数据（data）通过 `getSwitch`/`getFailoverData` 分开获取，`FailoverSwitchRefresher` 依据开关状态决定"装载容灾数据并广播实例变更"或"回切实时数据并清空容灾集合"。配置侧 `LocalConfigInfoProcessor` 则是纯静态、无状态的路径+IO 工具，其 snapshot 与 failover 两类文件分别对应"自动持久化"与"手动放置的强制替换"两种语义。
 
@@ -2562,53 +2039,11 @@ Nacos 依赖 Java 标准 SPI（Service Provider Interface，`java.util.ServiceLo
 
 图 5-14 展示 `NacosServiceLoader` 的加载流程与在插件体系中的位置。
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│                  NacosServiceLoader（common 模块）                 │
-│  static final Map<Class<?>, Collection<Class<?>>> SERVICES         │
-│     = new ConcurrentHashMap<>()                                    │
-│                                                                    │
-│  load(Class<T> service):                                           │
-│     if SERVICES.contains(service) → newServiceInstances(service)   │
-│     else → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回     │
-│  newServiceInstances(Class<T>): 从缓存按 class 无参构造            │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │ 首次 load：SPI 文件解析；再次 load：缓存实例化
-                                ▼
-┌────────────────────────────────────────────────────────────────────┐
-│               META-INF/services/{接口全限定名}                     │
-│  com.alibaba.nacos.naming.healthcheck.heartbeat.InstanceBeatChecker│
-│    └─ ...（UnhealthyInstanceChecker / ExpiredInstanceChecker）    │
-│  com.alibaba.nacos.client.naming.backups.FailoverDataSource        │
-│    └─ ...DiskFailoverDataSource                                    │
-│  com.alibaba.nacos.common.paramcheck.AbstractParamChecker         │
-│  com.alibaba.nacos.common.pathencoder.PathEncoder                 │
-│  com.alibaba.nacos.common.notify.EventPublisher                   │
-└───────────────────────────────┬────────────────────────────────────┘
-                                │
-   ┌────────────────────────────┼────────────────────────────┐
-   ▼                            ▼                            ▼
-┌──────────────┐      ┌──────────────────┐      ┌────────────────────┐
-│ 返回 Collection│      │ SERVICES 缓存     │      │ 统一异常包装        │
-│ LinkedHashSet│      │ 类解析一次        │      │ ServiceLoaderException│
-│ 保序去重     │      │ 实例可反复创建    │      │ (IllegalAccess/Instant)│
-└──────────────┘      └──────────────────┘      └────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 各加载方如何消费该服务：
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│  Consumer 使用示例（load 语义）                                    │
-│  InstanceBeatTask  → NacosServiceLoader.load(InstanceBeatChecker)   │
-│  FailoverReactor   → NacosServiceLoader.load(FailoverDataSource)    │
-│  NotifyCenter      → NacosServiceLoader.load(EventPublisher)         │
-│  ParamCheckerManager→ NacosServiceLoader.load(AbstractParamChecker)  │
-│                                                                    │
-│  Consumer 使用示例（newServiceInstances 语义，仅从缓存取）        │
-│  HttpRequestInstanceBuilder → newServiceInstances(InstanceExtensionHandler)│
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 关系图揭示两点核心机制：其一，"类缓存（`SERVICES`）+ 实例化（`newServiceInstance`）"分离，接口只被 SPI 解析一次，后续加载直接构造缓存类；其二，返回集合用 `LinkedHashSet`，保证加载顺序稳定且元素唯一，这是排序与去重的基础（Nacos 未借用 `@Order`，顺序即配置文件中的声明顺序，见 5.14.3.4）。图中 `Consumer 使用示例` 一行表明，`load` 与 `newServiceInstances` 两个入口的语义差异（前者会触发 SPI 解析、后者仅缓存取值）被各组件按需选用。
 

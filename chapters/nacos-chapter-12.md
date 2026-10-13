@@ -80,44 +80,7 @@ JAVA_OPT="${JAVA_OPT} -server -Xms2g -Xmx2g -Xmn1g"
 
 **JVM 堆分区架构图**：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                        JVM Heap Layout ( -Xmx8g )                            │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────┐│
-│  │                         Young Generation (-Xmn4g)                         ││
-│  │  ┌─────────────────────┬──────────────────────────────────────────┐    ││
-│  │  │    Eden (3.2g)     │         Survivor 0/1 (0.4g × 2)     │    ││
-│  │  │                    │                                          │    ││
-│  │  │  新创建的对象     │  经过多次 GC 存活的对象晋升到 Old    │    ││
-│  │  │  首次分配在 Eden  │  -XX:MaxTenuringThreshold=15          │    ││
-│  │  └─────────────────────┴──────────────────────────────────────────┘    ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                    │                                       │
-│                              对象晋升                                    │
-│                                    ▼                                       │
-│  ┌────────────────────────────────────────────────────────────────────────────┐│
-│  │                        Old Generation (4g)                               ││
-│  │                                                                      ││
-│  │  长期存活的对象：                                                     ││
-│  │  • ServiceManager.concurrentHashMap (临时实例注册表)                  ││
-│  │  • CacheData (配置缓存, ~1000条 × < 10KB)                         ││
-│  │  • gRPC Connection 元数据 (每连接 ~10–50KB)                         ││
-│  │  • HealthCheckTask 定时任务                                         ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────┐│
-│  │                      Metaspace (Non-Heap, 默认无上限)                   ││
-│  │                                                                      ││
-│  │  • 类元数据 (Class Metadata): 加载的类定义                          ││
-│  │  • 方法区 (Method Area): 方法字节码                                ││
-│  │  • 常量池 (Constant Pool): 字符串常量                               ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-│               图 12-1：JVM 堆分区架构（-Xmx8g 示例）                       │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JVM Heap Layout ( -Xmx8g )</span><span class="s">Young Generation (-Xmn4g)</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Eden (3.2g)               Survivor 0/1 (0.4g × 2)</span><span class="s">新创建的对象        经过多次 GC 存活的对象晋升到 Old</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">首次分配在 Eden     -XX:MaxTenuringThreshold=15</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Old Generation (4g)</span><span class="s">长期存活的对象：</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ServiceManager.concurrentHashMap (临时实例注册表)</li><li>CacheData (配置缓存, ~1000条 × &lt; 10KB)</li><li>gRPC Connection 元数据 (每连接 ~10–50KB)</li><li>HealthCheckTask 定时任务</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Metaspace (Non-Heap, 默认无上限)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>类元数据 (Class Metadata): 加载的类定义</li><li>方法区 (Method Area): 方法字节码</li><li>常量池 (Constant Pool): 字符串常量</li></ul></div></div></div>
 
 **集群规模与 JVM 堆推荐配置表**：
 
@@ -247,31 +210,7 @@ public class ServiceManager {
 
 每个 `Service` 对象（`naming/src/main/java/com/alibaba/nacos/naming/core/Service.java:35-58`）包含 `Map<String, Cluster> clusterMap`——每个 Cluster（`naming/src/main/java/com/alibaba/nacos/naming/core/Cluster.java:42-68`）包含 `Set<Instance>` 存储具体实例。三层嵌套 Map 结构的内存占用估算：
 
-```
-/* 图 12-1：JVM 堆内存分配结构 */
-
-┌────────────────────────────────────────────────────────────┐
-│              Nacos JVM 堆内存分配结构                       │
-├────────────────────────────────────────────────────────────┤
-│                                                            │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │               Young Generation                  │      │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐      │      │
-│  │  │  Eden   │  │ Survivor│  │ Survivor│      │      │
-│  │  │ (8/10) │  │  S0(1/) │  │  S1(1/) │      │      │
-│  │  └─────────┘  └─────────┘  └─────────┘      │      │
-│  │  -Xmn 控制 Young 大小                        │      │
-│  └──────────────────────────────────────────────────┘      │
-│                                                            │
-│  ┌──────────────────────────────────────────────────┐      │
-│  │               Old Generation                   │      │
-│  │  -Xmx - -Xmn = Old 大小                     │      │
-│  │  ServiceManager.serviceMap (长期驻留)        │      │
-│  │  gRPC Connection 元数据 (长期驻留)           │      │
-│  └──────────────────────────────────────────────────┘      │
-│                                                            │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-1</span><span class="tt">JVM 堆内存分配结构</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos JVM 堆内存分配结构</span><span class="s">Young Generation</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">-Xmn 控制 Young 大小</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Survivor</span><span class="s">S1(1/)</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Old Generation</span><span class="s">-Xmx - -Xmn = Old 大小</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ServiceManager.serviceMap (长期驻留)</div><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Connection 元数据 (长期驻留)</div></div></div></div>
 
 单个 Instance 对象（`api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:32-85`）包含 `instanceId`、`ip`、`port`、`clusterName`、`serviceName`、`metadata（Map<String, String>）` 等字段——每个实例的堆内存占用约 200 bytes 原始数据，加上 ConcurrentHashMap 的 Node 对象开销约 1KB per instance。对于 2000 个服务的集群（每个服务平均 50 个实例），ServiceManager 的内存占用约为 2000 × 50 × 1KB ≈ 100MB，远小于堆大小。
 
@@ -391,30 +330,7 @@ G1GC（Garbage-First Garbage Collector）是 Nacos 的推荐 GC 策略。相比 
 
 ### 核心 G1GC 参数详解
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                     G1GC Heap Region 分布示意图                                │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  Region Size = 2MB (由 -Xmx 决定:                                             │
-│    堆大小 ≤ 4GB  → Region Size = 2MB                                     │
-│    堆大小 ≤ 8GB  → Region Size = 4MB                                     │
-│    堆大小 ≤ 16GB → Region Size = 8MB)                                   │
-│                                                                          │
-│  ┌──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┬──────┐   │
-│  │  R1  │  R2  │  R3  │  R4  │  R5  │  R6  │  R7  │  R8  │ ...  │   │
-│  │Free  │Eden  │Eden  │Surv │Old   │Old   │Humong│Free  │      │   │
-│  └──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┴──────┘   │
-│                                                                          │
-│  Eden Regions:      新对象分配区                                        │
-│  Survivor Regions:  Young GC 存活对象拷贝目标                            │
-│  Old Regions:       晋升后的长寿命对象                                   │
-│  Humongous Regions: 对象大小 ≥ Region Size / 2 → 单独 Humongous Region │
-│  Free Regions:      未分配的空闲 Region                                  │
-│                                                                          │
-│  图 12-2：G1GC Heap Region 分布示意图                                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">G1GC Heap Region 分布示意图</span><span class="s">Region Size = 2MB (由 -Xmx 决定:</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">堆大小 ≤ 4GB  → Region Size = 2MB</div><div class="dgm-note" style="border:none;background:none;padding:0;">堆大小 ≤ 8GB  → Region Size = 4MB</div><div class="dgm-note" style="border:none;background:none;padding:0;">堆大小 ≤ 16GB → Region Size = 8MB)</div><div class="dgm-note" style="border:none;background:none;padding:0;">R1     R2     R3     R4     R5     R6     R7     R8    ...</div><div class="dgm-note" style="border:none;background:none;padding:0;">Free   Eden   Eden   Surv  Old    Old    Humong Free</div></div></div></div>
 
 **G1GC 核心参数表**：
 
@@ -705,29 +621,7 @@ done
 
 **GC 调优决策流程图**：
 
-```
-/* 图 12-3：GC 调优决策流程（基于 G1GC Nacos 2.5.3） */
-
-                          ┌──────────────────────────┐
-                          │ GC 问题诊断入口         │
-                          └──────────┬───────────────┘
-                                     │
-                          ┌──────────▼───────────┐
-                          │ jstat -gcutil <pid>    │
-                          │ 观察 FGC / OU / YGC    │
-                          └──────────┬───────────┘
-                                     │
-              ┌──────────────────────┼──────────────────────┐
-              │                      │                      │
-     ┌────────▼────────┐ ┌───────▼───────┐ ┌─────────▼────────┐
-     │ FGC > 0/天？    │ │ OU > 70%？    │ │ YGC > 20次/分？ │
-     └────────┬────────┘ └───────┬───────┘ └─────────┬────────┘
-              │ Yes              │ Yes              │ Yes
-     ┌────────▼────────┐ ┌───────▼───────┐ ┌─────────▼────────┐
-     │ 增大 -Xmx       │ │ 排查内存泄漏   │ │ 增大 -Xmn       │
-     │ 排查 Old Gen 泄漏│ │ jmap -histo    │ │ 调整 MaxTenuring │
-     └─────────────────┘ └───────────────┘ └──────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-3</span><span class="tt">GC 调优决策流程（基于 G1GC Nacos 2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GC 问题诊断入口</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">jstat -gcutil &lt;pid&gt;</span><span class="s">观察 FGC / OU / YGC</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">C &gt; 20次/分？</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Yes                Yes                Yes</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">n</span><span class="s">整 MaxTenuring</span></div><div class="dgm-box-b"></div></div></div>
 
 ### 设计模式分析
 
@@ -1027,39 +921,7 @@ JAVA_OPT="${JAVA_OPT} -XX:+PrintAdaptiveSizePolicy"
 
 **GC 日志生命周期流程图**：
 
-```
-/* 图 12-5：GC 日志生命周期（从生成到分析） */
-
-┌──────────────────────────────────────────────────────────────────┐
-│                    GC 日志生命周期                              │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐      │
-│  │ JVM 启动 │───→│ GC 事件发生   │───→│ 写入 gc.log     │      │
-│  │ -Xloggc  │    │ Young/Mixed/  │    │ (File Rotation)  │      │
-│  │ 参数指定 │    │ Full GC       │    │ 10Files×100MB   │      │
-│  └──────────┘    └──────────────┘    └────────┬─────────┘      │
-│                                                  │                │
-│                    ┌─────────────────────────────┘                │
-│                    │                                              │
-│         ┌──────────▼──────────┐                               │
-│         │ GC 日志分析工具       │                               │
-│         ├──────────────────────┤                               │
-│         │ GCViewer (本地)      │                               │
-│         │ gceasy.io (在线)     │                               │
-│         └──────────┬──────────┘                               │
-│                    │                                              │
-│         ┌──────────▼──────────┐                               │
-│         │ 关键分析指标          │                               │
-│         ├──────────────────────┤                               │
-│         │ • GC 暂停趋势        │                               │
-│         │ • 堆占用变化          │                               │
-│         │ • GC 类型分布        │                               │
-│         │ • Full GC 发生频率    │                               │
-│         └──────────────────────┘                               │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-5</span><span class="tt">GC 日志生命周期（从生成到分析）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GC 日志生命周期</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">c.log</span><span class="s">(File Rotation)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Files×100MB</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GC 日志分析工具</span><span class="s">GCViewer (本地)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">gceasy.io (在线)</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">关键分析指标</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>GC 暂停趋势</li><li>堆占用变化</li><li>GC 类型分布</li><li>Full GC 发生频率</li></ul></div></div></div></div></div>
 
 ### 设计模式分析
 
@@ -1252,35 +1114,22 @@ Nacos 2.5.3 作为高并发服务基础设施，内部运行大量线程：gRPC 
 
 ### 线程栈大小内存占用计算
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│               Nacos 线程分类 & 栈内存占用计算                               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  线程池                        线程数      栈大小   栈内存                │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│  gRPC Server SDK 线程池        200        512KB     100MB               │
-│  gRPC Server Cluster 线程池    200        512KB     100MB               │
-│  Distro 同步线程池            20         512KB     10MB                │
-│  Distro Verify 线程           3          512KB     1.5MB               │
-│  JRaft Leader 选举线程       5          512KB     2.5MB               │
-│  JRaft AppendEntries 线程    5          512KB     2.5MB               │
-│  JRaft Snapshot 线程         3          512KB     1.5MB               │
-│  Raft Log 复制线程           5          512KB     2.5MB               │
-│  健康检查线程(HealthCheck)   10         512KB     5MB                 │
-│  Push 推送线程                20         512KB     10MB                │
-│  gRPC 连接事件线程           50         512KB     25MB                │
-│  Config 长轮询线程           10         512KB     5MB                 │
-│  Tomcat HTTP 线程            50         512KB     25MB                │
-│  JVM 内部线程 (GC/Compiler) 30          512KB     15MB                │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│  总计                         ~611      512KB     ~306MB                 │
-│                                                                          │
-│  若 -Xss256k:                  ~611      256KB     ~153MB (节约 ~153MB) │
-│                                                                          │
-│               图 12-3：Nacos 线程分类 & 栈内存占用计算                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-3</span><span class="tt">Nacos 线程分类与栈内存占用计算</span></div><table><thead><tr><th>线程池</th><th>线程数</th><th>栈大小</th><th>栈内存</th></tr></thead><tbody>
+<tr><td>gRPC Server SDK 线程池</td><td>200</td><td>512KB</td><td>100MB</td></tr>
+<tr><td>gRPC Server Cluster 线程池</td><td>200</td><td>512KB</td><td>100MB</td></tr>
+<tr><td>Distro 同步线程池</td><td>20</td><td>512KB</td><td>10MB</td></tr>
+<tr><td>Distro Verify 线程</td><td>3</td><td>512KB</td><td>1.5MB</td></tr>
+<tr><td>JRaft Leader 选举线程</td><td>5</td><td>512KB</td><td>2.5MB</td></tr>
+<tr><td>JRaft AppendEntries 线程</td><td>5</td><td>512KB</td><td>2.5MB</td></tr>
+<tr><td>JRaft Snapshot 线程</td><td>3</td><td>512KB</td><td>1.5MB</td></tr>
+<tr><td>Raft Log 复制线程</td><td>5</td><td>512KB</td><td>2.5MB</td></tr>
+<tr><td>健康检查线程（HealthCheck）</td><td>10</td><td>512KB</td><td>5MB</td></tr>
+<tr><td>Push 推送线程</td><td>20</td><td>512KB</td><td>10MB</td></tr>
+<tr><td>gRPC 连接事件线程</td><td>50</td><td>512KB</td><td>25MB</td></tr>
+<tr><td>Config 长轮询线程</td><td>10</td><td>512KB</td><td>5MB</td></tr>
+<tr><td>Tomcat HTTP 线程</td><td>50</td><td>512KB</td><td>25MB</td></tr>
+<tr><td>JVM 内部线程（GC / Compiler）</td><td>30</td><td>512KB</td><td>15MB</td></tr>
+</tbody><tfoot><tr><td><strong>总计</strong></td><td><strong>~611</strong></td><td>512KB</td><td><strong>~306MB</strong></td></tr><tr><td>若 -Xss256k</td><td>~611</td><td>256KB</td><td>~153MB（节约 ~153MB）</td></tr></tfoot></table></div>
 
 **栈大小选择推荐表**：
 
@@ -1476,16 +1325,14 @@ $ jstack <nacos_pid> | grep -A 120 "JRaftSnapshotExecutor-1"
 
 排查发现，集群中某个命名空间下的 `Service` 对象包含嵌套层级极深的 `metadata` Map。具体结构如下：
 
-```
-Service "com.example.deeply.nested.v1.layer1.layer2...layerN.service"
+<div class="dgm"><div class="dgm-tree">Service "com.example.deeply.nested.v1.layer1.layer2...layerN.service"
   └── Cluster "DEFAULT"
        └── Instance (1个)
-            └── metadata (Map<String, String>)
+            └── metadata (Map&lt;String, String&gt;)
                  ├── "level1_key" → "value"
                  ├── "level2" → "{"sub_level": {...}}"  ← 嵌套 JSON
                  ├── "level3" → "{...}"  ← 继续递归展开
-                 └── ... 约 50 层 metadata 嵌套
-```
+                 └── ... 约 50 层 metadata 嵌套</div></div>
 
 Nacos 的 `Instance.serializeInstance()`（`api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:142`）在序列化时递归遍历 `metadata` Map，每层递归进入一个嵌套 JSON 对象，当嵌套深度超过 50 层时，加上 JRaft Snapshot 框架自身的栈帧开销（约 30-40 层框架），总递归深度超过 280 层，直接冲破 `-Xss256k` 限制。
 
@@ -1577,34 +1424,7 @@ Nacos 2.x 的核心通信层基于 gRPC 双向流——客户端与服务端之�
 
 ### 核心线程池配置参数
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos gRPC 线程池模型                                        │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────┐│
-│  │              gRPC Server SDK 线程池 (处理客户端请求)                    ││
-│  │                                                                      ││
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐       ││
-│  │  │ Thread 1│ │ Thread 2│ │ Thread 3│ │ ...     │ │Thread N│       ││
-│  │  │(服务注册)│ │(心跳)  │ │(配置查询)│ │         │ │        │       ││
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘       ││
-│  │  core=50, max=200, queue=500                                        ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────┐│
-│  │           gRPC Server Cluster 线程池 (集群间通信)                      ││
-│  │                                                                      ││
-│  │  ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐ ┌─────────┐       ││
-│  │ │ Thread 1│ │ Thread 2│ │ Thread 3│ │ ...     │ │Thread M│       ││
-│  │ │(Distro) │ │(JRaft) │ │(Distro) │ │         │ │        │       ││
-│  │  └─────────┘ └─────────┘ └─────────┘ └─────────┘ └─────────┘       ││
-│  │  core=50, max=200, queue=500                                        ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-│         图 12-4：Nacos gRPC 线程池模型                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos gRPC 线程池模型</span><span class="s">gRPC Server SDK 线程池 (处理客户端请求)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">core=50, max=200, queue=500</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC Server Cluster 线程池 (集群间通信)</span><span class="s">core=50, max=200, queue=500</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">hread M</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **线程池参数表**：
 
@@ -1893,34 +1713,7 @@ Nacos 2.5.3 的推送（Push）机制是配置变更通知和服务变更通知�
 
 **推送线程池架构**：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    Nacos Push 线程池模型                                      │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  变更事件源                        Push Queue (阻塞队列)                 │
-│  ─────────────                    ┌──────────────────────────────────┐     │
-│  Config publishConfig()           │ PushTask1 │ PushTask2 │ ...    │     │
-│  ─────────────────────────────    └──────────────────────────────────┘     │
-│  Naming registerInstance()                     │                        │
-│  ─────────────────────────────                  │ 消费                    │
-│                                                ▼                        │
-│  ┌──────────────────────────────────────────────────────────────────────────┐│
-│  │                Push Thread Pool (push.thread.count)                    ││
-│  │                                                                      ││
-│  │  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐            ││
-│  │  │ Thread1│ │ Thread2│ │ Thread3│ │ ...   │ │ Thread N│            ││
-│  │  │ (消费 │ │ (消费 │ │ (消费 │ │       │ │        │            ││
-│  │  │PushTask)│ │PushTask)│ │PushTask)│ │       │ │        │            ││
-│  │  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘            ││
-│  │                                                                      ││
-│  │  每个线程: 从队列取出 PushTask →                                 ││
-│  │          → 通过 gRPC Stream 推送给订阅客户端                        ││
-│  └────────────────────────────────────────────────────────────────────────────┘│
-│                                                                          │
-│            图 12-5：Nacos Push 线程池模型                                   │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos Push 线程池模型</span><span class="s">变更事件源                        Push Queue (阻塞队列)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Naming registerInstance()</div><div class="dgm-note" style="border:none;background:none;padding:0;">消费</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Push Thread Pool (push.thread.count)</span><span class="s">每个线程: 从队列取出 PushTask →</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 通过 gRPC Stream 推送给订阅客户端</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushTask1   PushTask2   ...</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **推送线程池参数表**：
 
@@ -2093,37 +1886,7 @@ Nacos 2.5.3 的健康检查机制分客户端和服务端两层：
 
 ### 核心健康检查参数详解
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 健康检查参数时序关系                                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  客户端                                                       服务端     │
-│  ───────                                                     ───────     │
-│                                                                          │
-│  heartbeat.interval = 5000ms                                               │
-│  ┌────────────┐         gRPC Stream                    ┌──────────────────┐  │
-│  │ BeatReactor│ ──── HeartBeatRequest ───→          │ HealthCheckTask  │  │
-│  │            │ ←── HeartBeatResponse ───          │                 │  │
-│  └────────────┘                                    └──────────────────┘  │
-│                                                                          │
-│  时间线:                                                                 │
-│  ├──── T0 ──── T0+5s ──── T0+10s ──── T0+15s ──── T0+20s ───     │
-│  │     ↑           ↑            ↑            ↑            ↑               │
-│  │   心跳1       心跳2        心跳3        心跳4        心跳5            │
-│  │                                                                      │
-│  服务端: 收到心跳 → 更新 lastHeartbeatTime = now()                      │
-│           check.interval = 5000ms 定期检查:                               │
-│             now() - lastHeartbeatTime > heartbeat.timeout(=15000ms)?      │
-│             →  YES: 标记实例 healthy=false                                │
-│             →  NO:  保持实例 healthy=true                                 │
-│                                                                          │
-│  expire.time = 30000ms:                                                   │
-│    实例 healthy=false 持续超过 expire.time → 自动剔除实例                │
-│                                                                          │
-│     图 12-6：Nacos 健康检参数时序关系                                      │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-6</span><span class="tt">Nacos 健康检查参数时序关系</span></div><div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;align-items:center;"><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">客户端</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">heartbeat.interval</span> = 5000ms</li></div><div class="dgm-card"><div class="h"><span class="t">BeatReactor</span></div><ul><li>→ HeartBeatRequest（gRPC Stream）</li><li>← HeartBeatResponse</li></ul></div></div></div><div class="dgm-link"><span class="lbl">gRPC Stream</span><div class="dgm-harrow dgm-harrow--accent"></div><div class="dgm-harrow dgm-harrow--accent dgm-harrow--left"></div></div><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">服务端</span></div><div class="dgm-box-b"><div class="dgm-card"><div class="h"><span class="t">HealthCheckTask</span></div></div><div class="dgm-kv"><li>收到心跳 → 更新 <span class="fld">lastHeartbeatTime = now()</span></li><li><span class="fld">check.interval</span> = 5000ms 定期检查：</li><li>&nbsp;&nbsp;now() − lastHeartbeatTime &gt; heartbeat.timeout(=15000ms)？</li><li>&nbsp;&nbsp;→ YES：标记实例 healthy=false</li><li>&nbsp;&nbsp;→ NO：保持实例 healthy=true</li></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">心跳时间线</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="n">T0</span><span class="t">心跳 1</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+5s</span><span class="t">心跳 2</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+10s</span><span class="t">心跳 3</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+15s</span><span class="t">心跳 4</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+20s</span><span class="t">心跳 5</span></div></div></div></div><div class="dgm-note" style="margin-top:12px;"><b>expire.time = 30000ms：</b>实例 healthy=false 持续超过 expire.time → 自动剔除实例</div></div>
 
 **健康检查参数表**：
 
@@ -2325,12 +2088,10 @@ private void deleteIp(Client client, Service service, InstancePublishInfo instan
 
 **健康检查超时剔除的完整时序**：
 
-```
-ClientBeatCheckTaskV2.doHealthCheck()        // ClientBeatCheckTaskV2.java:55-60
+<div class="dgm"><div class="dgm-cap"><span class="no">图示</span><span class="tt"></span></div><div class="dgm-tree">ClientBeatCheckTaskV2.doHealthCheck()        // ClientBeatCheckTaskV2.java:55-60
     └─ InstanceBeatCheckTask.passIntercept() // 遍历 CHECKERS
-        ├─ UnhealthyInstanceChecker.doCheck()  // 超时 -> setHealthy(false) + ServiceChangedEvent
-        └─ ExpiredInstanceChecker.doCheck()    // 更久未心跳 -> removeServiceInstance + 注销事件
-```
+        ├─ UnhealthyInstanceChecker.doCheck()  // 超时 -&gt; setHealthy(false) + ServiceChangedEvent
+        └─ ExpiredInstanceChecker.doCheck()    // 更久未心跳 -&gt; removeServiceInstance + 注销事件</div></div>
 
 真实剔除分两阶段：`UnhealthyInstanceChecker` 先标记不健康（阈值 `DEFAULT_HEART_BEAT_TIMEOUT`），`ExpiredInstanceChecker` 再在更长时间（`DEFAULT_IP_DELETE_TIMEOUT`）后真正删除实例。两阶段分离使临时网络抖动先落为“不健康”而非直接删除，避免误删后重建的抖动。
 
@@ -2354,44 +2115,7 @@ Nacos 2.5.3 服务端运行在高并发场景下——单个 Nacos 节点可能�
 
 **防雪崩保护状态机**：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 防雪崩保护状态机                                        │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                          ┌──────────────────┐                              │
-│                          │   正常运行状态    │                              │
-│                          │  CPU < threshold  │                              │
-│                          └────────┬─────────┘                              │
-│                                   │                                       │
-│                     CPU 超过 threshold                                      │
-│                                   │                                       │
-│                                   ▼                                       │
-│                          ┌──────────────────┐                              │
-│                          │   保护触发状态    │                              │
-│                          │  CPU ≥ threshold  │                              │
-│                          └────────┬─────────┘                              │
-│                                   │                                       │
-│                     ┌──────────────┼──────────────┐                       │
-│                     │              │              │                       │
-│                     ▼              ▼              ▼                       │
-│              ┌──────────┐ ┌──────────┐ ┌──────────┐                    │
-│              │ 拒绝新   │ │ 返回 503 │ │ 记录日志 │                    │
-│              │ 客户端   │ │ Service   │ │ overload │                    │
-│              │ 连接请求 │ │Unavailable│ │  事件   │                    │
-│              └──────────┘ └──────────┘ └──────────┘                    │
-│                                   │                                       │
-│                     CPU 降至 threshold 以下 + 冷却期过后                   │
-│                                   │                                       │
-│                                   ▼                                       │
-│                          ┌──────────────────┐                              │
-│                          │   恢复正常状态    │                              │
-│                          │  CPU < threshold  │                              │
-│                          └──────────────────┘                              │
-│                                                                          │
-│          图 12-7：Nacos 防雪崩保护状态机                                    │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 防雪崩保护状态机</span><span class="s">CPU 超过 threshold</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">图 12-7：Nacos 防雪崩保护状态机</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">正常运行状态</span><span class="s">CPU &lt; threshold</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">保护触发状态</span><span class="s">CPU ≥ threshold</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">503     记</span><span class="s">rvice</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ailable</div><div class="dgm-note" style="border:none;background:none;padding:0;">threshold</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">恢复正常状态</span><span class="s">CPU &lt; thr</span></div></div></div></div></div></div></div>
 
 **防雪崩保护参数表**：
 
@@ -2614,28 +2338,7 @@ HikariCP 是 Nacos 2.5.3 默认的 JDBC 连接池实现（替代 Tomcat DBCP）�
 
 ### 核心连接池参数详解
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                HikariCP 连接池生命周期                                           │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  请求线程                    HikariCP连接池             MySQL Server        │
-│  ─────────                 ┌────────────────────┐    ┌──────────────────┐  │
-│                           │                    │    │                  │  │
-│  ConfigController          │  ┌───┐ ┌───┐     │    │  MySQL           │  │
-│  publishConfig() ──────→ │  │ C1│ │ C2│...  │──→ │  Nacos Config DB │  │
-│                           │  └───┘ └───┘     │    │                  │  │
-│                           │  Active = 5       │    │                  │  │
-│                           │  Idle = 5        │    │                  │  │
-│                           │  Total = 10      │    │                  │  │
-│                           │  Max = 20        │    │                  │  │
-│                           │  Pending = 0     │    │                  │  │
-│                           │                    │    │                  │  │
-│                           └────────────────────┘    └──────────────────┘  │
-│                                                                          │
-│      图 12-8：HikariCP 连接池生命周期                                       │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">HikariCP 连接池生命周期</span><span class="s">请求线程                    HikariCP连接池             MySQL Server</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 12-8：HikariCP 连接池生命周期</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL</span><span class="s">cos Config DB</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **HikariCP 核心参数表**：
 
@@ -2821,37 +2524,7 @@ for (HikariDataSource ds : dataSourceList) {
 
 **HikariCP 连接池初始化与借还链路（ASCII 图）**
 
-```
-            ┌──────────────────────────────────────────────────────┐
-            │        ExternalDataSourceServiceImpl                 │
-            │  init(): isUseExternalDB 判定（ExternalDataSource    │
-            │          ServiceImpl.java:114）                       │
-            └────────────────────────┬─────────────────────────────┘
-                                     │ reload()（:130）
-                                     ▼
-            ┌──────────────────────────────────────────────────────┐
-            │  ExternalDataSourceProperties.build()                │
-            │  绑定 db.* 配置，遍历 db.num 构建多库（:75-101）        │
-            └───────────────┬──────────────────────────────────────┘
-                            │ 每个 index 调用
-                            ▼
-            ┌──────────────────────────────────────────────────────┐
-            │  DataSourcePoolProperties.build()（:62-66）           │
-            │  默认: maxPool=20 minIdle=2 connTimeout=3s           │
-            │        idleTimeout=10min（:48-55）                    │
-            └───────────────┬──────────────────────────────────────┘
-                            │ setJdbcUrl / user / pwd + TEST_QUERY
-                            ▼
-            ┌──────────────────────────────────────────────────────┐
-            │  HikariDataSource（:91）→ jt / sql 执行                │
-            │  checkDataSourceConnection（ConnectionCheckUtil:33）  │
-            │  建池阶段预占连接做可用性校验                          │
-            └───────────────┬──────────────────────────────────────┘
-                            │ 借出 / 归还
-                            ▼
-        SelectMasterTask / CheckDbHealthTask 周期占用连接
-        （ExternalDataSourceServiceImpl.java:246-258、:122-125）
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalDataSourceServiceImpl</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: isUseExternalDB 判定（ExternalDataSource</span></li></ul><ul class="dgm-kv"><li><span class="fld">ServiceImpl.java</span><span class="typ">: 114）</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalDataSourceProperties.build()</span><span class="s">绑定 db.* 配置，遍历 db.num 构建多库（:75-101）</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DataSourcePoolProperties.build()（:62-66）</span><span class="s">默认: maxPool=20 minIdle=2 connTimeout=3s</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">idleTimeout=10min（:48-55）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HikariDataSource（:91）→ jt / sql 执行</span><span class="s">checkDataSourceConnection（ConnectionCheckUtil:33）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">建池阶段预占连接做可用性校验</div></div></div></div>
 
 该图对应连接池的「构建 → 校验 → 借出 → 归还」闭环：`build()` 阶段预占连接做可用性校验（`ConnectionCheckUtil.java:33`），运行期再被 `SelectMasterTask`（`ExternalDataSourceServiceImpl.java:246-258`）与 `CheckDbHealthTask`（:122-125）周期占用。这些预占与周期占用都会计入 `maximumPoolSize`——调大池参数时需为它们预留冗余，避免探测任务挤兑业务连接。
 
@@ -3009,40 +2682,7 @@ max_connections =
 
 **集群规模与 MySQL 配置推荐表**：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                MySQL 连接数规划 & Buffer Pool 大小推荐                       │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  集群规模      节点数    MySQL 配置        推荐值         物理内存建议     │
-│  ─────────────────────────────────────────────────────────────────────────    │
-│  小型           3                                                         │
-│    ┌──────────────────────────────────────────────────────────────────────┐ │
-│    │ max_connections            200                                     │ │
-│    │ innodb_buffer_pool_size   2G                                      │ │
-│    │ innodb_log_file_size      512M                                   │ │
-│    │ MySQL 版本               8.0+                                    │ │
-│    └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  中型           5                                                         │
-│    ┌──────────────────────────────────────────────────────────────────────┐ │
-│    │ max_connections            300                                     │ │
-│    │ innodb_buffer_pool_size   4G                                      │ │
-│    │ innodb_log_file_size      1G                                      │ │
-│    │ MySQL 版本               8.0+                                    │ │
-│    └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│  大型           7                                                         │
-│    ┌──────────────────────────────────────────────────────────────────────┐ │
-│    │ max_connections            400                                     │ │
-│    │ innodb_buffer_pool_size   8G                                      │ │
-│    │ innodb_log_file_size      2G                                      │ │
-│    │ MySQL 版本               8.0+                                    │ │
-│    └──────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│       图 12-9：MySQL 连接数规划 & Buffer Pool 大小推荐                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">MySQL 连接数规划 &amp; Buffer Pool 大小推荐</span><span class="s">集群规模      节点数    MySQL 配置        推荐值         物理内存建议</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">小型           3</div><div class="dgm-note" style="border:none;background:none;padding:0;">中型           5</div><div class="dgm-note" style="border:none;background:none;padding:0;">大型           7</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 12-9：MySQL 连接数规划 &amp; Buffer Pool 大小推荐</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">max_connections            200</span><span class="s">innodb_buffer_pool_size   2G</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">innodb_log_file_size      512M</div><div class="dgm-note" style="border:none;background:none;padding:0;">MySQL 版本               8.0+</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">max_connections            300</span><span class="s">innodb_buffer_pool_size   4G</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">innodb_log_file_size      1G</div><div class="dgm-note" style="border:none;background:none;padding:0;">MySQL 版本               8.0+</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">max_connections            400</span><span class="s">innodb_buffer_pool_size   8G</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">innodb_log_file_size      2G</div><div class="dgm-note" style="border:none;background:none;padding:0;">MySQL 版本               8.0+</div></div></div></div></div></div>
 
 **连接数计算示例**（中型集群）：
 
@@ -3191,15 +2831,7 @@ rpl_semi_sync_slave_enabled = 1
 
 **多节点连接数规划图（ASCII）**
 
-```
-   Nacos 集群（3 节点示例）              MySQL 服务端
-┌──────────────────────────────┐        ┌───────────────────────────────┐
-│ 节点 A   池20 + 探测/管理~20 │        │  max_connections = 3×40 + 20  │
-│ 节点 B   池20 + 探测/管理~20 +──JDBC──▶│                 = 140          │
-│ 节点 C   池20 + 探测/管理~20 │        │  3×20(池) + 3×~20(探测/管理)   │
-└──────────────────────────────┘        │  + 20(安全缓冲)                 │
-                                        └───────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">节点 A   池20 + 探测/管理~20</span><span class="s">节点 B   池20 + 探测/管理~20 +JDBC</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">节点 C   池20 + 探测/管理~20</div></div></div></div>
 
 每节点连接组成（对齐 `DataSourcePoolProperties.java:42` 的 `maximumPoolSize=20`）：
 
@@ -3247,30 +2879,7 @@ Nacos 性能压测需要根据测试目标选择合适的工具——不同工�
 
 ### 压测工具对比
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│               Nacos 压测工具选择决策树                                       │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                          ┌──────────────────────┐                           │
-│                          │ 测试目标是什么？     │                           │
-│                          └──────────┬───────────┘                           │
-│                                     │                                     │
-│              ┌──────────────────────┼──────────────────────┐                │
-│              │                      │                      │                │
-│     ┌────────▼────────┐ ┌───────▼───────┐ ┌─────────▼────────┐       │
-│     │ 测试单个方法    │ │ 测试 HTTP API  │ │ 测试 gRPC API    │       │
-│     │ 吞吐量          │ │ QPS            │ │ QPS              │       │
-│     └────────┬────────┘ └───────┬───────┘ └─────────┬────────┘       │
-│              │                  │                  │                     │
-│     ┌────────▼────────┐ ┌───────▼───────┐ ┌─────────▼────────┐       │
-│     │ JHM            │ │ JMeter         │ │ JMeter + gRPC   │       │
-│     │ (Microbenchmark)│ │ (HTTP Sampler) │ │ Sampler Plugin   │       │
-│     └─────────────────┘ └────────────────┘ └──────────────────┘       │
-│                                                                          │
-│          图 12-10：Nacos 压测工具选择决策树                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 压测工具选择决策树</span><span class="s">图 12-10：Nacos 压测工具选择决策树</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">测试目标是什么？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">C API</span><span class="s">PS</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JMeter + gRPC</span><span class="s">Sampler Plugin</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **压测工具详细对比表**：
 
@@ -3380,48 +2989,7 @@ QPS = TPS（对于查询操作）
 
 **压测结果分析流程图**：
 
-```
-/* 图 12-12：压测结果分析与性能回归检测流程 */
-
-┌──────────────────────────────────────────────────────────────────┐
-│              压测结果分析与性能回归检测流程                        │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  ┌──────────┐    ┌──────────────┐    ┌──────────────────┐      │
-│  │ JMeter   │───→│ 生成 .jtl   │───→│ 生成 HTML 报告   │      │
-│  │ 压测完成 │    │ 结果文件     │    │ jmeter -e -o     │      │
-│  └──────────┘    └──────────────┘    └────────┬─────────┘      │
-│                                                  │                │
-│                    ┌─────────────────────────────┘                │
-│                    │                                              │
-│         ┌──────────▼──────────┐                               │
-│         │ 关键指标提取          │                               │
-│         ├──────────────────────┤                               │
-│         │ • Average（平均响应） │                               │
-│         │ • P99 / P99.9 延迟   │                               │
-│         │ • TPS / QPS          │                               │
-│         │ • Error Rate         │                               │
-│         └──────────┬──────────┘                               │
-│                    │                                              │
-│         ┌──────────▼──────────┐                               │
-│         │ 性能基线对比         │                               │
-│         ├──────────────────────┤                               │
-│         │ 对比上次压测基线      │                               │
-│         │ TPS ±10% = 正常波动  │                               │
-│         │ TPS -20% = 性能回归   │                               │
-│         └──────────┬──────────┘                               │
-│                    │                                              │
-│         ┌──────────▼──────────┐                               │
-│         │ 回归检测动作         │                               │
-│         ├──────────────────────┤                               │
-│         │ TPS 下降 > 20%:      │                               │
-│         │ → 检查最近代码变更   │                               │
-│         │ → 对比 GC 日志       │                               │
-│         │ → 检查 DB 连接池     │                               │
-│         └──────────────────────┘                               │
-│                                                                  │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-12</span><span class="tt">压测结果分析与性能回归检测流程</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">压测结果分析与性能回归检测流程</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">HTML 报告</span><span class="s">-e -o</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">关键指标提取</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>Average（平均响应）</li><li>P99 / P99.9 延迟</li><li>TPS / QPS</li><li>Error Rate</li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">性能基线对比</span><span class="s">对比上次压测基线</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">TPS ±10% = 正常波动</div><div class="dgm-note" style="border:none;background:none;padding:0;">TPS -20% = 性能回归</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">回归检测动作</span><span class="s">TPS 下降 &gt; 20%:</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 检查最近代码变更</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 对比 GC 日志</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 检查 DB 连接池</div></div></div></div></div></div>
 
 ### Trade-off 分析
 
@@ -3958,38 +3526,7 @@ jmeter -n -t nacos-perf-test-plan.jmx -R 192.168.1.11,192.168.1.12,192.168.1.13 
 
 **JMeter 分布式压测拓扑**：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    JMeter 分布式压测拓扑                                       │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────┐                                         │
-│  │  JMeter Master (控制节点)    │                                        │
-│  │  - 调度测试计划              │                                        │
-│  │  - 聚合 Slave 结果           │                                        │
-│  │  - 生成 Dashboard 报告        │                                        │
-│  └──────────┬──────────────────┘                                         │
-│             │ RMI (Remote Method Invocation)                               │
-│             │                                                             │
-│  ┌──────────┼──────────┐                                                │
-│  │          │          │                                                │
-│  ▼          ▼          ▼                                                │
-│ ┌────────┐┌────────┐┌────────┐                                          │
-│ │ Slave 1││ Slave 2││ Slave 3│  ← 每台压测 Slave (16核 32GB)        │
-│ │100线程 ││100线程 ││100线程 │    共 300 并发线程                    │
-│ └───┬────┘└───┬────┘└───┬────┘                                          │
-│     │         │         │                                                │
-│     └─────────┼─────────┘                                                │
-│               │                                                             │
-│               ▼                                                             │
-│  ┌────────────────────────────────────────────┐                           │
-│  │         Nacos 5-Node Cluster            │                           │
-│  │  (16核32GB × 5, VIP: 10.0.1.100)   │                           │
-│  └────────────────────────────────────────────┘                           │
-│                                                                          │
-│        图 12-13：JMeter 分布式压测拓扑                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JMeter 分布式压测拓扑</span><span class="s">JMeter Master (控制节点)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>调度测试计划</li><li>聚合 Slave 结果</li><li>生成 Dashboard 报告</li></ul></div></div><div class="dgm-note">RMI (Remote Method Invocation)</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Slave 1   Slave 2   S</span><span class="s">00线程   100线程   100线程</span></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 5-Node Cluster</span><span class="s">(16核32GB × 5, VIP: 10.0.1.100)</span></div><div class="dgm-box-b"></div></div></div>
 
 **步骤一：Slave 节点配置**
 
@@ -4547,30 +4084,7 @@ vm.overcommit_memory = 1
 
 ### Nacos 为什么需要优化 OS 参数
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                TCP 连接状态机 & TIME_WAIT 问题                               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────┐         ┌──────────┐         ┌──────────┐                 │
-│  │ESTABLISHED│ ─────→ │ TIME_WAIT│ ─────→ │ CLOSED   │                 │
-│  │(活跃连接) │ 主动关闭│ (等待 2MSL)│ 超时后  │ (完全关闭 │                 │
-│  └──────────┘         └──────────┘         └──────────┘                 │
-│                             │                                             │
-│                             │ 默认 60s (2MSL)                            │
-│                             │                                             │
-│  问题：大量 gRPC 连接关闭 → 大量 TIME_WAIT 连接                       │
-│      → 端口耗尽 (net.ipv4.ip_local_port_range 默认 28K 端口)          │
-│      → 无法建立新连接                                               │
-│                                                                          │
-│  优化：                                                                 │
-│  • tcp_tw_reuse = 1 → TIME_WAIT 端口快速复用                          │
-│  • tcp_fin_timeout = 30 → TIME_WAIT 超时缩短为 30s                    │
-│  • ip_local_port_range = 1024 65535 → 端口范围扩大为 64K 端口       │
-│                                                                          │
-│      图 12-11：TCP 连接状态机 & TIME_WAIT 问题                           │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">TCP 连接状态机 &amp; TIME_WAIT 问题</span><span class="s">默认 60s (2MSL)</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">问题：大量 gRPC 连接关闭 → 大量 TIME_WAIT 连接</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 端口耗尽 (net.ipv4.ip_local_port_range 默认 28K 端口)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 无法建立新连接</div><div class="dgm-note" style="border:none;background:none;padding:0;">优化：</div><ul class="dgm-kv"><li>tcp_tw_reuse = 1 → TIME_WAIT 端口快速复用</li><li>tcp_fin_timeout = 30 → TIME_WAIT 超时缩短为 30s</li><li>ip_local_port_range = 1024 65535 → 端口范围扩大为 64K 端口</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 12-11：TCP 连接状态机 &amp; TIME_WAIT 问题</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CLOSED</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### Trade-off 分析
 
@@ -4693,24 +4207,7 @@ nc -vz <nacos-ip> 9848 && nc -vz <nacos-ip> 8848
 
 **内核参数与 gRPC 长连接生命周期映射（ASCII）**
 
-```
-  客户端连接 nacos（8848 / 9848 / 9849）
-        │
-        ▼
-  SYN → 未连接队列  ← net.ipv4.tcp_max_syn_backlog / tcp_syn_retries
-        │ 完成握手
-        ▼
-  已连接队列（accept）← net.core.somaxconn（65535）
-        │
-        ▼
-  gRPC 长连接（占用 fd）← fs.file-max / fs.nr_open / ulimit -n
-        │ 断开
-        ▼
-  TIME_WAIT（2×MSL）← net.ipv4.tcp_tw_reuse=1 / tcp_fin_timeout=30
-        │
-        ▼
-  fd / 端口释放 ← net.ipv4.ip_local_port_range（1024 65535）
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">12.15</span><span class="tt">内核参数与 gRPC 长连接生命周期映射</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">客户端连接 Nacos（8848 / 9848 / 9849）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">SYN → 未连接队列</div><div class="sd">← <code>net.ipv4.tcp_max_syn_backlog</code> / <code>tcp_syn_retries</code></div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">已连接队列（accept）</div><div class="sd">← <code>net.core.somaxconn</code>（65535）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">gRPC 长连接（占用 fd）</div><div class="sd">← <code>fs.file-max</code> / <code>fs.nr_open</code> / <code>ulimit -n</code></div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">TIME_WAIT（2×MSL）</div><div class="sd">← <code>net.ipv4.tcp_tw_reuse=1</code> / <code>tcp_fin_timeout=30</code></div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">fd / 端口释放</div><div class="sd">← <code>net.ipv4.ip_local_port_range</code>（1024 65535）</div></div></div></div></div>
 
 该图把 12.15 的每个内核参数放到 TCP 连接生命周期的具体阶段：`somaxconn` 决定已连接队列能容纳多少并发建连，`tcp_max_syn_backlog` 决定 SYN 洪泛下未连接队列深度，`fs.file-max` 决定单节点能同时持有的 fd 总数（对应 gRPC 长连接数），`tcp_tw_reuse` 与 `tcp_fin_timeout` 决定短连接断开后 TIME_WAIT 如何收敛，`ip_local_port_range` 决定四元组端口复用空间。这些环节与 `BaseRpcServer.java:108`（gRPC 端口 = 主端口 + offset）及 `ConnectionManager.java:252`（每 3s 遍历连接）的源码依据对应，任一环节不足都会在压测时表现为连接失败率抬升。
 
@@ -5866,27 +5363,7 @@ Humongous Object 分配路径：
 
 **G1GC 调优决策树**：
 
-```
-                          ┌──────────────────┐
-                          │ 性能优先级？     │
-                          └────────┬─────────┘
-                                   │
-              ┌────────────────────┼────────────────────┐
-              │                    │                    │
-     ┌────────▼────────┐ ┌─────▼─────┐ ┌─────────▼────────┐
-     │ 低暂停延迟      │ │ 高吞吐量    │ │ 平衡              │
-     │ (P99 < 100ms)   │ │ (批处理)    │ │                   │
-     └────────┬────────┘ └─────┬─────┘ └─────────┬────────┘
-              │                 │               │
-     ┌────────▼────────┐ ┌─────▼─────┐ ┌─────────▼────────┐
-     │ G1GC            │ │ ParallelGC │ │ G1GC             │
-     │ MaxGCPauseMillis│ │ -Xmn4g    │ │ InitiatingHeap    │
-     │ = 100          │ │ ParallelGC │ │ OccupancyPercent  │
-     │ -XX:+Parallel  │ │ Threads=8  │ │ = 40             │
-     │ RefProcEnabled  │ │            │ │ G1MixedGCCount   │
-     │                 │ │            │ │ Target = 12       │
-     └─────────────────┘ └────────────┘ └──────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">12.14</span><span class="tt">GC 策略选型决策图（Nacos 性能基线联动）</span></div><div class="dgm-eco"><div class="dgm-ecochip" style="border-color:var(--accent);"><b>性能优先级？</b></div></div><div class="dgm-cols dgm-cols-3" style="margin-top:12px;"><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">低暂停延迟</span><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">目标</span><span class="t">P99 &lt; 100ms</span></div><ul><li>G1GC</li><li>MaxGCPauseMillis = 100</li><li>-XX:+ParallelRefProcEnabled</li></ul></div></div><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">高吞吐量</span><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">场景</span><span class="t">批处理</span></div><ul><li>ParallelGC</li><li>-Xmn4g</li><li>ParallelGCThreads = 8</li></ul></div></div><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">平衡</span><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="k">推荐</span><span class="t">G1GC 调优</span></div><ul><li>InitiatingHeapOccupancyPercent = 40</li><li>G1MixedGCCountTarget = 12</li></ul></div></div></div></div>
 
 ---
 
@@ -5943,41 +5420,7 @@ jstack $PID | grep -A 5 "waiting to lock"
 
 **PushTask 超时根因分析流程图**：
 
-```
-PushTask 生命周期:
-
-  创建 PushTask
-       │
-       ▼
-  ┌──────────────────────────────────────────────────────────────┐
-  │ 提交到 Push Thread Pool                              │
-  │ (push.pool.size = N threads)                          │
-  └──────────────────────────────────────────────────────────────┘
-       │
-       ▼
-  ┌──────────────────────────────────────────────────────────────┐
-  │ 查找 Client gRPC Stream (HashMap<ConnectionId, Stream>)   │
-  │ - 找到 → Stream.send(PushTask)                  │
-  │ - 未找到 → Client Offline → Mark Client Long Polling   │
-  └──────────────────────────────────────────────────────────────┘
-       │
-       ▼
-  ┌──────────────────────────────────────────────────────────────┐
-  │ gRPC Stream.send(PushTask)                            │
-  │ - 成功 → complete PushTask                       │
-  │ - 超时 (push.pushTask.timeout=3000ms)          │
-  │   → Retry (max push.pushTask.maxRetry=3)         │
-  │     → 成功 → complete PushTask                   │
-  │     → 全部重试失败 → Client Offline             │
-  └──────────────────────────────────────────────────────────────┘
-       │
-       ▼ (仅超时或重试全部失败)
-  ┌──────────────────────────────────────────────────────────────┐
-  │ Client Long Polling Fallback                          │
-  │ - Client 下次轮询: GET /nacos/v1/cs/configs?dataId=... │
-  │ - Client 返回最新配置/服务数据                         │
-  └──────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">提交到 Push Thread Pool</span><span class="s">(push.pool.size = N threads)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查找 Client gRPC Stream (HashMap&lt;ConnectionId, Stream&gt;)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>找到 → Stream.send(PushTask)</li><li>未找到 → Client Offline → Mark Client Long Polling</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC Stream.send(PushTask)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>成功 → complete PushTask</li><li>超时 (push.pushTask.timeout=3000ms)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ Retry (max push.pushTask.maxRetry=3)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 成功 → complete PushTask</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 全部重试失败 → Client Offline</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client Long Polling Fallback</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>Client 下次轮询: GET /nacos/v1/cs/configs?dataId=...</li><li>Client 返回最新配置/服务数据</li></ul></div></div></div>
 
 **PushService 监控仪表板（Prometheus + Grafana）**：
 
@@ -6302,46 +5745,7 @@ public class NacosGrpcBenchmark {
 
 ### 12.3 补充：GC 调优决策流程图 + Region 分配示意图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                G1GC Region 分配与 GC 触发阈值决策树                          │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  Heap = 8G, RegionSize = 4M, Total Regions = 2048                        │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────────┐  │
-│  │ Eden Regions (60%): 1228 Regions ≈ 4.8GB                          │  │
-│  │ ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐   │  │
-│  │ │ E │ E │ E │ E │ E │ E │ E │ E │ E │ E │ E │ E │...│   │  │
-│  │ └───└───└───└───└───└───└───└───└───└───└───└───└───┘   │  │
-│  ├──────────────────────────────────────────────────────────────────────────┤  │
-│  │ Survivor Regions (10%): 204 Regions ≈ 0.8GB                        │  │
-│  │ ┌───┬───┬───┬───┬───┐                                           │  │
-│  │ │ S0│ S0│ S0│ S0│...│ (From Space)                              │  │
-│  │ │ S1│ S1│ S1│ S1│...│ (To Space)                                │  │
-│  │ └───└───└───└───└───┘                                           │  │
-│  ├──────────────────────────────────────────────────────────────────────────┤  │
-│  │ Old Regions (30%): 614 Regions ≈ 2.4GB                             │  │
-│  │ ┌───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┬───┐   │  │
-│  │ │ O │ O │ O │ O │ O │ O │ O │ O │ O │ O │ O │ O │...│   │  │
-│  │ └───└───└───└───└───└───└───└───└───└───└───└───└───┘   │  │
-│  ├──────────────────────────────────────────────────────────────────────────┤  │
-│  │ Humongous Regions: 按需分配连续 Region 组                           │  │
-│  │ ┌───┬───┬───┬───┐ (4M per region, 连续分配 > 2M 对象)          │  │
-│  │ │ H │ H │ H │ H │                                               │  │
-│  │ └───└───└───└───┘                                               │  │
-│  └──────────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  GC 触发决策树:                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ Eden 填满 → Young GC: 回收 Eden + 晋升 Survivor 存活对象到 Old    │    │
-│  │ Old 占用 ≥ InitiatingHeapOccupancyPercent → Mixed GC 启动          │    │
-│  │ Old 填满 → Full GC (Concurrent Mode Failure)                      │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│          图 12-3：G1GC Region 分配与 GC 触发阈值决策树                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">G1GC Region 分配与 GC 触发阈值决策树</span><span class="s">Heap = 8G, RegionSize = 4M, Total Regions = 2048</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Eden Regions (60%): 1228 Regions ≈ 4.8GB</div><div class="dgm-note" style="border:none;background:none;padding:0;">E   E   E   E   E   E   E   E   E   E   E   E  ...</div><div class="dgm-note" style="border:none;background:none;padding:0;">Survivor Regions (10%): 204 Regions ≈ 0.8GB</div><div class="dgm-note" style="border:none;background:none;padding:0;">S0  S0  S0  S0 ...  (From Space)</div><div class="dgm-note" style="border:none;background:none;padding:0;">S1  S1  S1  S1 ...  (To Space)</div><div class="dgm-note" style="border:none;background:none;padding:0;">Old Regions (30%): 614 Regions ≈ 2.4GB</div><div class="dgm-note" style="border:none;background:none;padding:0;">O   O   O   O   O   O   O   O   O   O   O   O  ...</div><div class="dgm-note" style="border:none;background:none;padding:0;">Humongous Regions: 按需分配连续 Region 组</div><div class="dgm-note" style="border:none;background:none;padding:0;">(4M per region, 连续分配 &gt; 2M 对象)</div><div class="dgm-note" style="border:none;background:none;padding:0;">H   H   H   H</div></div></div><div class="dgm-note">GC 触发决策树:</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Eden 填满 → Young GC: 回收 Eden + 晋升 Survivor 存活对象到 Old</span><span class="s">Old 占用 ≥ InitiatingHeapOccupancyPercent → Mixed GC 启动</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Old 填满 → Full GC (Concurrent Mode Failure)</div></div></div></div>
 
 ---
 
@@ -6398,108 +5802,28 @@ GC 日志不仅用于事后分析——更重要的是用于实时监控 GC 行�
 
 ### 12.4 补充：GC 日志分析场景与 ASCII 流程图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                GC 日志生命周期与监控体系                                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│   Nacos JVM                                                            │
-│   ┌────────────┐                                                        │
-│   │ -Xloggc:   │────► /var/log/nacos/gc.log (滚动 90 个 x 128MB)    │
-│   │ /var/log/  │                                                        │
-│   │ nacos/gc.log│                                                        │
-│   └────────────┘                                                        │
-│         │                                                                │
-│         ▼                                                                │
-│   ┌──────────────────────────────────────────────────────────────────────┐    │
-│   │                      GC 日志处理管道                               │    │
-│   │                                                                  │    │
-│   │  ┌──────────────────┐   ┌──────────────────┐   ┌──────────────────┐ │    │
-│   │  │ GC Easy 在线    │   │ Prometheus JMX  │   │ ELK Stack       │ │    │
-│   │  │ (gceasy.io)     │   │ Exporter        │   │ (Logstash→ES)   │ │    │
-│   │  │ 上传 → 报告    │   │ 实时采集 GC    │   │ 集中日志分析   │ │    │
-│   │  └──────────────────┘   └──────────────────┘   └──────────────────┘ │    │
-│   │                                                                  │    │
-│   └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│       图 12-4：GC 日志生命周期与监控体系                                     │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">GC 日志生命周期与监控体系</span><span class="s">Nacos JVM</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">图 12-4：GC 日志生命周期与监控体系</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">-Xloggc:</span><span class="s">/var/log/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">nacos/gc.lo</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GC 日志处理管道</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Stack</span><span class="s">Logstash→ES)</span></div><div class="dgm-box-b"></div></div></div></div></div></div></div>
 
 ---
 
 ### 12.13 补充：JMeter Test Plan 执行流程图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                JMeter Test Plan 执行流程                                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────┐                                                       │
-│  │ Test Plan       │ ← 全局配置（NACOS_HOST, NACOS_PORT 变量）        │
-│  └───────┬─────────┘                                                       │
-│          │                                                                │
-│          ▼                                                                │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                      3 Thread Groups                                 │ │
-│  │                                                                   │ │
-│  │  ┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐      │ │
-│  │  │ Thread Group 1  │ │ Thread Group 2  │ │ Thread Group 3  │      │ │
-│  │  │ 配置发布 POST   │ │ 配置查询 GET   │ │ 服务注册 POST   │      │ │
-│  │  │ 100线程×100次 │ │ 100线程×100次 │ │ 100线程×100次 │      │ │
-│  │  │ RampUp: 60s    │ │ RampUp: 60s    │ │ RampUp: 60s    │      │ │
-│  │  └────────┬───────┘ └────────┬──────┘ └────────┬──────┘      │ │
-│  │          │                  │                  │                   │ │
-│  │          ▼                  ▼                  ▼                   │ │
-│  │  ┌──────────────────────────────────────────────────────────────┐ │ │
-│  │  │              Constant Timer (10ms 均匀间隔)               │ │ │
-│  │  └──────────────────────────────────────────────────────────────┘ │ │
-│  │                                                                   │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│          │                                                                │
-│          ▼                                                                │
-│  ┌─────────────────────────────────────────────────────────────────────────┐ │
-│  │                      Listeners                                      │ │
-│  │  ┌──────────────────┐ ┌──────────────────┐                           │ │
-│  │  │ Summary Report  │ │ View Results Tree│                           │ │
-│  │ └──────────────────┘ └──────────────────┘                           │ │
-│  └─────────────────────────────────────────────────────────────────────────┘ │
-│                                                                          │
-│       图 12-13：JMeter Test Plan 执行流程                                  │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JMeter Test Plan 执行流程</span><span class="s">Test Plan         ← 全局配置（NACOS_HOST, NACOS_PORT 变量）</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">3 Thread Groups</span><span class="s">Thread Group 1      Thread Group 2      Thread Group 3</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">配置发布 POST       配置查询 GET       服务注册 POST</div><div class="dgm-note" style="border:none;background:none;padding:0;">100线程×100次     100线程×100次     100线程×100次</div><ul class="dgm-kv"><li><span class="fld">RampUp</span><span class="typ">: 60s        RampUp: 60s        RampUp: 60s</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Constant Timer (10ms 均匀间隔)</span></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Listeners</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">View Results Tree</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ---
 
 ### 12.14 补充：Nacos 性能基线对比图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 2.2.3 官方性能基线对比 (3 vs 5 节点)                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  TPS/QPS                                                               │
-│  50K ┤                                                                  │
-│      │                                    ┌───────────────── 50K           │
-│  40K ┤                              ┌─────┤ Heartbeat (5节点)            │
-│      │                              │     │ Config Query (5节点)          │
-│  30K ┤                        ┌─────┤     └─────────────────              │
-│      │                        │     │                                    │
-│  25K ┤                  ┌─────┤     │ Service Discovery (5节点)          │
-│      │                  │     │     │                                    │
-│  20K ┤            ┌─────┤     │     │ Service Register (5节点)          │
-│      │            │     │     │     │                                    │
-│  15K ┤      ┌─────┤     │     │     │ Service Register (3节点)        │
-│      │      │     │     │     │     │                                    │
-│  10K ┤      │     │     │     │     │                                    │
-│      │      │     │     │     │     │                                    │
-│   5K ┤      │     │     │     │     │  Config Publish (5节点)          │
-│      │      │     │     │     │     │                                    │
-│   3K ┤      │     │     │     │     │  Config Publish (3节点)          │
-│      │      │     │     │     │     │                                    │
-│   0K ┴──────┴─────┴─────┴─────┴─────┴────                             │
-│                                                                          │
-│       图 12-14：Nacos 2.2.3 官方性能基线对比 (3 vs 5 节点)              │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-14</span><span class="tt">Nacos 2.2.3 官方性能基线对比（3 vs 5 节点）</span><span class="src">TPS/QPS · 数值为原文柱状图近似读数</span></div>
+<div style="display:grid;gap:8px;">
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Heartbeat（5 节点）</span><div style="height:14px;background:var(--accent);border-radius:2px;width:100%;"></div><span style="font-family:var(--mono);font-size:.8em;">~50K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Config Query（5 节点）</span><div style="height:14px;background:var(--accent);border-radius:2px;width:80%;"></div><span style="font-family:var(--mono);font-size:.8em;">~40K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Service Discovery（5 节点）</span><div style="height:14px;background:var(--accent);border-radius:2px;width:60%;"></div><span style="font-family:var(--mono);font-size:.8em;">~30K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Service Register（5 节点）</span><div style="height:14px;background:#5B7BFF;border-radius:2px;width:40%;"></div><span style="font-family:var(--mono);font-size:.8em;">~20K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Service Register（3 节点）</span><div style="height:14px;background:#5B7BFF;border-radius:2px;width:30%;"></div><span style="font-family:var(--mono);font-size:.8em;">~15K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Config Publish（5 节点）</span><div style="height:14px;background:#9db1f5;border-radius:2px;width:10%;"></div><span style="font-family:var(--mono);font-size:.8em;">~5K</span></div>
+<div style="display:grid;grid-template-columns:200px 1fr 60px;gap:10px;align-items:center;"><span style="font-size:.85em;color:var(--text-secondary);">Config Publish（3 节点）</span><div style="height:14px;background:#9db1f5;border-radius:2px;width:6%;"></div><span style="font-family:var(--mono);font-size:.8em;">~3K</span></div>
+</div>
+<div class="dgm-note" style="margin-top:12px;"><b>图例：</b><span style="display:inline-block;width:10px;height:10px;background:var(--accent);border-radius:2px;vertical-align:-1px;"></span> 读密集型 · <span style="display:inline-block;width:10px;height:10px;background:#5B7BFF;border-radius:2px;vertical-align:-1px;"></span> 写/注册型 · <span style="display:inline-block;width:10px;height:10px;background:#9db1f5;border-radius:2px;vertical-align:-1px;"></span> 配置发布</div>
+</div>
 

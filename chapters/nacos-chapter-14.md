@@ -10,35 +10,7 @@ Nacos Server 启动失败是运维中最先遇到、也最频繁的一类故障�
 
 ### 核心类关系图（启动链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  Nacos 2.5.3 启动链路与失败点映射                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  Nacos.main()                                                               │
-│  (console/.../Nacos.java)                                                   │
-│      │                                                                      │
-│      ▼                                                                      │
-│  SpringApplication.run()            ┌─ 失败点1: JVM 参数(-Xms/-Xmx)         │
-│      │                              │   启动脚本 startup.sh                 │
-│      ▼                              └─────────────────────────────────────┘ │
-│  环境准备 EnvironmentPrepared    ┌─ 失败点2: JDK 版本 / 环境变量              │
-│      │                           └──────────────────────────────────────┘   │
-│      ▼                                                                      │
-│  Bean 定义加载                    ┌─ 失败点3: 端口占用(8848/9848)           │
-│      │                            └─────────────────────────────────────┘   │
-│      ▼                                                                      │
-│  ApplicationContext refresh   ┌─ 失败点4: 配置 key 缺失/格式错误             │
-│      │                         └────────────────────────────────────────┘   │
-│      ▼                                                                      │
-│  依赖初始化(DB/存储目录) ┌─ 失败点5: MySQL 不可达 / 目录无权限               │
-│      │                    └─────────────────────────────────────────────┘  │
-│      ▼                                                                      │
-│  gRPC 端口监听(9848/9849) ┌─ 失败点6: 端口冲突 / 防火墙                     │
-│                           └─────────────────────────────────────────────┘   │
-│            图 14-1：Nacos 启动链路与 6 类失败点映射                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 启动链路与失败点映射</span><span class="s">Nacos.main()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(console/.../Nacos.java)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SpringApplication.run()              失败点1: JVM 参数(-Xms/-Xmx)</span><span class="s">启动脚本 startup.sh</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">环境准备 EnvironmentPrepared      失败点2: JDK 版本 / 环境变量</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Bean 定义加载                      失败点3: 端口占用(8848/9848)</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ApplicationContext refresh     失败点4: 配置 key 缺失/格式错误</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">依赖初始化(DB/存储目录)   失败点5: MySQL 不可达 / 目录无权限</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC 端口监听(9848/9849)   失败点6: 端口冲突 / 防火墙</span><span class="s">图 14-1：Nacos 启动链路与 6 类失败点映射</span></div></div></div></div></div>
 
 ### 6 种常见启动失败原因
 
@@ -205,25 +177,7 @@ Nacos 启动失败可归纳为 JVM 参数、JDK 版本、端口、配置、数�
 
 ### 核心类关系图（地址解析链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│            UnknownHostException 解析失败链路                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  客户端 / Server                                                        DNS  │
-│  ┌─────────────┐    调用     ┌──────────────┐    查询     ┌──────────────┐  │
-│  │ Nacos SDK   │───getByName─▶│  InetAddress │────▶        │  DNS Server   │  │
-│  │ / Server    │             │  (JDK)       │───────▶     │  或 /etc/hosts│  │
-│  └─────────────┘             └──────────────┘  UnknownHost │              │  │
-│        │                          │           ◀───异常     └──────────────┘  │
-│        │                          ▼                                         │
-│        │                 ┌──────────────────┐                               │
-│        └────────────────▶│ 抛 UnknownHost   │  DNS 未配置/域名错误/          │
-│                          │  Exception       │  hosts 缺项 → 解析失败         │
-│                          └──────────────────┘                               │
-│            图 14-2：UnknownHostException 解析失败链路                           │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">UnknownHostException 解析失败链路</span><span class="s">客户端 / Server                                                        DNS</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">◀异常</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">图 14-2：UnknownHostException 解析失败链路</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">▶   InetAddre</span><span class="s">(JDK)</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">抛 UnknownHost</span><span class="s">Exception</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 完整排查路径
 
@@ -384,29 +338,7 @@ Nacos 的地址解析机制蕴含了**策略模式与外观模式的组合设计
 
 ### 核心类关系图（配置发布→订阅→生效链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│          Nacos 配置"发布→订阅→生效"完整链路与断点                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  服务端                                 客户端                              │
-│  ┌────────────────────┐               ┌─────────────────────────┐          │
-│  │ ConfigInfoService  │──发布──▶      │ ClientWorker            │          │
-│  │ (DB 持久化)       │    ↓           │  (长轮询线程池)          │          │
-│  └────────┬───────────┘   ┌─────────┐ │   ┌───────────────────┐ │          │
-│           ▼               │ MD5     │ │   │ CacheData         │ │          │
-│  ┌────────────────────┐   │ 对比    │ │   │ (本地缓存+md5)     │ │          │
-│  │ LongPollingService │◀──┴────────1│◀───│ ClientWorker       │ │          │
-│  │ (addLongPolling)   │              │   │ 轮询 compareMd5     │ │          │
-│  └────────┬───────────┘              │   └───────┬───────────┘ │          │
-│           ▼                           │           ▼             │          │
-│  变更通知 → 客户端重新拉取             │   LocalConfigInfo      │          │
-│  ◆断点1:是否发布成功                   │   Processor(本地缓存)   │          │
-│  ◆断点2:客户端是否订阅                 │   ◆断点3:MD5是否一致    │          │
-│  ◆断点4:长轮询是否正常                 │   ◆断点4:本地缓存优先    │          │
-│             图 14-3：配置生效链路与 4 个断点                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 配置"发布→订阅→生效"完整链路与断点</span><span class="s">服务端                                 客户端</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ConfigInfoService   发布▶        ClientWorker</div><div class="dgm-note" style="border:none;background:none;padding:0;">(DB 持久化)            ↓              (长轮询线程池)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LongPollingService</span><span class="s">(addLongPolling)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">更通知 → 客户端重新拉取</span><span class="s">断点1:是否发布成功</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">断点2:客户端是否订阅</div><div class="dgm-note" style="border:none;background:none;padding:0;">断点4:长轮询是否正常</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 14-3：配置生</div></div></div></div></div></div>
 
 ### 4 步排查流程
 
@@ -603,30 +535,7 @@ Nacos Config 的长轮询机制（详见 14.3）依赖客户端 `ClientWorker` �
 
 ### 核心类关系图（长轮询超时链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│             长轮询超时：客户端线程与超时点                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  客户端 ClientWorker                          服务端 LongPollingService      │
-│  ┌──────────────────────────┐                 ┌──────────────────────────┐  │
-│  │ 长轮询线程池              │───HTTP/Grpc──▶  │ ClientLongPolling 任务   │  │
-│  │ (定时拉取线程)            │   请求          │ (挂起, 等待变更)         │  │
-│  └──────────────────────────┘                 └──────────────────────────┘  │
-│              │                                        │                     │
-│              │  configLongPollTimeout                 │  变更/超时后响应       │
-│              │  (客户端超时,默认30s)                    │                      │
-│              ▼                                        ▼                      │
-│  ┌──────────────────────────┐                 ┌──────────────────────────┐  │
-│  │ 若超时→重连/重拉          │◀───响应─────── │ 生成 Response             │  │
-│  │ clientWorker 线程堆栈     │                 └──────────────────────────┘  │
-│  │ 分析 (jstack)             │                                             │
-│  └──────────────────────────┘                                             │
-│  ◆超时点A:客户端 configLongPollTimeout 过小                                 │
-│  ◆超时点B:服务端 LongPollingService 调度延迟                                │
-│            图 14-4：长轮询超时链路与超时点                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">长轮询超时：客户端线程与超时点</span><span class="s">客户端 ClientWorker                          服务端 LongPollingService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">configLongPollTimeout                    变更/超时后响应</div><div class="dgm-note" style="border:none;background:none;padding:0;">(客户端超时,默认30s)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">分析 (jstack)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ntLongPolling 任务</span><span class="s">待变更)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">nse</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 长轮询超时的两类根因
 
@@ -771,29 +680,7 @@ grep -c "ClientLongPolling" /tmp/ts1.txt /tmp/ts2.txt
 
 ### 核心类关系图（服务注册→健康→发现链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│         服务注册→心跳保活→健康判定→服务发现 完整链路                        │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  提供者                                Nacos Naming                          │
-│  ┌───────────────┐  registerInstance  ┌───────────────────────────────────┐│
-│  │ 业务服务        │───────▶          │ InstanceOperatorClientImpl        ││
-│  │ (Nacos Client) │                    │  (注册入口, v2)                   ││
-│  └───────────────┘                    │         │                          ││
-│        │  心跳周期 (5s)                │         ▼                          ││
-│        │  ┌──────────────────┐        │  ClientBeatProcessorV2            ││
-│        │  │ 心跳发送 (Beat)   │───────▶│  (更新 lastHeartBeatTime)         ││
-│        │  └──────────────────┘        │         │                          ││
-│        └────────────────────────────▶ │         ▼                          ││
-│                                       │  ClientBeatCheckTaskV2            ││
-│            ◆步骤1:curl查实例否已注册     │  (超时判定→置不健康/摘除)        ││
-│            ◆步骤2:grep 心跳记录          │                                  ││
-│            ◆步骤3:curl健康状态          └──────────────────────────────────┘│
-│            ◆步骤4:手动注册复现          ▲ 心跳超时→健康检查→服务发现更新      │
-│            图 14-5：注册健康发现链路与 4 个排查点                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">服务注册→心跳保活→健康判定→服务发现 完整链路</span><span class="s">提供者                                Nacos Naming</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">registerInstance</div><div class="dgm-note" style="border:none;background:none;padding:0;">业务服务         ▶            InstanceOperatorClientImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Nacos Client)                         (注册入口, v2)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">心跳发送 (Beat)</span></div><div class="dgm-box-b"></div></div></div>
 
 ### 注册与健康检查类型基础
 
@@ -963,31 +850,7 @@ nc -vz nacos-server 9848
 
 ### 核心类关系图（gRPC 长连接心跳链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│            Nacos 2.x gRPC 长连接心跳链路                                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  客户端                                   服务端                              │
-│  ┌────────────────────┐                 ┌──────────────────────────────┐    │
-│  │ NamingGrpcClientProxy│──建连──▶       │ GrpcBiStreamRequestAcceptor  │    │
-│  │ (注册+心跳代理)      │   gRPC 双向流   │  (接收客户端请求)            │    │
-│  └────────┬───────────┘                 └───────────┬──────────────────┘    │
-│           │ 定时心跳                                  │                      │
-│           ▼                                          ▼                      │
-│  ┌────────────────────┐                 ┌──────────────────────────────┐    │
-│  │ HeartbeatTask      │──ClientBeat──▶  │ ClientBeatProcessorV2        │    │
-│  │ (周期发送 Beat)     │                 │  (刷新 lastHeartBeatTime)    │    │
-│  └────────────────────┘                 └───────────┬──────────────────┘    │
-│           ▲                                          │                      │
-│           │ 断线→重连                                ▼                      │
-│           │                                     ┌──────────────────────┐    │
-│           └─────────────────────────────────────│ ClientBeatCheckTaskV2 │    │
-│                        心跳超时→摘除/不健康      │ (超时判定)           │    │
-│                                                 └──────────────────────┘    │
-│            图 14-6：gRPC 长连接心跳链路                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.x gRPC 长连接心跳链路</span><span class="s">客户端                                   服务端</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">定时心跳</div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--up"></div></div><div class="dgm-link"><span class="lbl">断线→重连</span><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">图 14-6：gRPC 长连接心跳链路</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GrpcBiStreamRequestAcceptor</span><span class="s">端请求)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientBeatProcessorV2</span><span class="s">刷新 lastHeartBeatTime)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientBeatCheckTaskV2</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 源码走读：心跳的发送与处理
 
@@ -1138,23 +1001,7 @@ gRPC 长连接心跳链路体现了**生产者-消费者模式**：客户端作�
 
 ### 核心类关系图（脑裂检测三视图）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│              集群脑裂检测：三层视图                                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  视图1: 节点列表              视图2: Raft Leader            视图3: 数据校验    │
-│  ┌─────────────────┐         ┌─────────────────┐          ┌──────────────┐  │
-│  │ /cluster/nodes  │         │ /raft/leader    │          │ DistroVerify  │  │
-│  │ 每个节点 IP+状态  │         │ 各组 Leader 地址 │          │ 数据一致性     │  │
-│  └────────┬────────┘         └────────┬────────┘          └──────┬───────┘  │
-│           │ 正常状态=全UP             │ Leader一致=无脑裂         │ 校验失败=   │
-│           ▼ 有DOWN/多分区            ▼ 多Leader=脑裂           │ 数据不一致  │
-│           │                          │                           ▼           │
-│  脑裂隐患↑                     脑裂确认↑                  Distro/Failed    │
-│            图 14-7：脑裂检测的三层视图                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">集群脑裂检测：三层视图</span><span class="s">视图1: 节点列表              视图2: Raft Leader            视图3: 数据校验</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">正常状态=全UP               Leader一致=无脑裂           校验失败=</div><div class="dgm-note" style="border:none;background:none;padding:0;">▼ 有DOWN/多分区            ▼ 多Leader=脑裂             数据不一致</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">脑裂隐患↑                     脑裂确认↑                  Distro/Failed</span><span class="s">图 14-7：脑裂检测的三层视图</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroVerify</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 3 步检查命令
 
@@ -1213,25 +1060,7 @@ grep "DISTRO-FAILED" ${nacos.home}/logs/nacos-cluster.log | tail -5
 
 理解 Leader 选举的三种角色状态转换，有助于判断脑裂时的异常表现。JRaft 中每个节点处于以下状态之一：
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│              Raft 节点状态机（Follower / Candidate / Leader）          │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│   Follower（跟随者）                                                │
-│      │ 选举超时且未收到 Leader 心跳                                 │
-│      ▼                                                              │
-│   Candidate（候选者）                                               │
-│      │ 获得多数派投票确认                                           │
-│      ▼                                                              │
-│   Leader（领导者）                                                  │
-│      │ 持续向 Follower 发送心跳维持任期                             │
-│      └──网络分区→多数派无法确认→降级回 Candidate/Follower           │
-│                                                                     │
-│   脑裂场景: 两个分区各自形成 Candidate，若都获得本分区多数票          │
-│   → 产生两个 Leader（双 Leader 脑裂）                               │
-└─────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Raft 节点状态机（Follower / Candidate / Leader）</span><span class="s">Follower（跟随者）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">选举超时且未收到 Leader 心跳</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Candidate（候选者）</span><span class="s">获得多数派投票确认</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Leader（领导者）</span><span class="s">持续向 Follower 发送心跳维持任期</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">网络分区→多数派无法确认→降级回 Candidate/Follower</div><div class="dgm-note" style="border:none;background:none;padding:0;">脑裂场景: 两个分区各自形成 Candidate，若都获得本分区多数票</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 产生两个 Leader（双 Leader 脑裂）</div></div></div></div></div></div>
 
 **状态转换对排查的启示**：当 `raft/leader` 查询结果显示 Leader 频繁在节点间切换（而非稳定指向某一节点），说明存在持续的选举抖动，多由节点间网络不稳定或选举超时过短引起；只有当两个分区**各自稳定**维持一个 Leader 时，才是真正的脑裂。前者处理网络/参数，后者需执行 14.8 节的脑裂恢复。脑裂恢复的关键在于先明确当前状态属于三种情况中的哪一种，再对症处理，避免盲目操作加重数据分叉。
 
@@ -1349,25 +1178,7 @@ Nacos 的 Raft 模块采用**抽象工厂模式 + 策略模式**组织：`JRaftS
 
 ### 核心类关系图（脑裂恢复决策树）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  脑裂恢复决策树                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  确认脑裂                                                                   │
-│     │                                                                       │
-│     ├─ 情况1: 少数派被隔离 ──▶ 保留多数派, 隔离区副本降级→数据以多数派为准      │
-│     │                                                                       │
-│     ├─ 情况2: 多数派有Leader ─▶ 确认Leader正常→隔离区重新加入→重同步数据      │
-│     │                                                                       │
-│     └─ 情况3: 双Leader ──────▶ 人为选定主Leader→停次Leader写→合并/丢弃      │
-│                                隔离区数据→重启重收敛                            │
-│                                                                             │
-│  恢复后: 校验 /cluster/nodes 全UP, /raft/leader 单Leader,                  │
-│           DistroVerify 无 FAILED                                              │
-│            图 14-8：脑裂恢复决策树                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 14-8</span><span class="tt">脑裂恢复决策树</span></div><div class="dgm-eco"><div class="dgm-ecochip" style="border-color:var(--accent);"><b>确认脑裂</b></div></div><div class="dgm-cols dgm-cols-3" style="margin-top:12px;"><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">情况 1</span><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="t">少数派被隔离</span></div><ul><li>保留多数派</li><li>隔离区副本降级 → 数据以多数派为准</li></ul></div></div><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--accent);font-weight:700;">情况 2</span><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="t">多数派有 Leader</span></div><ul><li>确认 Leader 正常</li><li>隔离区重新加入 → 重同步数据</li></ul></div></div><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-link" style="align-self:center;"><span class="lbl" style="color:var(--ink);font-weight:700;">情况 3</span><div class="dgm-varrow" style="background:var(--ink);"></div></div><div class="dgm-card dgm-card--ink" style="width:100%;"><div class="h"><span class="t">双 Leader</span></div><ul><li>人为选定主 Leader → 停次 Leader 写</li><li>合并 / 丢弃隔离区数据 → 重启重收敛</li></ul></div></div></div><div class="dgm-note" style="margin-top:14px;"><b>恢复后校验：</b>/cluster/nodes 全 UP · /raft/leader 单 Leader · DistroVerify 无 FAILED</div></div>
 
 ### 3 种情况的处理步骤
 
@@ -1548,23 +1359,7 @@ Nacos Server 长期运行后可能出现堆内存持续增长、最终 OutOfMemo
 
 ### 核心类关系图（内存泄漏三步排查）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│            JVM 内存泄漏排查：三步法                                          │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  步骤1: jstat         步骤2: jmap HeapDump     步骤3: Eclipse MAT          │
-│  ┌──────────────┐    ┌────────────────────┐   ┌─────────────────────────┐ │
-│  │ 观察 O/FGC/   │    │ 导出 hprof 堆快照   │   │ 分析 Dominator Tree     │ │
-│  │ O 持续增长?   │    │ (生产慎用,会FGC)    │   │ 定位 Retained Heap 大   │ │
-│  │ E/S/O 区占比  │    │ heapdump.hprof      │   │ 对象及 GC Roots 引用链  │ │
-│  └──────┬───────┘    └─────────┬──────────┘   └──────────┬──────────────┘ │
-│         │ 发现增长/OOM         │ 抓到现场堆              │ 确认泄漏对象      │
-│         ▼                      ▼                        ▼                  │
-│  确认内存问题            捕获泄漏对象分布              定位持有者/修复点        │
-│            图 14-9：内存泄漏三步排查法                                          │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JVM 内存泄漏排查：三步法</span><span class="s">步骤1: jstat         步骤2: jmap HeapDump     步骤3: Eclipse MAT</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">发现增长/OOM           抓到现场堆                确认泄漏对象</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">确认内存问题            捕获泄漏对象分布              定位持有者/修复点</span><span class="s">图 14-9：内存泄漏三步排查法</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ominator Tree</span><span class="s">ained Heap 大</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">对象及 GC Roots 引用链</div></div></div></div></div></div>
 
 ### 步骤 1：jstat 确认内存增长趋势
 
@@ -1779,28 +1574,7 @@ Nacos Server 的内存泄漏有若干典型场景，了解这些场景有助于�
 
 ### 核心类关系图（四类泄漏场景）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│               Nacos 常见内存泄漏场景与对应数据结构                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  场景                      泄漏的数据结构              MAT 观察点            │
-│  ┌──────────────────────┐  ┌──────────────────────┐  ┌───────────────────┐ │
-│  │ ① gRPC 连接泄漏       │──▶│ ConnectionManager    │──▶│ connections Map   │ │
-│  │   连接未正常关闭       │  │ connections Map      │  │ clientId 持续增长 │ │
-│  ├──────────────────────┤  ├──────────────────────┤  ├───────────────────┤ │
-│  │ ② Distro 数据积压     │──▶│ Distro 延迟任务队列    │──▶│ 任务队列长度       │ │
-│  │   同步失败堆积任务     │  │ / 待同步数据          │  │ 无界增长          │ │
-│  ├──────────────────────┤  ├──────────────────────┤  ├───────────────────┤ │
-│  │ ③ LongPolling OOM     │──▶│ LongPollingService   │──▶│ ClientLongPolling │ │
-│  │   挂起连接堆积         │  │ 挂起任务集合          │  │ 对象数量过多        │ │
-│  ├──────────────────────┤  ├──────────────────────┤  ├───────────────────┤ │
-│  │ ④ 推送执行器 OOM       │──▶│ PushExecutorDelegate │──▶│ 推送任务队列        │ │
-│  │   推送任务积压         │  │ 任务队列             │  │ 积压任务           │ │
-│  └──────────────────────┘  └──────────────────────┘  └───────────────────┘ │
-│            图 14-10：四类内存泄漏场景与数据结构                                    │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 常见内存泄漏场景与对应数据结构</span><span class="s">场景                      泄漏的数据结构              MAT 观察点</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 14-10：四类内存泄漏场景与数据结构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">connections Map</span><span class="s">ntId 持续增长</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">长度</div><div class="dgm-note" style="border:none;background:none;padding:0;">▶  ClientLongPolli</div><div class="dgm-note" style="border:none;background:none;padding:0;">推送任务队列</div></div></div></div></div></div>
 
 ### 四类泄漏场景速查表
 
@@ -1911,25 +1685,7 @@ Nacos Server CPU 飙高（持续高占用）会拖慢所有请求，是仅次于
 
 ### 核心类关系图（CPU 飙高三步定位）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│           CPU 飙高排查：三步法                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  步骤1: top -H          步骤2: jstack           步骤3: async-profiler       │
-│  ┌────────────────┐    ┌──────────────────┐    ┌──────────────────────┐    │
-│  │ 找高CPU线程TID   │    │ 定位线程栈        │    │ CPU 火焰图            │    │
-│  │ %CPU 最高的线程  │    │ 看线程名/执行方法  │    │ 热点函数纵向占比      │    │
-│  └───────┬────────┘    └────────┬─────────┘    └──────────┬───────────┘    │
-│          │ TID                 │ 线程栈                   │ 调用路径          │
-│          ▼                     ▼                         ▼                  │
-│  锁定嫌疑线程            初判线程在忙什么             精确定位热点函数/行号     │
-│          │                     │                         │                  │
-│          └─────────────────────┴─────────────────────────┤                  │
-│                     综合判定: GC/业务热点/锁竞争/空转                      │
-│            图 14-11：CPU 飙高三步定位法                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">CPU 飙高排查：三步法</span><span class="s">步骤1: top -H          步骤2: jstack           步骤3: async-profiler</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">TID                   线程栈                     调用路径</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">锁定嫌疑线程            初判线程在忙什么             精确定位热点函数/行号</span><span class="s">综合判定: GC/业务热点/锁竞争/空转</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">图 14-11：CPU 飙高三步定位法</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">焰图</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 步骤 1：top -H 锁定高 CPU 线程
 

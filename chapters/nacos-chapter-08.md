@@ -24,74 +24,7 @@ Nacos 2.5.3 的插件体系基于 **Java SPI（Service Provider Interface）机�
 
 #### 8.1.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────────────┐
-│                         Nacos 2.5.3 插件体系架构（7 种插件类型 + SPI 机制）                       │
-│                                                                                          │
-│  ┌────────────────────────────────────────────────────────────────────────────────────────┐   │
-│  │                         Nacos Core（内核层）                                         │   │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐ │   │
-│  │  │ Config  │ │ Naming  │ │Console  │ │  Istio  │ │  CMDB   │ │ Address │ │   │
-│  │  │ Module  │ │ Module  │ │ Module  │ │ Module  │ │ Module  │ │ Module  │ │   │
-│  │  └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ └────┬───┘ │   │
-│  └───────┼──────────┼──────────┼──────────┼──────────┼──────────┼────────┘   │
-│           │          │          │          │          │          │               │
-│  ┌────────▼──────────▼──────────▼──────────▼──────────▼──────────▼────────────┐   │
-│  │                      Java SPI 加载层（NacosServiceLoader）                         │   │
-│  │  ┌──────────────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │ NacosServiceLoader.load(Class<T>)                                       │  │   │
-│  │  │ (common/src/main/java/com/alibaba/nacos/common/spi/                      │  │   │
-│  │  │  NacosServiceLoader.java:30-72)                                        │  │   │
-│  │  │ • ConcurrentHashMap<Class<?>, Collection<Class<?>>> SERVICES              │  │   │
-│  │  │ • ServiceLoader.load() 扫描 META-INF/services/                          │  │   │
-│  │  │ • newServiceInstances() 每次返回新实例（非单例）                       │  │   │
-│  │  └──────────────────────────────────────────────────────────────────────────────┘  │   │
-│  └────────────────────────────────────────────────────────────────────────────────────┘   │
-│                                     │                                                │
-│  ┌──────────────────────────────────┼──────────────────────────────────────────────────┐   │
-│  │                   Plugin SPI 接口契约层 (plugin/)                               │   │
-│  │                                                                              │   │
-│  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐        │   │
-│  │  │ AuthPlugin     │ │DataSource      │ │Encryption     │ │TracePlugin     │        │   │
-│  │  │ Service        │ │Mapper          │ │PluginService   │ │NacosTrace      │        │   │
-│  │  │ (auth/spi/    │ │(datasource/    │ │(encryption/   │ │Subscriber      │        │   │
-│  │  │ server/)       │ │mapper/)        │ │spi/)          │ │(trace/spi/)    │        │   │
-│  │  └───────┬────────┘ └───────┬────────┘ └───────┬────────┘ └───────┬────────┘        │   │
-│  │          │                  │                  │                  │                  │   │
-│  │  ┌───────┴────────┐ ┌───────┴────────┐ ┌───────┴────────┐ ┌───────┴────────┐        │   │
-│  │  │Environment     │ │ControlManager  │ │ConfigChange    │ │AuthPlugin      │        │   │
-│  │  │PluginService   │ │Center          │ │PluginService   │ │Manager          │        │   │
-│  │  │(environment/   │ │(control/spi/)  │ │(config/spi/)   │ │(auth/spi/      │        │   │
-│  │  │ spi/)          │ │                │ │                │ │server/)         │        │   │
-│  │  └───────┬────────┘ └───────┬────────┘ └───────┬────────┘ └───────┬────────┘        │   │
-│  └──────────┼──────────────────┼──────────────────┼──────────────────┼──────────────────┘   │
-│             │                  │                  │                  │                       │
-│  ┌──────────▼──────────────────▼──────────────────▼──────────────────▼──────────────────┐   │
-│  │                      Plugin 默认实现层 (plugin-default-impl/)                        │   │
-│  │                                                                                  │   │
-│  │  ┌──────────────────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │ nacos-default-auth-plugin/                                                 │  │   │
-│  │  │  ├── NacosAuthPluginService (BCrypt + JWT Token)                           │  │   │
-│  │  │  ├── User/Role/Permission RBAC                                          │  │   │
-│  │  │  └── AuthFilter (认证过滤器链)                                            │  │   │
-│  │  └──────────────────────────────────────────────────────────────────────────────────┘  │   │
-│  │  ┌──────────────────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │ nacos-default-control-plugin/                                              │  │   │
-│  │  │  ├── DefaultTpsControlManager (TPS 限流)                                   │  │   │
-│  │  │  └── DefaultConnectionControlManager (连接控制)                              │  │   │
-│  │  └──────────────────────────────────────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────────────────────────────────────────┘   │
-│                                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────────────────────────┐   │
-│  │                         外部/用户自定义插件层                                          │   │
-│  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────┐ ┌────────────────┐              │   │
-│  │  │ Custom         │ │ Custom         │ │ Custom         │ │ Custom         │              │   │
-│  │  │ AuthPlugin     │ │ DataSource     │ │ Encryption    │ │ TracePlugin    │              │   │
-│  │  │ (LDAP/OAuth) │ │ (PostgreSQL)  │ │ (SM4 国密)   │ │ (SkyWalking)   │              │   │
-│  │  └────────────────┘ └────────────────┘ └────────────────┘ └────────────────┘              │   │
-│  └──────────────────────────────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 插件体系架构（7 种插件类型 + SPI 机制）</span><span class="s">Nacos Core（内核层）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DB       A</span><span class="s">ule      M</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Java SPI 加载层（NacosServiceLoader）</span><span class="s">NacosServiceLoader.load(Class&lt;T&gt;)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(common/src/main/java/com/alibaba/nacos/common/spi/</div><ul class="dgm-kv"><li><span class="fld">NacosServiceLoader.java</span><span class="typ">: 30-72)</span></li></ul><ul class="dgm-kv"><li>ConcurrentHashMap&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; SERVICES</li><li>ServiceLoader.load() 扫描 META-INF/services/</li><li>newServiceInstances() 每次返回新实例（非单例）</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Plugin SPI 接口契约层 (plugin/)</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">racePlugin</span><span class="s">NacosTrace</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">bscriber</div><div class="dgm-note" style="border:none;background:none;padding:0;">trace/spi/)</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AuthPlugin</span><span class="s">Manager</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(auth/spi/</div><div class="dgm-note" style="border:none;background:none;padding:0;">server/)</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Plugin 默认实现层 (plugin-default-impl/)</span><span class="s">nacos-default-auth-plugin/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NacosAuthPluginService (BCrypt + JWT Token)</div><div class="dgm-note" style="border:none;background:none;padding:0;">User/Role/Permission RBAC</div><div class="dgm-note" style="border:none;background:none;padding:0;">AuthFilter (认证过滤器链)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">nacos-default-control-plugin/</span><span class="s">DefaultTpsControlManager (TPS 限流)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DefaultConnectionControlManager (连接控制)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">外部/用户自定义插件层</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Custom</span><span class="s">TracePlugin</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">lking)</div></div></div></div></div></div>
 
 #### 8.1.3 源码走读
 
@@ -253,41 +186,7 @@ Nacos 2.5.3 的插件体系基于 Java SPI 机制——通过 `NacosServiceLoade
 
 #### 8.2.2 核心类关系图
 
-```
-┌─────────────────────────────────────────────────────────────────────────────────────┐
-│              AuthPluginService 接口契约与实现关系                                │
-│                                                                                 │
-│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
-│  │          <<interface>> AuthPluginService                                  │   │
-│  │          (plugin/auth/spi/server/AuthPluginService.java:30-96)           │   │
-│  │                                                                         │   │
-│  │  + identityNames(): Collection<String>        — 声明需要的身份参数      │   │
-│  │  + enableAuth(ActionTypes, String): boolean — 判断是否启用认证         │   │
-│  │  + validateIdentity(IdentityContext, Resource): boolean — 验证身份      │   │
-│  │  + validateAuthority(IdentityContext, Permission): Boolean — 验证权限    │   │
-│  │  + getAuthServiceName(): String              — 插件唯一标识名            │   │
-│  │  + isLoginEnabled(): boolean (default=false) — 是否启用登录页面       │   │
-│  │  + isAdminRequest(): boolean (default=true)  — 是否需要管理员角色      │   │
-│  └──────────────────────────────────┬──────────────────────────────────────────┘   │
-│                                   │ implements                                  │
-│     ┌─────────────────────────────┼─────────────────────────────┐              │
-│     │                             │                             │              │
-│  ┌──▼──────────────────┐ ┌──────▼──────────────────┐ ┌────────▼──────────┐   │
-│  │ NacosAuthPlugin   │ │ LdapAuthPluginService │ │ CustomAuthPlugin  │   │
-│  │ Service           │ │ (plugin-default-impl/ │ │ (用户自定义)     │   │
-│  │ (默认实现)       │ │  nacos-default-auth-  │ │                   │   │
-│  │ BCrypt + JWT     │ │  plugin/.../impl/     │ │ OAuth2.0 / SAML   │   │
-│  │ RBAC 权限模型   │ │ LdapAuthPlugin       │ │                   │   │
-│  └─────────────────┘ └─────────────────────────┘ └───────────────────┘   │
-│                                                                                 │
-│  ┌─────────────────────────────────────────────────────────────────────────────┐   │
-│  │                    AuthPluginManager（管理器）                              │   │
-│  │  (plugin/auth/spi/server/AuthPluginManager.java:36-80)                  │   │
-│  │  Map<String, AuthPluginService> authServiceMap                           │   │
-│  │  + findAuthServiceSpiImpl(authServiceName): Optional<AuthPluginService> │   │
-│  └─────────────────────────────────────────────────────────────────────────────┘   │
-└─────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AuthPluginService 接口契约与实现关系</span><span class="s">&lt;&lt;interface&gt;&gt; AuthPluginService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/auth/spi/server/AuthPluginService.java:30-96)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ identityNames(): Collection&lt;String&gt;        — 声明需要的身份参数</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ enableAuth(ActionTypes, String): boolean — 判断是否启用认证</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ validateIdentity(IdentityContext, Resource): boolean — 验证身份</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ validateAuthority(IdentityContext, Permission): Boolean — 验证权限</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getAuthServiceName(): String              — 插件唯一标识名</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ isLoginEnabled(): boolean (default=false) — 是否启用登录页面</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ isAdminRequest(): boolean (default=true)  — 是否需要管理员角色</div></div></div><div class="dgm-note">implements</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">cosAuthPlugin       LdapAuthPluginService     CustomAuthPlu</span><span class="s">rvice               (plugin-default-impl/     (用户自定义)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">认实现)            nacos-default-auth-</div><div class="dgm-note" style="border:none;background:none;padding:0;">rypt + JWT          plugin/.../impl/         OAuth2.0 / SAM</div><div class="dgm-note" style="border:none;background:none;padding:0;">AC 权限模型       LdapAuthPlugin</div><div class="dgm-note" style="border:none;background:none;padding:0;">AuthPluginManager（管理器）</div><div class="dgm-note" style="border:none;background:none;padding:0;">plugin/auth/spi/server/AuthPluginManager.java:36-80)</div><div class="dgm-note" style="border:none;background:none;padding:0;">ap&lt;String, AuthPluginService&gt; authServiceMap</div><div class="dgm-note" style="border:none;background:none;padding:0;">findAuthServiceSpiImpl(authServiceName): Optional&lt;AuthPlug</div></div></div></div></div></div>
 
 #### 8.2.3 源码走读
 
@@ -448,39 +347,7 @@ public class IdentityContext {
 
 #### 8.3.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                  NacosAuthPluginService 认证全链路                                 │
-│                                                                                  │
-│  客户端                        服务端                                            │
-│  ┌──────────┐    HTTP POST    ┌─────────────────────────────────────────────┐   │
-│  │ HTTP     │   /v1/auth/    │          AuthController                     │   │
-│  │ Client   │───login──────▶│  (auth/src/main/java/.../AuthController)  │   │
-│  │          │                └──────────────────┬──────────────────────────┘   │
-│  └──────────┘                               │                                │
-│                                              │ ① resolveToken()               │
-│  ┌──────────┐    HTTP API    ┌──────────────▼──────────────────────────┐   │
-│  │ HTTP     │   + Bearer    │     JwtAuthenticationTokenFilter           │   │
-│  │ Client   │───Token──────▶│  (impl/filter/JwtAuthenticationToken      │   │
-│  │          │                │   Filter.java)                             │   │
-│  └──────────┘                └──────────────────┬──────────────────────────┘   │
-│                                              │ ② authenticate(token)            │
-│                                     ┌────────▼──────────────────────────┐       │
-│                                     │   NacosAuthPluginService          │       │
-│                                     │   .validateIdentity()            │       │
-│                                     └────────┬──────────────────────────┘       │
-│                                              │                                │
-│                          ┌───────────────────┼───────────────────┐              │
-│                          │                   │                   │              │
-│               ┌──────────▼──────┐ ┌──────▼──────┐ ┌──────▼──────────┐  │
-│               │ JwtTokenManager  │ │ BCrypt       │ │ IAuthentication  │  │
-│               │                  │ │ Password     │ │ Manager         │  │
-│               │ • createToken()  │ │ Encoder     │ │                │  │
-│               │ • validateToken()│ │              │ │ .authenticate()│  │
-│               │ • HMAC-SHA256  │ │ .matches()   │ │ .authorize()   │  │
-│               └──────────────────┘ └──────────────┘ └──────────────────┘  │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosAuthPluginService 认证全链路</span><span class="s">客户端                        服务端</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AuthController</span><span class="s">(auth/src/main/java/.../AuthController)</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-note">① resolveToken()</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HTTP</span><span class="s">Client</span></div><div class="dgm-box-b"></div></div></div>
 
 #### 8.3.3 源码走读
 
@@ -674,46 +541,7 @@ Nacos 2.5.3 的 RBAC 权限模型作为认证插件体系的核心组成部分�
 
 #### 8.4.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                   RBAC 权限模型——插件化实现                                        │
-│                                                                                  │
-│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
-│  │                     Controller 层（注解驱动权限校验）                          │   │
-│  │  ┌────────────────┐ ┌────────────────┐ ┌────────────────────────────────────┐ │   │
-│  │  │UserController │ │RoleController │ │PermissionController               │ │   │
-│  │  │@Secured(...) │ │@Secured(...) │ │@Secured(...)                    │ │   │
-│  │  └──────┬───────┘ └──────┬───────┘ └────────────┬───────────────────┘ │   │
-│  └─────────┼──────────────────┼────────────────────┼─────────────────────────┘   │
-│            │                  │                    │                              │
-│  ┌─────────▼──────────────────▼────────────────────▼─────────────────────────┐   │
-│  │                     Service 层                                              │   │
-│  │  ┌────────────────────┐ ┌────────────────────┐ ┌────────────────────────┐  │   │
-│  │  │NacosUserDetails   │ │NacosRoleServiceImpl│ │PermissionPersist      │  │   │
-│  │  │ServiceImpl         │ │                    │ │Service                 │  │   │
-│  │  │ createUser()      │ │ addRole()         │ │ addPermission()       │  │   │
-│  │  │ deleteUser()      │ │ deleteRole()      │ │ deletePermission()    │  │   │
-│  │  │ updatePassword()  │ │ getRoles()        │ │ getPermissions()      │  │   │
-│  │  └────────┬───────────┘ └────────┬───────────┘ └──────────┬─────────────┘  │   │
-│  └─────────┼──────────────────────┼────────────────────────┼─────────────────┘   │
-│            │                      │                        │                      │
-│  ┌─────────▼──────────────────────▼────────────────────────▼─────────────────┐   │
-│  │                     Persistence 层（可插拔存储后端）                        │   │
-│  │  ┌────────────────────────────────────────────────────────────────────────┐  │   │
-│  │  │ <<interface>> UserPersistService                                  │  │   │
-│  │  │ + createUser() / deleteUser() / updatePassword() / findByUsername()│  │   │
-│  │  └────────────────────┬───────────────────────────────────────────────┘  │   │
-│  │                     │                                                   │  │
-│  │  ┌──────────────────┴───────────────────────────────┐                   │  │
-│  │  │                                              │                   │  │
-│  │  ┌──────────────────────┐ ┌──────────────────────┐                      │  │
-│  │  │ EmbeddedUserPersist  │ │ ExternalUserPersist  │                      │  │
-│  │  │ ServiceImpl          │ │ ServiceImpl          │                      │  │
-│  │  │ (Derby/MySQL内嵌)  │ │ (外部数据库)        │                      │  │
-│  │  └──────────────────────┘ └──────────────────────┘                      │  │
-│  └────────────────────────────────────────────────────────────────────────┘  │   │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">RBAC 权限模型——插件化实现</span><span class="s">Controller 层（注解驱动权限校验）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">UserController    RoleController    PermissionController</div><div class="dgm-note" style="border:none;background:none;padding:0;">@Secured(...)    @Secured(...)    @Secured(...)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Service 层</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ermissionPersist</span><span class="s">Service</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ddPermission()</div><div class="dgm-note" style="border:none;background:none;padding:0;">eletePermission()</div><div class="dgm-note" style="border:none;background:none;padding:0;">etPermissions()</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Persistence 层（可插拔存储后端）</span><span class="s">&lt;&lt;interface&gt;&gt; UserPersistService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ createUser() / deleteUser() / updatePassword() / findByUsername()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalUserPersist</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">数据库)</div></div></div></div></div></div>
 
 #### 8.4.3 源码走读
 
@@ -793,39 +621,7 @@ Nacos 2.5.3 的认证过滤器链实现在 `plugin-default-impl/nacos-default-au
 
 #### 8.5.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                   AuthFilter 认证过滤器链——插件化架构                               │
-│                                                                                  │
-│  HTTP Request                                                                     │
-│     │                                                                             │
-│  ┌──▼──────────────────────────────────────────────────────────────────────────┐     │
-│  │                         Filter Chain                                        │     │
-│  │                                                                         │     │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │     │
-│  │  │ ① JwtAuthenticationTokenFilter                                   │  │     │
-│  │  │   • resolveToken() — 从Header提取Bearer Token                   │  │     │
-│  │  │   • validateToken() — HMAC-SHA256签名验证 + 过期时间检查     │  │     │
-│  │  │   • SecurityContextHolder — 设置认证上下文                       │  │     │
-│  │  └────────────────────────────┬─────────────────────────────────────┘  │     │
-│  │                               │                                      │     │
-│  │  ┌────────────────────────────▼─────────────────────────────────────┐  │     │
-│  │  │ ② CustomAuthenticationProvider                                  │  │     │
-│  │  │   • authenticate() — BCrypt密码匹配                             │  │     │
-│  │  │   • loadUserByUsername() — 查询数据库获取用户详情+角色列表    │  │     │
-│  │  └──────────────────────────────────────────────────────────────────────┘  │     │
-│  └──────────────────────────────────────────────────────────────────────────────┘     │
-│                                                                                  │
-│  ┌──────────────────────────────────────────────────────────────────────────────────┐   │
-│  │                    可插拔认证后端                                            │   │
-│  │  ┌──────────────────────────┐ ┌──────────────────────────┐                    │   │
-│  │  │ DefaultAuthentication    │ │ LdapAuthentication      │                    │   │
-│  │  │ Manager                │ │ Manager                │                    │   │
-│  │  │ (内嵌数据库认证)       │ │ (LDAP绑定认证)         │                    │   │
-│  │  └──────────────────────────┘ └──────────────────────────┘                    │   │
-│  └──────────────────────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AuthFilter 认证过滤器链——插件化架构</span><span class="s">HTTP Request</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Filter Chain</span><span class="s">① JwtAuthenticationTokenFilter</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>resolveToken() — 从Header提取Bearer Token</li><li>validateToken() — HMAC-SHA256签名验证 + 过期时间检查</li><li>SecurityContextHolder — 设置认证上下文</li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② CustomAuthenticationProvider</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>authenticate() — BCrypt密码匹配</li><li>loadUserByUsername() — 查询数据库获取用户详情+角色列表</li></ul></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">可插拔认证后端</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LdapAuthentication</span><span class="s">anager</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">证)</div></div></div></div></div></div>
 
 #### 8.5.3 源码走读
 
@@ -1036,40 +832,7 @@ Nacos 2.5.3 的配置加密插件体系定义在 `plugin/encryption/` 模块中�
 
 #### 8.7.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                EncryptionPluginService 加密插件体系                               │
-│                                                                                  │
-│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
-│  │              <<interface>> EncryptionPluginService                          │   │
-│  │              (plugin/encryption/spi/EncryptionPluginService.java)          │   │
-│  │                                                                          │   │
-│  │  + encrypt(String content, String secretKey): String                      │   │
-│  │  + decrypt(String content, String secretKey): String                      │   │
-│  │  + generateSecretKey(): String                                           │   │
-│  │  + algorithmName(): String                                                │   │
-│  └──────────────────────────────────┬───────────────────────────────────────────┘   │
-│                                   │ implements                                  │
-│     ┌─────────────────────────────┼─────────────────────────────┐              │
-│     │                             │                             │              │
-│  ┌──▼──────────────────┐ ┌──────▼──────────────────┐ ┌────────▼──────────┐   │
-│  │ AES/GCM Plugin     │ │ SM4 国密 Plugin        │ │ Custom Encryption │   │
-│  │ (用户自定义)       │ │ (用户自定义)           │ │ (用户自定义)     │   │
-│  │                    │ │                        │ │                   │   │
-│  │ AES/GCM/NoPadding │ │ SM4/ECB/PKCS5Padding │ │ 任意算法         │   │
-│  │ 128-bit key       │ │ 128-bit key           │ │                   │   │
-│  └──────────────────┘ └──────────────────────────┘ └───────────────────┘   │
-│                                                                                  │
-│  ┌──────────────────────────────────────────────────────────────────────────────┐   │
-│  │                    EncryptionHandler（配置加密处理器）                         │   │
-│  │  (plugin-default-impl/nacos-default-auth-plugin/.../encryption/          │   │
-│  │   EncryptionHandler.java)                                                 │   │
-│  │                                                                          │   │
-│  │  配置存储前: encrypt(content, secretKey) → 密文                          │   │
-│  │  配置读取后: decrypt(content, secretKey) → 明文                          │   │
-│  └──────────────────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">EncryptionPluginService 加密插件体系</span><span class="s">&lt;&lt;interface&gt;&gt; EncryptionPluginService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/encryption/spi/EncryptionPluginService.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ encrypt(String content, String secretKey): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ decrypt(String content, String secretKey): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ generateSecretKey(): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ algorithmName(): String</div></div></div><div class="dgm-note">implements</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">S/GCM Plugin         SM4 国密 Plugin            Custom Encryp</span><span class="s">户自定义)           (用户自定义)               (用户自定义)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">S/GCM/NoPadding     SM4/ECB/PKCS5Padding     任意算法</div><div class="dgm-note" style="border:none;background:none;padding:0;">8-bit key           128-bit key</div><div class="dgm-note" style="border:none;background:none;padding:0;">EncryptionHandler（配置加密处理器）</div><div class="dgm-note" style="border:none;background:none;padding:0;">plugin-default-impl/nacos-default-auth-plugin/.../encryptio</div><div class="dgm-note" style="border:none;background:none;padding:0;">EncryptionHandler.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">置存储前: encrypt(content, secretKey) → 密文</div><div class="dgm-note" style="border:none;background:none;padding:0;">置读取后: decrypt(content, secretKey) → 明文</div></div></div></div></div></div>
 
 #### 8.7.3 源码走读
 
@@ -1267,50 +1030,7 @@ Nacos 2.5.3 除了三大核心插件（认证、数据源、加密）——还�
 
 #### 8.8.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│              辅助插件体系：Trace + Environment + Control                              │
-│                                                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐     │
-│  │              ① TracePlugin — 链路追踪                                      │     │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐    │     │
-│  │  │ <<interface>> NacosTraceSubscriber                               │    │     │
-│  │  │ (plugin/trace/spi/NacosTraceSubscriber.java)                     │    │     │
-│  │  │ + onEvent(TraceEvent) → 转发到外部追踪系统                     │    │     │
-│  │  │ + getName(): String                                              │    │     │
-│  │  └──────────────────────┬───────────────────────────────────────────┘    │     │
-│  │                     │ implements                                      │     │
-│  │  ┌──────────────────┴──────────────────┐                              │     │
-│  │  │ SkyWalking Subscriber  │ Jaeger Subscriber │  (用户自定义)     │     │
-│  │  └────────────────────────┴──────────────────┘                              │     │
-│  └────────────────────────────────────────────────────────────────────────────┘     │
-│                                                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐     │
-│  │              ② EnvironmentPlugin — 环境定制                                  │     │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐    │     │
-│  │  │ <<interface>> CustomEnvironmentPluginService                       │    │     │
-│  │  │ (plugin/environment/spi/CustomEnvironmentPluginService.java)     │    │     │
-│  │  │ + customizeEnvironment(ConfigurableEnvironment)                    │    │     │
-│  │  │ + pluginOrder(): int                                             │    │     │
-│  │  └──────────────────────────────────────────────────────────────────────┘    │     │
-│  └────────────────────────────────────────────────────────────────────────────┘     │
-│                                                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐     │
-│  │              ③ ControlManagerPlugin — 流量控制                             │     │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐    │     │
-│  │  │ <<interface>> ControlManagerBuilder                              │    │     │
-│  │  │ (plugin/control/spi/ControlManagerBuilder.java)                  │    │     │
-│  │  │ + build(): ControlManager                                        │    │     │
-│  │  │ + getName(): String                                              │    │     │
-│  │  └──────────────────────┬───────────────────────────────────────────┘    │     │
-│  │                     │                                                  │     │
-│  │  ┌──────────────────┴──────────────────┐                              │     │
-│  │  │ DefaultTpsControlManager  │ DefaultConnectionControlManager│       │     │
-│  │  │ (令牌桶算法 TPS 限流)    │ (计数器最大连接数控制)        │       │     │
-│  │  └────────────────────────────┴─────────────────────────────┘       │     │
-│  └────────────────────────────────────────────────────────────────────────────┘     │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">辅助插件体系：Trace + Environment + Control</span><span class="s">implements</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">① TracePlugin — 链路追踪</span><span class="s">&lt;&lt;interface&gt;&gt; NacosTraceSubscriber</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/trace/spi/NacosTraceSubscriber.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onEvent(TraceEvent) → 转发到外部追踪系统</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SkyWalking Subscriber    Jaeger Subs</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② EnvironmentPlugin — 环境定制</span><span class="s">&lt;&lt;interface&gt;&gt; CustomEnvironmentPluginService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/environment/spi/CustomEnvironmentPluginService.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ customizeEnvironment(ConfigurableEnvironment)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ pluginOrder(): int</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">③ ControlManagerPlugin — 流量控制</span><span class="s">&lt;&lt;interface&gt;&gt; ControlManagerBuilder</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/control/spi/ControlManagerBuilder.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ build(): ControlManager</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DefaultTpsControlManager    DefaultC</span><span class="s">(令牌桶算法 TPS 限流)      (计数器最大连接数控制)</span></div><div class="dgm-box-b"></div></div></div>
 
 #### 8.8.3 源码走读
 
@@ -1498,21 +1218,7 @@ Nacos 2.5.3 辅助插件体系通过三种插件类型覆盖运维监控（Trace
 
 Nacos 2.5.3 的插件体系设计——开发者可以完全替换任一 SPI 接口的默认实现——而无需修改 Nacos 内核代码。以下以开发一个**自定义认证插件**为例——演示从零到部署的完整 5 步流程。
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│               自定义插件开发 5 步流程                                       │
-│                                                                          │
-│  Step 1          Step 2          Step 3          Step 4        Step 5       │
-│  ┌──────┐     ┌──────┐     ┌──────┐     ┌──────┐     ┌──────┐      │
-│  │Maven │────▶│ SPI  │────▶│ 实现 │────▶│ 打包 │────▶│ 部署 │      │
-│  │项目  │     │声明  │     │接口  │     │JAR   │     │验证  │      │
-│  └──────┘     └──────┘     └──────┘     └──────┘     └──────┘      │
-│                                                                          │
-│  创建Maven     META-INF/    实现接口       mvn clean     JAR放入       │
-│  项目+依赖    services/      全部方法       package       plugins/       │
-│               SPI配置文件                                    目录         │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">8.9.1</span><span class="tt">自定义插件开发 5 步流程</span></div><div class="dgm-flow"><div class="dgm-step"><span class="n">STEP 1</span><span class="t">Maven 项目</span><span class="s">创建 Maven 项目 + 依赖</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">STEP 2</span><span class="t">SPI 声明</span><span class="s">META-INF/services/ SPI 配置文件</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">STEP 3</span><span class="t">实现接口</span><span class="s">实现接口全部方法</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">STEP 4</span><span class="t">打包 JAR</span><span class="s">mvn clean package</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">STEP 5</span><span class="t">部署验证</span><span class="s">JAR 放入 plugins/ 目录</span></div></div></div>
 
 #### 8.9.2 Step 1：创建 Maven 项目
 

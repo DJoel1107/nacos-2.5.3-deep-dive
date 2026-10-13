@@ -10,52 +10,7 @@ config 模块的 `com.alibaba.nacos.config.server` 代码组织并非扁平结�
 
 ### 3.1.2 核心类关系图：六大子包全景
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Config 模块六大核心子包与数据流 (Nacos 2.5.3)                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│ ① controller 包（HTTP/SDK 入口层）                                          │
-│    ConfigController / ConfigServletInner / ListenerController              │
-│    CommunicationController / HistoryController / ConfigOpsController        │
-│    ▸ 接收 REST 与 gRPC 请求，做参数校验后下沉到 service 包                   │
-│                         │                                                   │
-│                         ▼                                                   │
-│ ② service 包（核心业务编排层）                                              │
-│    ConfigOperationService / ConfigDetailService / ConfigSubService          │
-│    HistoryService / ConfigCacheService / ConfigChangePublisher              │
-│    LongPollingService                                                       │
-│    ▸ 业务编排：参数解析→持久化调用→事件发布→长轮询管理                        │
-│                         │ 持久化调用                                         │
-│                         ▼                                                   │
-│ ③ service/repository 包（持久化仓储层）                                     │
-│    ConfigInfoPersistService(接口)                                            │
-│    ├─ extrnal/ExternalConfigInfoPersistServiceImpl(MySQL)                   │
-│    └─ embedded/EmbeddedConfigInfoPersistServiceImpl(Derby)                  │
-│    ▸ 通过 datasourceService 动态选择数据源                                  │
-│                         │ 返回 ConfigOperateResult(含 lastModified)         │
-│                         ▼                                                   │
-│                                               ┌──────────────┐             │
-│                             ② ConfigChange    │ persistence  │             │
-│                             Publisher 发布 ───▶│ 模块(独立)    │             │
-│                             ConfigDataChange  │ DataSource/  │             │
-│                             Event              │ DB 操作       │             │
-│                                               └──────────────┘             │
-│                         │                                                   │
-│                         ▼ (NotifyCenter 发布事件)                           │
-│ ④ service/dump 包（落盘/缓存填充层）        ⑤ service/notify 包（集群同步层）   │
-│    DumpService / DumpProcessor / disk       AsyncNotifyService              │
-│    ▸ dump 到磁盘并填充 ConfigCacheService    ▸ 通过 gRPC 通知集群其他节点       │
-│    ▸ 完成后发布 LocalDataChangeEvent        ▸ 兼容旧版 HTTP notify            │
-│                         │                       │                           │
-│                         └──────────┬────────────┘                           │
-│                                    ▼ (LocalDataChangeEvent / 直接推送)      │
-│ ⑥ model 包（领域模型层）                                                    │
-│    ConfigInfo / ConfigInfoWrapper / ConfigCache / ConfigCacheGray           │
-│    ConfigDataChangeEvent / LocalDataChangeEvent / ConfigInfoGrayWrapper     │
-│    ▸ 定义配置实体、缓存实体、事件对象                                        │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.1.2</span><span class="tt">Config 模块六大核心子包与数据流（Nacos 2.5.3）</span><span class="src">自上而下 = 调用方向</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">① controller 包</span><span class="s">HTTP / SDK 入口层</span></div><div class="dgm-box-b"><div class="dgm-chips"><span class="dgm-chip">ConfigController</span><span class="dgm-chip">ConfigServletInner</span><span class="dgm-chip">ListenerController</span><span class="dgm-chip">CommunicationController</span><span class="dgm-chip">HistoryController</span><span class="dgm-chip">ConfigOpsController</span></div><div class="dgm-note">▸ 接收 REST 与 gRPC 请求，做参数校验后下沉到 service 包</div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② service 包</span><span class="s">核心业务编排层</span></div><div class="dgm-box-b"><div class="dgm-chips"><span class="dgm-chip">ConfigOperationService</span><span class="dgm-chip">ConfigDetailService</span><span class="dgm-chip">ConfigSubService</span><span class="dgm-chip">HistoryService</span><span class="dgm-chip">ConfigCacheService</span><span class="dgm-chip">ConfigChangePublisher</span><span class="dgm-chip">LongPollingService</span></div><div class="dgm-note">▸ 业务编排：参数解析 → 持久化调用 → 事件发布 → 长轮询管理</div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">持久化调用</span></div><div class="dgm-cols" style="grid-template-columns:2fr 1fr;"><div class="dgm-box"><div class="dgm-box-h"><span class="t">③ service/repository 包</span><span class="s">持久化仓储层</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">ConfigInfoPersistService</span><span class="typ">（接口）</span></li></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t" style="font-size:.85em;">external/</span><span class="m">MySQL</span></div><ul><li>ExternalConfigInfoPersistServiceImpl</li></ul></div><div class="dgm-card"><div class="h"><span class="t" style="font-size:.85em;">embedded/</span><span class="m">Derby</span></div><ul><li>EmbeddedConfigInfoPersistServiceImpl</li></ul></div></div><div class="dgm-note">▸ 通过 datasourceService 动态选择数据源</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence 模块</span><span class="s">独立模块</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>DataSource / DB 操作</li></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">NotifyCenter 发布事件（返回 ConfigOperateResult，含 lastModified）</span></div><div class="dgm-cols dgm-cols-2"><div class="dgm-box"><div class="dgm-box-h"><span class="t">④ service/dump 包</span><span class="s">落盘 / 缓存填充层</span></div><div class="dgm-box-b"><div class="dgm-chips"><span class="dgm-chip">DumpService</span><span class="dgm-chip">DumpProcessor</span><span class="dgm-chip">disk</span></div><div class="dgm-kv"><li>▸ dump 到磁盘并填充 ConfigCacheService</li><li>▸ 完成后发布 LocalDataChangeEvent</li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">⑤ service/notify 包</span><span class="s">集群同步层</span></div><div class="dgm-box-b"><div class="dgm-chips"><span class="dgm-chip">AsyncNotifyService</span></div><div class="dgm-kv"><li>▸ 通过 gRPC 通知集群其他节点</li><li>▸ 兼容旧版 HTTP notify</li></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">LocalDataChangeEvent / 直接推送</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">⑥ model 包</span><span class="s">领域模型层</span></div><div class="dgm-box-b"><div class="dgm-chips"><span class="dgm-chip">ConfigInfo</span><span class="dgm-chip">ConfigInfoWrapper</span><span class="dgm-chip">ConfigCache</span><span class="dgm-chip">ConfigCacheGray</span><span class="dgm-chip">ConfigDataChangeEvent</span><span class="dgm-chip">LocalDataChangeEvent</span><span class="dgm-chip">ConfigInfoGrayWrapper</span></div><div class="dgm-note">▸ 定义配置实体、缓存实体、事件对象</div></div></div></div>
 
 ### 3.1.3 源码走读：各子包核心类职责
 
@@ -136,55 +91,7 @@ Config 模块由 controller → service → repository 三层纵向调用，横�
 
 ### 3.2.2 核心类关系图
 
-```
-                    ┌───────────────────────────────────────────────┐
-                    │         ConfigController.publishConfig()        │
-                    │         (ConfigController.java:158-222)         │
-                    └───────────────────────┬───────────────────────┘
-                                            │ 委托
-                                            ▼
-                    ┌───────────────────────────────────────────────┐
-                    │     ConfigOperationService.publishConfig()      │
-                    │     (ConfigOperationService.java:85-157)        │
-                    │   ① CAS/MD5 校验  ② insertOrUpdate 持久化      │
-                    │   ③ 发布 ConfigDataChangeEvent                 │
-                    └───────────────────────┬───────────────────────┘
-                                            │ ConfigChangePublisher
-                                            │ .notifyConfigChange()
-                                            ▼
-                                ┌───────────────────────┐
-                                │  NotifyCenter.publishEvent() │
-                                │  (环形缓冲 / 发布订阅)      │
-                                └───────────────────────┘
-                                            │
-              ┌─────────────────────────────┼─────────────────────────────┐
-              ▼                             ▼                              ▼
-┌──────────────────────────┐ ┌──────────────────────────┐ ┌─────────────────────────┐
-│ DumpService (dump 包)    │ │ AsyncNotifyService       │ │ (其他订阅者)            │
-│ onEvent: dump()          │ │ (notify 包)              │ │                         │
-│ (DumpService.java:130)   │ │ handleConfigDataChange…  │ │                         │
-│   往 dumpTaskMgr 投任务   │ │ gRPC 通知集群其他节点     │ │                         │
-└───────────┬──────────────┘ │ (AsyncNotifyService.java: │ │                         │
-            │                │  106)                     │ │                         │
-            ▼                └──────────────────────────┘ │                         │
-┌──────────────────────────┐                                │                         │
-│ ConfigCacheService        │                                │                         │
-│ .dumpWithMd5() 写磁盘+JVM  │                                │                         │
-│ (ConfigCacheService.java: │                                │                         │
-│  84)                      │                                │                         │
-└───────────┬──────────────┘                                │                         │
-            │ 发布 LocalDataChangeEvent                      │                         │
-            ▼                                                ▼                         │
-┌──────────────────────────┐                 ┌──────────────────────────┐            │
-│ LongPollingService        │                 │ RpcConfigChangeNotifier  │            │
-│ DataChangeTask.run()      │                 │ (remote 包)              │            │
-│ (LongPollingService.java: │                 │  gRPC 推送订阅客户端       │            │
-│  268)                     │                 │                          │            │
-│ 遍历 allSubs →            │                 └──────────────────────────┘            │
-│ ClientLongPolling         │                                                         │
-│ .sendResponse()           │                                                         │
-└──────────────────────────┘                                                         │
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.2.2</span><span class="tt">配置发布核心类关系图（publishConfig 全链路）</span></div><div class="dgm-cols dgm-cols-2"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">ConfigController.java:158-222</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">ConfigOperationService.java:85-157</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>① CAS / MD5 校验</li><li>② insertOrUpdate 持久化</li><li>③ 发布 ConfigDataChangeEvent</li></div></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">ConfigChangePublisher.notifyConfigChange()</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter.publishEvent()</span><span class="s">环形缓冲 / 发布订阅</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出到所有 Subscriber</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="t">DumpService</span><span class="m">dump 包</span></div><ul><li>onEvent: dump()（DumpService.java:130）</li><li>往 dumpTaskMgr 投任务</li></ul></div><div class="dgm-varrow"></div><div class="dgm-card" style="width:100%;"><div class="h"><span class="t">ConfigCacheService</span></div><ul><li>dumpWithMd5() 写磁盘 + JVM 缓存（ConfigCacheService.java:84）</li></ul></div><div class="dgm-varrow"></div><div class="dgm-card dgm-card--bright" style="width:100%;"><div class="h"><span class="t">LongPollingService</span></div><ul><li>发布 LocalDataChangeEvent 后：DataChangeTask.run()（LongPollingService.java:268）</li><li>遍历 allSubs → ClientLongPolling.sendResponse()</li></ul></div></div><div class="dgm-eco" style="align-items:stretch;"><div class="dgm-card dgm-card--deep" style="width:100%;"><div class="h"><span class="t">AsyncNotifyService</span><span class="m">notify 包</span></div><ul><li>handleConfigDataChangeEvent…</li><li>gRPC 通知集群其他节点（AsyncNotifyService.java:106）</li></ul></div><div class="dgm-varrow"></div><div class="dgm-card dgm-card--bright" style="width:100%;"><div class="h"><span class="t">RpcConfigChangeNotifier</span><span class="m">remote 包</span></div><ul><li>gRPC 推送订阅客户端</li></ul></div></div><div class="dgm-card"><div class="h"><span class="t">（其他订阅者）</span></div></div></div></div>
 
 ### 3.2.3 源码走读：三条主线的协作
 
@@ -228,34 +135,7 @@ Config 模块由 controller → service → repository 三层纵向调用，横�
 
 ### 3.3.2 核心流程与类关系
 
-```
-ConfigController.publishConfig()          (ConfigController.java:158-222)
-   │ ① 参数收集
-   │   ├─ 加密处理 EncryptionHandler.encryptHandler(dataId, content)
-   │   ├─ Namespace 规范化 + ParamUtils 参数校验
-   │   └─ 组装 ConfigForm / ConfigRequestInfo
-   ▼
-ConfigOperationService.publishConfig()    (ConfigOperationService.java:85-157)
-   │ ② getConfigAdvanceInfo() 提取高级信息(desc/use/effect/type/schema)
-   │ ③ ConfigForm.setEncryptedDataKey(); 构造 ConfigInfo
-   │ ④ 若 casMd5 非空 → configInfo.setMd5(casMd5)
-   ▼
-   ├─ 分支A: betaIps 非空 → configGrayModelMigrateService.persistBeta()
-   │          → publishConfigGray(BetaGrayRule.TYPE_BETA) → publish
-   ├─ 分支B: tag 非空 → persistTagv1() → publishConfigGray(TagGrayRule.TYPE_TAG)
-   └─ 分支C: 正式发布
-        ├─ casMd5 非空 → insertOrUpdateCas()  CAS 并发写（失败抛 409）
-        ├─ updateForExist → insertOrUpdate()
-        └─ 否则 → addConfigInfo()（撞唯一键抛 ConfigAlreadyExistsException）
-   ▼
-   ConfigChangePublisher.notifyConfigChange(              (ConfigChangePublisher.java:36-41)
-      new ConfigDataChangeEvent(dataId, group, tenant, lastModified))
-   ▼
-   ConfigTraceService.logPersistenceEvent()  PERSISTENCE_TYPE_PUB 追踪日志
-   ▼
-   ConfigChangeAspect.publishOrUpdateConfigAround()（AOP，插件化扩展点）
-      (ConfigChangeAspect.java:87)
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.3.2</span><span class="tt">publishConfig 核心流程与分支路由</span><span class="src">自上而下 = 执行顺序</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">ConfigController.publishConfig() <span class="en">ConfigController.java:158-222</span></div><div class="sd">① 参数收集：<code>EncryptionHandler.encryptHandler(dataId, content)</code> 加密处理 → Namespace 规范化 + ParamUtils 参数校验 → 组装 <code>ConfigForm</code> / <code>ConfigRequestInfo</code></div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ConfigOperationService.publishConfig() <span class="en">ConfigOperationService.java:85-157</span></div><div class="sd">② <code>getConfigAdvanceInfo()</code> 提取高级信息（desc/use/effect/type/schema）③ <code>ConfigForm.setEncryptedDataKey()</code>，构造 ConfigInfo ④ 若 casMd5 非空 → <code>configInfo.setMd5(casMd5)</code></div></div></div></div><div class="dgm-cols dgm-cols-3" style="margin-top:10px;"><div class="dgm-card dgm-card--bright"><div class="h"><span class="k">分支 A</span><span class="t">Beta 发布</span></div><ul><li>betaIps 非空</li><li>→ configGrayModelMigrateService.persistBeta()</li><li>→ publishConfigGray(BetaGrayRule.TYPE_BETA) → publish</li></ul></div><div class="dgm-card dgm-card--bright"><div class="h"><span class="k">分支 B</span><span class="t">Tag 发布</span></div><ul><li>tag 非空</li><li>→ persistTagv1()</li><li>→ publishConfigGray(TagGrayRule.TYPE_TAG)</li></ul></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="k">分支 C</span><span class="t">正式发布</span></div><ul><li>casMd5 非空 → insertOrUpdateCas()（CAS 并发写，失败抛 409）</li><li>updateForExist → insertOrUpdate()</li><li>否则 → addConfigInfo()（撞唯一键抛 ConfigAlreadyExistsException）</li></ul></div></div><div class="dgm-link" style="margin-top:10px;"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">发布完成后，顺序执行</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">ConfigChangePublisher.notifyConfigChange() <span class="en">ConfigChangePublisher.java:36-41</span></div><div class="sd"><code>new ConfigDataChangeEvent(dataId, group, tenant, lastModified)</code></div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ConfigTraceService.logPersistenceEvent()</div><div class="sd">PERSISTENCE_TYPE_PUB 追踪日志</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ConfigChangeAspect.publishOrUpdateConfigAround()</div><div class="sd">AOP，插件化扩展点</div></div></div></div></div>
 
 ### 3.3.3 源码走读：逐步剖析
 
@@ -362,22 +242,7 @@ publishConfig 链路可概括为"参数收集 → 加密 → CAS 决策 → 持�
 
 ### 3.4.2 事件与订阅者全局视图
 
-```
-      发布来源                          事件对象                        订阅者(消费方)
-┌───────────────────┐        ┌─────────────────────┐        ┌─────────────────────────┐
-│ ConfigOperation   │        │                     │        │ DumpService             │
-│  .publishConfig() │───────▶│ ConfigDataChangeEvent│───────▶│  → dump() 落盘+填缓存     │
-│ ConfigOperation   │        │  (dataId/group/      │        │   → 发布 LocalDataChange │
-│  .publishConfigGray│       │   tenant/grayName/   │        ├─────────────────────────┤
-│ ConfigOperation   │        │   lastModifiedTs)    │        │ AsyncNotifyService      │
-│  .deleteConfig()  │        │                     │        │  → gRPC 集群同步          │
-└───────────────────┘        └─────────────────────┘        └─────────────────────────┘
-        │          ▼                                                  │
-   ConfigChangePublisher.notifyConfigChange(event)                    │
-   (ConfigChangePublisher.java:36-41)                                 │
-   ├─ 嵌入式存储 && 非单机 → return（不派发）                          │
-   └─ 否则 → NotifyCenter.publishEvent(event) ──▶ 环形缓冲/订阅分发     │
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.4.2</span><span class="tt">发布来源 → 事件对象 → 订阅者全局视图</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-box"><div class="dgm-box-h"><span class="t">发布来源</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">ConfigOperationService.publishConfig()</span></li><li><span class="fld">ConfigOperationService.publishConfigGray()</span></li><li><span class="fld">ConfigOperationService.deleteConfig()</span></li></div></div></div><div class="dgm-box" style="border-color:var(--accent);"><div class="dgm-box-h dgm-box-h--blue"><span class="t">ConfigDataChangeEvent</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">dataId</span> / <span class="fld">group</span></li><li><span class="fld">tenant</span> / <span class="fld">grayName</span></li><li><span class="fld">lastModifiedTs</span></li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">订阅者（消费方）</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">DumpService</span> → dump() 落盘 + 填缓存 → 发布 LocalDataChange</li></div><div style="border-top:1px dashed var(--border-subtle);margin:4px 0;"></div><div class="dgm-kv"><li><span class="fld">AsyncNotifyService</span> → gRPC 集群同步</li></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">发布来源统一通过 ↓ 派发事件</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigChangePublisher.notifyConfigChange(event)</span><span class="s">ConfigChangePublisher.java:36-41</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>嵌入式存储 &amp;&amp; 非单机 → return（不派发）</li></div></div></div></div>
 
 ### 3.4.3 源码走读
 
@@ -432,36 +297,7 @@ Nacos 集群模式必须使用外部数据库（主流为 MySQL），承载 `con
 
 ### 3.5.2 核心类关系图
 
-```
-                    ┌────────────────────────────────────────────────┐
-                    │  ConfigInfoPersistService(接口, config 模块)    │
-                    └───────────────────────┬────────────────────────┘
-                                            │ 实现
-                                            ▼
-              ┌───────────────────────────────────────────────────────┐
-              │ ExternalConfigInfoPersistServiceImpl                   │
-              │ (config/.../repository/extrnal/, 1172 行)              │
-              │ insertOrUpdateCas / addConfigInfo / findConfigInfo...  │
-              └───────────────────────┬───────────────────────────────┘
-                                      │ 依赖 DataSourceService
-                                      ▼
-              ┌───────────────────────────────────────────────────────┐
-              │ persistence 模块 (72 个 Java 文件)                      │
-              │  datasource/                                           │
-              │    ├─ DataSourceService(接口)                          │
-              │    ├─ ExternalDataSourceServiceImpl (MySQL)            │
-              │    ├─ LocalDataSourceServiceImpl (Derby)               │
-              │    └─ DynamicDataSource(动态选择)                      │
-              │  configuration/condition/                              │
-              │    ├─ ConditionOnEmbeddedStorage                      │
-              │    ├─ ConditionOnExternalStorage                      │
-              │    ├─ ConditionStandaloneEmbedStorage                 │
-              │    └─ ConditionDistributedEmbedStorage                │
-              │  repository/extrnal/ExternalStoragePaginationHelperImpl│
-              └───────────────────────┬───────────────────────────────┘
-                                      ▼
-                          HikariDataSource (MySQL) → Spring JdbcTemplate
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoPersistService(接口, config 模块)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalConfigInfoPersistServiceImpl</span><span class="s">(config/.../repository/extrnal/, 1172 行)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">insertOrUpdateCas / addConfigInfo / findConfigInfo...</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence 模块 (72 个 Java 文件)</span><span class="s">datasource/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DataSourceService(接口)</div><div class="dgm-note" style="border:none;background:none;padding:0;">ExternalDataSourceServiceImpl (MySQL)</div><div class="dgm-note" style="border:none;background:none;padding:0;">LocalDataSourceServiceImpl (Derby)</div><div class="dgm-note" style="border:none;background:none;padding:0;">DynamicDataSource(动态选择)</div><div class="dgm-note" style="border:none;background:none;padding:0;">configuration/condition/</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionOnExternalStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionStandaloneEmbedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionDistributedEmbedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">repository/extrnal/ExternalStoragePaginationHelperImp</div></div></div></div>
 
 ### 3.5.3 源码走读
 
@@ -591,44 +427,7 @@ MySQL 持久化层的核心是"业务 SQL 与方言解耦"：`DynamicDataSource`
 
 ### 3.6.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              Derby 嵌入式存储核心类关系图 (2.5.3)                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  【config 模块 · 业务持久化实现层】                                           │
-│  EmbeddedConfigInfoPersistServiceImpl ───────┐                               │
-│    │ addConfigInfo / updateConfigInfo         │ (实现 ConfigInfoPersistService)│
-│    │ insertOrUpdate(srcIp,srcUser,cfgInfo,adv)│                                │
-│    │   ├── findConfigInfoState()  判空分支     │                                │
-│    │   ├── addConfigInfoAtomic()  → addSqlContext(INSERT ...)                 │
-│    │   ├── updateConfigInfoAtomic()→ addSqlContext(UPDATE ...)                │
-│    │   ├── historyConfigInfoPersistService.insertConfigHistoryAtomic(...)     │
-│    │   └── databaseOperate.blockUpdate() / update(ctx)  ─┐                    │
-│    └──────────────┬───────────────────────────────────────┘                   │
-│                   ▼                                                          │
-│  【persistence 模块 · 嵌入式操作基础设施层】                                   │
-│  EmbeddedStorageContextHolder (ThreadLocal<ArrayList<ModifyRequest>>)        │
-│    │ getCurrentSqlContext() / cleanAllContext()                              │
-│    ▼                                                                         │
-│  BaseDatabaseOperate (接口 · 模板方法)                                        │
-│    │ default update(TransactionTemplate, JdbcTemplate, List<ModifyRequest>,  │
-│    │               BiConsumer<Boolean,Throwable>)   → 单事务逐条执行          │
-│    │ default doDataImport(JdbcTemplate, List<ModifyRequest>) → batchUpdate   │
-│    ▲                                                                         │
-│    │ 实现                                                                    │
-│  StandaloneDatabaseOperateImpl (@Conditional(ConditionStandaloneEmbedStorage))│
-│    │ init(): DynamicDataSource.getDataSource() → jdbcTemplate/transactionTemplate│
-│    │ queryOne / queryMany / update / dataImport(File)                        │
-│                                                                              │
-│  sql/ModifyRequest(sql,args,executeNo,rollBackOnUpdateFail)  ← 命令封装      │
-│  sql/limiter/SqlTypeLimiter → dataImport 前 DDL/DML 类型校验                 │
-│  utils/DerbyUtils.insertStatementCorrection() → 表名大写转换                 │
-│                                                                              │
-│  装配开关：ConditionStandaloneEmbedStorage / ConditionOnEmbeddedStorage       │
-│           （persistence/configuration/condition/，由 spring.datasource.platform 驱动）│
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.6.2</span><span class="tt">Derby 嵌入式存储核心类关系图（2.5.3）</span><span class="src">自上而下 = 调用方向</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">config 模块 · 业务持久化实现层</span></div><div class="dgm-box-b"><div class="dgm-card dgm-card--deep"><div class="h"><span class="t">EmbeddedConfigInfoPersistServiceImpl</span><span class="m">实现 ConfigInfoPersistService</span></div><ul><li>addConfigInfo / updateConfigInfo</li><li>insertOrUpdate(srcIp, srcUser, cfgInfo, adv)</li><li>├ findConfigInfoState() 判空分支</li><li>├ addConfigInfoAtomic() → addSqlContext(INSERT …)</li><li>├ updateConfigInfoAtomic() → addSqlContext(UPDATE …)</li><li>├ historyConfigInfoPersistService.insertConfigHistoryAtomic(…)</li><li>└ databaseOperate.blockUpdate() / update(ctx)</li></ul></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence 模块 · 嵌入式操作基础设施层</span></div><div class="dgm-box-b"><div class="dgm-card"><div class="h"><span class="t">EmbeddedStorageContextHolder</span><span class="m">ThreadLocal&lt;ArrayList&lt;ModifyRequest&gt;&gt;</span></div><ul><li>getCurrentSqlContext() / cleanAllContext()</li></ul></div><div class="dgm-varrow"></div><div class="dgm-card"><div class="h"><span class="t">BaseDatabaseOperate</span><span class="m">接口 · 模板方法</span></div><ul><li>default update(TransactionTemplate, JdbcTemplate, List&lt;ModifyRequest&gt;, BiConsumer&lt;Boolean,Throwable&gt;) → 单事务逐条执行</li><li>default doDataImport(JdbcTemplate, List&lt;ModifyRequest&gt;) → batchUpdate</li></ul></div><div class="dgm-link"><div class="dgm-varrow" style="background:var(--ink);"></div><span class="lbl">实现</span></div><div class="dgm-card dgm-card--ink"><div class="h"><span class="t">StandaloneDatabaseOperateImpl</span><span class="m">@Conditional(ConditionStandaloneEmbedStorage)</span></div><ul><li>init(): DynamicDataSource.getDataSource() → jdbcTemplate / transactionTemplate</li><li>queryOne / queryMany / update / dataImport(File)</li></ul></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t" style="font-size:.85em;">sql/ModifyRequest</span></div><ul><li>(sql, args, executeNo, rollBackOnUpdateFail) 命令封装</li></ul></div><div class="dgm-card"><div class="h"><span class="t" style="font-size:.85em;">sql/limiter/SqlTypeLimiter</span></div><ul><li>dataImport 前 DDL/DML 类型校验</li></ul></div><div class="dgm-card"><div class="h"><span class="t" style="font-size:.85em;">utils/DerbyUtils</span></div><ul><li>insertStatementCorrection() 表名大写转换</li></ul></div></div><div class="dgm-note"><b>装配开关：</b>ConditionStandaloneEmbedStorage / ConditionOnEmbeddedStorage（persistence/configuration/condition/，由 <code>spring.datasource.platform</code> 驱动）</div></div></div></div>
 
 ### 3.6.3 源码走读
 
@@ -699,41 +498,7 @@ HTTP 长轮询（Long Polling）是 Nacos 面向老版本 SDK（1.x 及未升级
 
 ### 3.7.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────┐
-│                    LongPollingService 结构图 (2.5.3)                    │
-├────────────────────────────────────────────────────────────────────────┤
-│                                                                        │
-│  ConfigController.listener()(config, POST /listener)                   │
-│    │ 读 Listening-Configs → URLDecoder → MD5Util.getClientMd5Map       │
-│    ▼                                                                   │
-│  ConfigServletInner.doPollingConfig()                                  │
-│    │ isSupportLongPolling(请求带 Long-Pulling-Timeout 头)?              │
-│    ├──否 → 兼容短轮询：MD5Util.compareMd5 立即返回                       │
-│    └──是 → LongPollingService.addLongPollingClient()                   │
-│              │ 1) MD5Util.compareMd5 快路径：有变化立即响应              │
-│              │ 2) req.startAsync() ；setTimeout(0)                     │
-│              │ 3) checkLimit 连接数限流 → 超限 schedule 503             │
-│              │ 4) timeout = max(10000, 客户端超时 − 500)               │
-│              │ 5) ConfigExecutor.executeLongPolling(ClientLongPolling) │
-│              ▼                                                         │
-│  allSubs : ConcurrentLinkedQueue<ClientLongPolling>   ← 挂起任务队列   │
-│    ▲                                    │                              │
-│    └── 被两个入口操作 ──────────────────┘                              │
-│        │ 入口① DataChangeTask（变更唤醒）                              │
-│        │     由 LongPollingService 构造器注册的 Subscriber 触发：       │
-│        │     NotifyCenter ← LocalDataChangeEvent                       │
-│        │     → ConfigExecutor.executeLongPolling(DataChangeTask(gk))   │
-│        │     → 遍历 allSubs，匹配 groupKey → sendResponse(提前响应)     │
-│        │ 入口② ClientLongPolling.run() 内部超时回调                    │
-│        │     → allSubs.remove(this) → sendResponse(null)（超时空返回）  │
-│        ▼                                                               │
-│  ConfigExecutor.LONG_POLLING_EXECUTOR (单线程调度执行器)                │
-│    scheduleLongPolling / executeLongPolling                            │
-│                                                                        │
-│  辅助：StatTask(每10s输出 allSubs.size)、MetricsMonitor、retainIps      │
-└────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.7.2</span><span class="tt">LongPollingService 结构图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.listener()</span><span class="s">config · POST /listener</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">读 Listening-Configs → URLDecoder → <code>MD5Util.getClientMd5Map</code></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigServletInner.doPollingConfig()</span></div><div class="dgm-box-b"><div class="dgm-note">isSupportLongPolling（请求带 Long-Pulling-Timeout 头）？</div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="k">否</span><span class="t">兼容短轮询</span></div><ul><li>MD5Util.compareMd5 立即返回</li></ul></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="k">是</span><span class="t">LongPollingService.addLongPollingClient()</span></div><ul><li>1) MD5Util.compareMd5 快路径：有变化立即响应</li><li>2) req.startAsync()；setTimeout(0)</li><li>3) checkLimit 连接数限流 → 超限 schedule 503</li><li>4) timeout = max(10000, 客户端超时 − 500)</li><li>5) ConfigExecutor.executeLongPolling(ClientLongPolling)</li></ul></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">allSubs</span><span class="s">ConcurrentLinkedQueue&lt;ClientLongPolling&gt; · 挂起任务队列</span></div><div class="dgm-box-b"><div class="dgm-note">被两个入口操作：</div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="k">入口 ①</span><span class="t">DataChangeTask（变更唤醒）</span></div><ul><li>由 LongPollingService 构造器注册的 Subscriber 触发：NotifyCenter ← LocalDataChangeEvent</li><li>→ ConfigExecutor.executeLongPolling(DataChangeTask(gK))</li><li>→ 遍历 allSubs，匹配 groupKey → sendResponse(提前响应)</li></ul></div><div class="dgm-card"><div class="h"><span class="k">入口 ②</span><span class="t">ClientLongPolling.run() 内部超时回调</span></div><ul><li>→ allSubs.remove(this) → sendResponse(null)（超时空返回）</li></ul></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigExecutor.LONG_POLLING_EXECUTOR</span><span class="s">单线程调度执行器</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">scheduleLongPolling / executeLongPolling</div></div></div><div class="dgm-note"><b>辅助：</b>StatTask（每 10s 输出 allSubs.size）、MetricsMonitor、retainIps</div></div>
 
 ### 3.7.3 源码走读
 
@@ -803,34 +568,7 @@ HTTP 长轮询（Long Polling）是 Nacos 面向老版本 SDK（1.x 及未升级
 
 ### 3.8.2 核心类关系图
 
-```
-ClientLongPolling (LongPollingService 内部类, implements Runnable)
-│  字段:
-│    final AsyncContext asyncContext      ← req.startAsync() 获得
-│    final Map<String,String> clientMd5Map ← 客户端探测的 <groupKey,md5>
-│    final String ip / appName / tag
-│    final int probeRequestSize
-│    final long createTime / timeoutTime
-│    Future<?> asyncTimeoutFuture
-│
-│  run()  [由 LONG_POLLING_EXECUTOR 执行]
-│    ├─ scheduleLongPolling(超时回调, timeoutTime ms)   → 登记 asyncTimeoutFuture
-│    │     超时回调: retainIps.put; allSubs.remove(this)
-│    │              若 remove 成功 → sendResponse(null)   // 超时空返回
-│    │              否则 → warn 删除失败
-│    └─ allSubs.add(this)                                // 入队等待
-│
-│  sendResponse(changedGroups)
-│    ├─ 若 asyncTimeoutFuture != null → cancel(false)    // 取消待触发超时
-│    └─ generateResponse(changedGroups)
-│           │ null → asyncContext.complete()             // 超时: 返回空, 不写体
-│           │ 非null → 编码 changedGroups 协议串 → 200 → write → complete()
-│
-│  状态转移:
-│     入队(alive) ──变更唤醒──> sendResponse(list) ──> complete(200, 变更key)
-│          │
-│          └─超时──> sendResponse(null) ──> complete(空响应)
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.8.2</span><span class="tt">ClientLongPolling 结构图</span><span class="src">LongPollingService 内部类 · implements Runnable</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">字段</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">asyncContext</span><span class="typ">: AsyncContext ← req.startAsync() 获得</span></li><li><span class="fld">clientMd5Map</span><span class="typ">: Map&lt;String,String&gt; ← 客户端探测的 &lt;groupKey, md5&gt;</span></li><li><span class="fld">ip</span> / <span class="fld">appName</span> / <span class="fld">tag</span><span class="typ">: String</span></li><li><span class="fld">probeRequestSize</span><span class="typ">: int</span></li><li><span class="fld">createTime</span> / <span class="fld">timeoutTime</span><span class="typ">: long</span></li><li><span class="fld">asyncTimeoutFuture</span><span class="typ">: Future&lt;?&gt;</span></li></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">run()</span><span class="s">由 LONG_POLLING_EXECUTOR 执行</span></div><div class="dgm-box-b"><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t" style="font-size:.9em;">scheduleLongPolling(超时回调, timeoutTime ms)</span></div><ul><li>→ 登记 asyncTimeoutFuture</li><li>超时回调：retainIps.put；allSubs.remove(this)</li><li>若 remove 成功 → sendResponse(null)（超时空返回）</li><li>否则 → warn 删除失败</li></ul></div><div class="dgm-card"><div class="h"><span class="t" style="font-size:.9em;">allSubs.add(this)</span></div><ul><li>入队等待</li></ul></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">sendResponse(changedGroups)</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>若 asyncTimeoutFuture != null → cancel(false)（取消待触发超时）</li><li><span class="fld">generateResponse(changedGroups)</span></li><li>&nbsp;&nbsp;null → asyncContext.complete()（超时：返回空，不写体）</li><li>&nbsp;&nbsp;非 null → 编码 changedGroups 协议串 → 200 → write → complete()</li></div></div></div><div class="dgm-cap" style="margin-top:16px;border-bottom-width:1px;"><span class="no" style="font-size:11px;">状态转移</span></div><div class="dgm-flow"><div class="dgm-step"><span class="t">入队（alive）</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="s">变更唤醒</span><span class="t">sendResponse(list)</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="s">complete(200, 变更 key)</span><span class="t">结束</span></div></div><div class="dgm-note" style="margin-top:10px;">入队后若在超时时间内无变更唤醒 → 超时回调路径 → sendResponse(null) → complete()</div></div>
 
 ### 3.8.3 源码走读
 
@@ -922,47 +660,7 @@ ClientLongPolling (LongPollingService 内部类, implements Runnable)
 
 ### 3.9.3 完整时序图（变更路径 + 超时路径）
 
-```
- 客户端(HTTP)                 LongPollingService                     DumpService/ConfigCacheService
-     │                              │                                        │
-     │ ①POST /v1/cs/configs/listener│                                        │
-     │   Listening-Configs={gK:md5} │                                        │
-     ├─────────────────────────────▶│                                        │
-     │ ②isSupportLongPolling? 是    │                                        │
-     │                              │ MD5Util.compareMd5 快路径 (无变化)      │
-     │                              │ req.startAsync() → AsyncContext        │
-     │                              │ timeout=max(10000, 30000−500)=29500    │
-     │                              │ executeLongPolling(ClientLongPolling)  │
-     │                              │   ├─scheduleLongPolling(超时回调,29500)│
-     │                              │   └─allSubs.add(this) ──挂起           │
-     │                              │                                        │
-     │      ...... 挂起等待 ......   │                                        │
-     │                              │                                        │
-     │                              │     发布配置: 写库→ConfigDataChangeEvent│
-     │                              │◀──── DumpService 落盘 ──────────────────│
-     │                              │◀──── ConfigCacheService.dump 完成 ───── │
-     │                              │ ◀── publishEvent(LocalDataChangeEvent) │
-     │                              │                                        │
-     │                              │ DataChangeTask(groupKey)               │
-     │                              │ 遍历 allSubs:                          │
-     │                              │   gK∈clientSub.clientMd5Map?           │
-     │                              │   ├─命中 → iter.remove;                │
-     │                              │   │        sendResponse([gK])          │
-     │                              │   │        asyncTimeoutFuture.cancel   │
-     │ ③200 OK, respString=[gK]编码 │◀─┘    complete()                      │
-     │◀─────────────────────────────┤                                        │
-     │ ④GET /configs?dataId&group   │                                        │
-     ├─────────────────────────────▶│──── doGetConfig → 查询链 → 配置JSON ──▶│
-     │◀──── 200 JSON(content) ──────┤                                        │
-     │ 更新本地MD5, 发起下一轮探测    │                                        │
-     │                              │                                        │
-     │      【超时路径(29.5s内无变化)】                                        │
-     │                              │ 超时回调:                               │
-     │                              │   allSubs.remove(this) 成功            │
-     │                              │   sendResponse(null) → complete()      │
-     │◀──── 空响应(连接正常结束)─────┤                                        │
-     │ 重新 POST /listener (下一轮)  │                                        │
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.9.3</span><span class="tt">长轮询完整时序（变更路径 + 超时路径）</span><span class="src">泳道 = 参与方，自上而下 = 时间</span></div><div class="dgm-cols" style="grid-template-columns:1fr 1.4fr 1fr;"><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">客户端（HTTP）</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>① POST /v1/cs/configs/listener</li><li>&nbsp;&nbsp;Listening-Configs = {gK: md5}</li><li>② 等待响应（挂起）……</li><li>③ 200 OK，respString = [gK] 编码</li><li>④ GET /configs?dataId&amp;group</li><li>← 200 JSON(content)</li><li>更新本地 MD5，发起下一轮探测</li><li>【超时路径】← 空响应（连接正常结束）</li></div></div></div><div class="dgm-box" style="border-color:var(--accent);"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--lane-blue-border);background:var(--lane-blue);padding:8px 12px;"><span class="zh" style="color:var(--accent);">LongPollingService</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>② isSupportLongPolling？是</li><li>MD5Util.compareMd5 快路径（无变化）</li><li>req.startAsync() → AsyncContext</li><li>timeout = max(10000, 30000−500) = 29500</li><li>executeLongPolling(ClientLongPolling)</li><li>&nbsp;&nbsp;├ scheduleLongPolling(超时回调, 29500)</li><li>&nbsp;&nbsp;└ allSubs.add(this) —— 挂起</li></div><div class="dgm-note"><b>发布配置触发：</b>写库 → ConfigDataChangeEvent → DumpService 落盘 → ConfigCacheService.dump 完成 → publishEvent(LocalDataChangeEvent)</div><div class="dgm-kv"><li>DataChangeTask(groupKey) 遍历 allSubs：</li><li>&nbsp;&nbsp;gK ∈ clientSub.clientMd5Map？</li><li>&nbsp;&nbsp;├ 命中 → iter.remove；sendResponse([gK])</li><li>&nbsp;&nbsp;│&nbsp;&nbsp;&nbsp;&nbsp;asyncTimeoutFuture.cancel；complete()</li></div><div class="dgm-note"><b>超时路径（29.5s 内无变化）：</b>超时回调 → allSubs.remove(this) 成功 → sendResponse(null) → complete()</div></div></div><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">DumpService / ConfigCacheService</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>发布配置：写库 → ConfigDataChangeEvent</li><li>→ DumpService 落盘 →</li><li>→ ConfigCacheService.dump 完成 →</li><li>→ publishEvent(LocalDataChangeEvent)</li><li>④ doGetConfig → 查询链 → 配置 JSON</li></div></div></div></div></div>
 
 ### 3.9.4 边界与竞态
 
@@ -998,48 +696,7 @@ ClientLongPolling (LongPollingService 内部类, implements Runnable)
 
 ### 3.10.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                 AsyncNotifyService 结构图 (2.5.3)                     │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  NotifyCenter ◀─ ConfigDataChangeEvent 发布                          │
-│   │                                                                  │
-│   └─ Subscriber.onEvent → handleConfigDataChangeEvent(event)         │
-│         │ MetricsMonitor.incrementConfigChangeCount                  │
-│         │ ipList = memberManager.allMembersWithoutSelf()             │
-│         │ 对每个 member: generateTask(evt, member) → rpcQueue        │
-│         │ 非空 → ConfigExecutor.executeAsyncNotify(new AsyncRpcTask) │
-│         ▼                                                            │
-│  AsyncRpcTask.run() → executeAsyncRpcTask(queue)                     │
-│       while(!queue.isEmpty()):                                       │
-│         task = queue.poll()                                          │
-│         memberManager.hasMember(task.member) ?                       │
-│           ├─否 → 忽略(成员已下线)                                    │
-│           └─是 → isUnHealthy(member) ?                               │
-│                ├─是(不健康) → ConfigTraceService.NOTIFY_TYPE_UNHEALTH│
-│                │            → asyncTaskExecute(task) 延迟重试        │
-│                └─否(健康)  → configClusterRpcClientProxy             │
-│                           .syncConfigChange(member, req, callback)   │
-│                              req = ConfigChangeClusterSyncRequest     │
-│                              callback = AsyncRpcNotifyCallBack        │
-│                  │ send 异常 → asyncTaskExecute(task)                 │
-│                  ▼                                                   │
-│  AsyncRpcNotifyCallBack(RequestCallBack)                             │
-│    onResponse(success?) :                                            │
-│      ├─true → log OK(DELAYED=now-lastModified)                       │
-│      └─false→ log ERROR + asyncTaskExecute(task) 重试                │
-│    onException(ex) : log EXCEPTION + asyncTaskExecute(task) 重试     │
-│                                                                      │
-│  重试: asyncTaskExecute → delay=getDelayTime(task)                   │
-│       = 500 + failCount²×1000 (MAX_COUNT=6)  → scheduleAsyncNotify   │
-│                                                                      │
-│  执行器: ConfigExecutor.ASYNC_NOTIFY_EXECUTOR (Scheduled 100线程)     │
-│                                                                      │
-│  传输: ConfigClusterRpcClientProxy.syncConfigChange                 │
-│       → core.ClusterRpcClientProxy.asyncRequest(member,req,cb)      │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.10.2</span><span class="tt">AsyncNotifyService 结构图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter</span><span class="s">← ConfigDataChangeEvent 发布</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>Subscriber.onEvent → <span class="fld">handleConfigDataChangeEvent(event)</span></li><li>MetricsMonitor.incrementConfigChangeCount</li><li>ipList = memberManager.allMembersWithoutSelf()</li><li>对每个 member：generateTask(evt, member) → rpcQueue</li><li>非空 → ConfigExecutor.executeAsyncNotify(new AsyncRpcTask)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AsyncRpcTask.run() → executeAsyncRpcTask(queue)</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>while(!queue.isEmpty()): task = queue.poll()</li><li>memberManager.hasMember(task.member)？</li><li>&nbsp;&nbsp;├ 否 → 忽略（成员已下线）</li><li>&nbsp;&nbsp;└ 是 → isUnHealthy(member)？</li><li>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;├ 是（不健康）→ ConfigTraceService.NOTIFY_TYPE_UNHEALTHY → asyncTaskExecute(task) 延迟重试</li><li>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;└ 否（健康）→ configClusterRpcClientProxy.syncConfigChange(member, req, callback)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">req = ConfigChangeClusterSyncRequest · callback = AsyncRpcNotifyCallBack</span></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="t">AsyncRpcNotifyCallBack</span><span class="m">RequestCallBack</span></div><ul><li>onResponse(success?)：true → log OK（DELAYED = now − lastModified）</li><li>&nbsp;&nbsp;false → log ERROR + asyncTaskExecute(task) 重试</li><li>onException(ex)：log EXCEPTION + asyncTaskExecute(task) 重试</li></ul></div><div class="dgm-cols dgm-cols-3" style="margin-top:12px;"><div class="dgm-note"><b>重试：</b>asyncTaskExecute → delay = getDelayTime(task) = 500 + failCount²×1000（MAX_COUNT=6）→ scheduleAsyncNotify</div><div class="dgm-note"><b>执行器：</b>ConfigExecutor.ASYNC_NOTIFY_EXECUTOR（Scheduled，100 线程）</div><div class="dgm-note"><b>传输：</b>ConfigClusterRpcClientProxy.syncConfigChange → core.ClusterRpcClientProxy.asyncRequest(member, req, cb)</div></div></div>
 
 ### 3.10.3 源码走读
 
@@ -1126,44 +783,7 @@ Nacos 配置中心部署为多节点集群时，一个配置变更（发布、�
 
 ### 3.11.2 核心类关系图
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│      集群间配置变更通知（数据面 + 控制面）核心类关系图 (2.5.3)         │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  [发布节点]  ConfigOperationService                                  │
-│    publishConfig() ──发布变更──▶ ConfigDataChangeEvent               │
-│         │                                   │                       │
-│         ▼                                   ▼                       │
-│  ConfigChangePublisher.notifyConfigChange()  ConfigChangePublisher    │
-│         │  (embedded 单机模式直接 return)     │ (集群模式)             │
-│         ▼                                   ▼                       │
-│  DumpService（本地落盘）             AsyncNotifyService               │
-│                                          │  onConfigChange          │
-│                                          ▼                           │
-│                         生成 NotifySingleRpcTask（含失败重试）         │
-│                                          │                          │
-│                                          ▼                          │
-│                     gRPC 发送 ConfigChangeClusterSyncRequest          │
-│                          │                                          │
-│  ───────────── 集群网络（gRPC 长连接）────────────────────────────── │
-│                          │                                          │
-│                          ▼                                          │
-│  [接收节点]  ConfigChangeClusterSyncRequestHandler  ──▶  DumpService   │
-│    handle() @InvokeSource(CLUSTER)                    dump() 落盘    │
-│    @TpsControl("ClusterConfigChangeNotify")                         │
-│    └─ checkCompatity() ──▶ ConfigGrayModelMigrateService             │
-│                               （旧版本 beta/tag → 灰度模型迁移）      │
-│                                                                     │
-│  ┌─────────────────────────────────────────────────────────────┐    │
-│  │  [控制面] CommunicationController (/v1/cs/communication)     │    │
-│  │   GET /configWatchers  ──▶ LongPollingService               │    │
-│  │   GET /watcherConfigs      getCollectSubscribleInfo()       │    │
-│  │                             + ConfigChangeListenContext    │    │
-│  │                             + ConnectionManager            │    │
-│  └─────────────────────────────────────────────────────────────┘    │
-└─────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.11.2</span><span class="tt">集群间配置变更通知（数据面 + 控制面）核心类关系图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">[发布节点] ConfigOperationService</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>publishConfig() ──发布变更──▶ <span class="fld">ConfigDataChangeEvent</span></li></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">ConfigChangePublisher.notifyConfigChange()</span></div><ul><li>（embedded 单机模式直接 return）</li><li>→ DumpService（本地落盘）</li></ul></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="t">ConfigChangePublisher</span><span class="m">集群模式</span></div><ul><li>→ AsyncNotifyService.onConfigChange</li><li>→ 生成 NotifySingleRpcTask（含失败重试）</li><li>→ gRPC 发送 ConfigChangeClusterSyncRequest</li></ul></div></div></div></div><div class="dgm-vs-divider"><span>集群网络（gRPC 长连接）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">[接收节点] ConfigChangeClusterSyncRequestHandler</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>handle() <span class="typ">@InvokeSource(CLUSTER) · @TpsControl("ClusterConfigChangeNotify")</span></li><li>└ checkCompatity() → ConfigGrayModelMigrateService（旧版本 beta/tag → 灰度模型迁移）</li><li>──▶ <span class="fld">DumpService</span> dump() 落盘</li></div></div></div><div class="dgm-box" style="margin-top:12px;border-color:var(--ink);"><div class="dgm-box-h" style="background:var(--ink);color:var(--paper);"><span class="t" style="color:#fff;">[控制面] CommunicationController（/v1/cs/communication）</span></div><div class="dgm-box-b"><div class="dgm-cols dgm-cols-2"><div class="dgm-kv"><li><span class="fld">GET /configWatchers</span> → LongPollingService</li></div><div class="dgm-kv"><li><span class="fld">GET /watcherConfigs</span> → getCollectSubscribleInfo() + ConfigChangeListenContext + ConnectionManager</li></div></div></div></div></div>
 
 ### 3.11.3 源码走读
 
@@ -1301,40 +921,7 @@ Nacos 2.5.3 中历史版本管理的对外门面是 `HistoryService`（`config/s
 
 ### 3.12.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│      配置历史版本管理 核心类关系图 (2.5.3)                            │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  HistoryController  (/v1/cs/history)                          │
-│   GET search=accurate ─▶ historyService.listConfigHistory()        │
-│   GET 详情           ─▶ historyService.getConfigHistoryInfo()      │
-│   GET /previous      ─▶ historyService.getPreviousConfigHistoryInfo│
-│   GET /configs       ─▶ historyService.getConfigListByNamespace()  │
-│        │                                                          │
-│        ▼                                                          │
-│  HistoryService (门面, 217行)                                      │
-│   listConfigHistory / getConfigHistoryInfo / getConfigHistoryInfoDetail│
-│   checkHistoryInfoPermission(防越权)  + EncryptionHandler 解密      │
-│        │                                                          │
-│        ▼                                                          │
-│  HistoryConfigInfoPersistService 接口 (134行)                      │
-│   findConfigHistory / detailConfigHistory / detailPreviousConfigHistory│
-│   getNextHistoryInfo / removeConfigHistory / findDeletedConfig     │
-│        │                                     ▲                       │
-│   ┌────┴─────────────┐               写入历史记录（同事务原子写入）   │
-│   ▼                  ▼                        │                     │
-│  EmbeddedHistory   ExternalHistory      ConfigInfoPersistService    │
-│  (Derby)           (MySQL)             addConfigInfo/insertOrUpdate │
-│  历史清理                               insertConfigHistoryAtomic   │
-│  HistoryConfigCleanerManager <── 定时清理过期历史                    │
-│                                                                    │
-│  持久化表: his_config_info (nid 自增主键, op_type, publish_type,     │
-│           gray_name, encrypted_data_key, ext_info)                 │
-│                                                                    │
-│  [回滚链路] 前端读取历史详情 → 拿 content+md5 → publishConfig 重新发布│
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.12.2</span><span class="tt">配置历史版本管理核心类关系图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HistoryController</span><span class="s">/v1/cs/history</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">GET search=accurate</span> → historyService.listConfigHistory()</li><li><span class="fld">GET 详情</span> → historyService.getConfigHistoryInfo()</li><li><span class="fld">GET /previous</span> → historyService.getPreviousConfigHistoryInfo()</li><li><span class="fld">GET /configs</span> → historyService.getConfigListByNamespace()</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HistoryService</span><span class="s">门面 · 217 行</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>listConfigHistory / getConfigHistoryInfo / getConfigHistoryInfoDetail</li><li>checkHistoryInfoPermission（防越权）+ EncryptionHandler 解密</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HistoryConfigInfoPersistService 接口</span><span class="s">134 行</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>findConfigHistory / detailConfigHistory / detailPreviousConfigHistory</li><li>getNextHistoryInfo / removeConfigHistory / findDeletedConfig</li></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="t">EmbeddedHistory</span><span class="m">Derby</span></div><ul><li>历史清理：HistoryConfigCleanerManager ← 定时清理过期历史</li></ul></div><div class="dgm-card"><div class="h"><span class="t">ExternalHistory</span><span class="m">MySQL</span></div><ul><li>与 Embedded 同接口实现</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--up"></div><span class="lbl">写入历史记录（同事务原子写入）</span></div><div class="dgm-card dgm-card--deep" style="width:60%;"><div class="h"><span class="t">ConfigInfoPersistService</span></div><ul><li>addConfigInfo / insertOrUpdate</li><li>insertConfigHistoryAtomic</li></ul></div></div></div><div class="dgm-note" style="margin-top:12px;"><b>持久化表：</b>his_config_info（nid 自增主键，op_type，publish_type，gray_name，encrypted_data_key，ext_info）</div><div class="dgm-note" style="margin-top:8px;"><b>回滚链路：</b>前端读取历史详情 → 拿 content + md5 → publishConfig 重新发布</div></div>
 
 ### 3.12.3 源码走读
 
@@ -1490,35 +1077,10 @@ Nacos 2.5.3 的导入导出实现分布在 `ConfigController`（REST 端点）�
 
 ### 3.13.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│      配置导入导出 核心类关系图 (2.5.3)                                │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  ConfigController (1016行)                                         │
-│   GET  export=true   exportConfig()      ── 旧版导出（.meta.yml）    │
-│   GET  exportV2=true  exportConfigV2()   ── 新版导出（.metadata.yml）│
-│   POST import=true   importAndPublishConfig() ── 导入入口           │
-│   POST clone=true    cloneConfig()       ── 复制（复用导入批量发布）  │
-│        │                                        │                 │
-│        ▼                                        ▼                 │
-│  ZipUtils (157行)                  parseImportData(v1) / parseImportDataV2│
-│   ZipItem(itemName, itemData)      │   元数据解析 + 加密 + 组装       │
-│   ZipUtils.zip() 压缩               ▼                                │
-│   ZipUtils.unzip() 解压           batchImportAndPublishConfigs()      │
-│   UnZipResult(zipItemList,        │   按 SameConfigPolicy 逐条发布    │
-│        metaDataItem)              │                                 │
-│                                   ▼                                 │
-│            ConfigDiskService / ConfigInfoPersistService.findAllConfigInfo4Export│
-│            ConfigOperationService.publishConfig —— 真正落库 + 集群通知  │
-│                                                                    │
-│  ZIP 内容结构 (group/dataId 扁平路径):                               │
-│   └── groupA/foo.yaml        ← 配置内容（导出时已解密）               │
-│   └── groupB/bar.properties                                          │
-│   └── .metadata.yml          ← 新版元数据 (ConfigMetadata)          │
-│   └── (旧版 .meta.yml：`group.dataId.app=xxx` 自定义格式)             │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.13.2</span><span class="tt">配置导入导出核心类关系图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController</span><span class="s">1016 行</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">GET&nbsp; export=true</span> → exportConfig()（旧版导出 .meta.yml）</li><li><span class="fld">GET&nbsp; exportV2=true</span> → exportConfigV2()（新版导出 .metadata.yml）</li><li><span class="fld">POST import=true</span> → importAndPublishConfig()（导入入口）</li><li><span class="fld">POST clone=true</span> → cloneConfig()（复制，复用导入批量发布）</li></div></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:12px;"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ZipUtils</span><span class="s">157 行 · 导出侧</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">ZipItem</span><span class="typ">(itemName, itemData)</span></li><li><span class="fld">zip()</span> 压缩 · <span class="fld">unzip()</span> 解压</li><li><span class="fld">UnZipResult</span><span class="typ">(zipItemList, metaDataItem)</span></li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">parseImportData(v1) / parseImportDataV2</span><span class="s">导入侧</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>元数据解析 + 加密 + 组装</li></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-kv"><li><span class="fld">batchImportAndPublishConfigs()</span> — 按 SameConfigPolicy 逐条发布</li></div></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-note"><b>落库与通知：</b>ConfigDiskService / ConfigInfoPersistService.findAllConfigInfo4Export（导出读取）· ConfigOperationService.publishConfig（真正落库 + 集群通知）</div><div class="dgm-cap" style="margin-top:16px;border-bottom-width:1px;"><span class="no" style="font-size:11px;">ZIP 内容结构</span><span class="tt" style="font-weight:400;color:var(--text-secondary);font-size:.85em;">group/dataId 扁平路径</span></div><div class="dgm-tree">├── <span class="dir">groupA/foo.yaml</span>        <span class="cmt"># 配置内容（导出时已解密）</span>
+├── <span class="dir">groupB/bar.properties</span>
+├── <span class="dir">.metadata.yml</span>          <span class="cmt"># 新版元数据（ConfigMetadata）</span>
+└── <span class="dir">.meta.yml</span>              <span class="cmt"># 旧版元数据：group.dataId.app=xxx 自定义格式</span></div></div>
 
 ### 3.13.3 源码走读
 
@@ -1712,41 +1274,7 @@ Nacos 2.5.3 的配置导入导出以 `ZipUtils` 为编解码底座，以 `group/
 
 ### 3.14.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│      Beta 配置发布 核心类关系图 (2.5.3)                               │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  ConfigController                                                  │
-│   POST 发布(Header betaIps=1.2.3.4) → publishConfig()              │
-│   GET  beta=true          → queryBeta()                            │
-│   DELETE beta=true        → stopBeta()                             │
-│        │                                                          │
-│        ▼                                                          │
-│  ConfigOperationService                                            │
-│   publishConfig()   if betaIps NOT blank:                         │
-│      grayName = "beta"，grayPriority = Integer.MAX_VALUE            │
-│      configGrayModelMigrateService.persistBeta()  (兼容迁移)        │
-│      publishConfigGray("beta", ...)                                │
-│        │                                                          │
-│        ▼                                                          │
-│  publishConfigGray()  ──▶ GrayRuleManager.constructGrayRule()      │
-│        │                   (type+version → 反射构造 BetaGrayRule)   │
-│        │  validate() → 有效则 checkGrayVersionOverMaxCount()        │
-│        ▼                                                          │
-│  ConfigInfoGrayPersistService.insertOrUpdateGray()  → config_info_gray 表│
-│        │  并发写入 history（publish_type=gray, gray_name=beta）     │
-│        ▼                                                          │
-│  ConfigChangePublisher.notifyConfigChange(grayName="beta")         │
-│        │                                                          │
-│        ▼                                                          │
-│  GrayRule 规则: BetaGrayRule (parse 逗号分隔 IP, match ClientIp)     │
-│   读取时: GrayRuleMatchHandler 用客户端 labels 匹配 → 命中返回 beta 内容│
-│                                                                    │
-│  stopBeta(): deleteConfig(grayName="beta") → config_info_gray 删除 |历史保留│
-│  queryBeta(): findConfigInfo4Gray(dataId,group,tenant,"beta")+解密  │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.14.2</span><span class="tt">Beta 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> 发布（Header betaIps=1.2.3.4）→ publishConfig()</li><li><span class="fld">GET</span> beta=true → queryBeta()</li><li><span class="fld">DELETE</span> beta=true → stopBeta()</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if betaIps NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"beta"</span>，grayPriority = Integer.MAX_VALUE</li><li>configGrayModelMigrateService.persistBeta()（兼容迁移）</li><li>publishConfigGray("beta", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div><ul><li>validate() → 有效则 checkGrayVersionOverMaxCount()</li></ul></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager.constructGrayRule()</span></div><ul><li>type + version → 反射构造 BetaGrayRule</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span><span class="s">→ config_info_gray 表</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>并发写入 history（publish_type = gray，gray_name = beta）</li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">ConfigChangePublisher.notifyConfigChange(grayName="beta")</span></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="k">GrayRule 规则</span><span class="t">BetaGrayRule</span></div><ul><li>parse 逗号分隔 IP，match ClientIp</li><li>读取时：GrayRuleMatchHandler 用客户端 labels 匹配 → 命中返回 beta 内容</li></ul></div><div class="dgm-cols dgm-cols-2" style="margin-top:12px;"><div class="dgm-note"><b>stopBeta()：</b>deleteConfig(grayName="beta") → config_info_gray 删除（历史保留）</div><div class="dgm-note"><b>queryBeta()：</b>findConfigInfo4Gray(dataId, group, tenant, "beta") + 解密</div></div></div>
 
 ### 3.14.3 源码走读
 
@@ -1950,38 +1478,7 @@ Beta 灰度以"客户端 IP"为切分维度，面向的是"特定机器验证"�
 
 ### 3.15.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│      Tag 配置发布 核心类关系图 (2.5.3)                                │
-├────────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  ConfigController.publishConfig()（GET/POST 携带 tag 参数）          │
-│   POST dataId+group+content+tag=xxx → publishConfig()              │
-│   DELETE dataId+group+tag=xxx      → deleteConfig(tag)             │
-│   GET    dataId+group+tag=xxx      → inner.doGetConfig(tag)        │
-│        │                                                          │
-│        ▼                                                          │
-│  ConfigOperationService.publishConfig()   if tag NOT blank:       │
-│     grayName = "tag_" + tag，grayPriority = MAX-1                  │
-│     configGrayModelMigrateService.persistTagv1()  (兼容迁移)       │
-│     publishConfigGray("tag", ...)                                  │
-│        │                                                          │
-│        ▼                                                          │
-│  publishConfigGray()  ──▶ GrayRuleManager → TagGrayRule            │
-│        ▼                       (parse: tagValue=tag)               │
-│  ConfigInfoGrayPersistService.insertOrUpdateGray()                 │
-│   （config_info_gray.gray_name = "tag_xxx"）                       │
-│        │                                                          │
-│  [读取] ConfigServletInner.doGetConfig(tag)                        │
-│        │                                                          │
-│        ▼                                                          │
-│  查询责任链: ConfigChainEntryHandler → GrayRuleMatchHandler        │
-│        │    └─ match(客户端labels含 VIPServer-Tag=xxx) 命中→灰度     │
-│        ▼                                                          │
-│  未命中且请求带 tag → SpecialTagNotFoundHandler  → SPECIAL_TAG_CONFIG_NOT_FOUND│
-│  未命中且不带 tag → FormalHandler（正式配置）                        │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.15.2</span><span class="tt">Tag 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布 / 读取链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">GET/POST 携带 tag 参数</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> dataId + group + content + tag=xxx → publishConfig()</li><li><span class="fld">DELETE</span> dataId + group + tag=xxx → deleteConfig(tag)</li><li><span class="fld">GET</span> dataId + group + tag=xxx → inner.doGetConfig(tag)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if tag NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"tag_" + tag</span>，grayPriority = MAX − 1</li><li>configGrayModelMigrateService.persistTagv1()（兼容迁移）</li><li>publishConfigGray("tag", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager → TagGrayRule</span></div><ul><li>parse：tagValue = tag</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>config_info_gray.gray_name = <span class="fld">"tag_xxx"</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">[读取] ConfigServletInner.doGetConfig(tag)</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查询责任链</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">ConfigChainEntryHandler</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">GrayRuleMatchHandler</span><span class="s">match：客户端 labels 含 VIPServer-Tag=xxx → 命中 → 灰度</span></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">请求带 tag</span></div><ul><li>→ SpecialTagNotFoundHandler → SPECIAL_TAG_CONFIG_NOT_FOUND</li></ul></div><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">不带 tag</span></div><ul><li>→ FormalHandler（正式配置）</li></ul></div></div></div></div></div>
 
 ### 3.15.3 源码走读
 
@@ -2141,35 +1638,7 @@ Nacos 2.5.3 将加密能力设计为 **SPI 插件体系**：核心仅定义 `Enc
 
 ### 3.16.2 核心类关系图
 
-```
-┌────────────────────────────────────────────────────────────────────┐
-│      配置加密插件 核心类关系图 (2.5.3)                                │
-├────────────────────────────────────────────────────────────────────┤
-│   [服务端]                                                         │
-│  ConfigController.publishConfig / ConfigOperationService           │
-│      └─ EncryptionHandler.encryptHandler(dataId, content)          │
-│           │  dataId 以 "cipher-" 开头？是 → 走插件；否 → 原样返回     │
-│           ▼                                                       │
-│  EncryptionPluginManager (单例, SPI 加载 map<algorithmName, svc>)   │
-│           │   NacosServiceLoader.load(EncryptionPluginService.class)│
-│           ▼                                                       │
-│  EncryptionPluginService 接口（SPI）                                │
-│     encrypt / decrypt / generateSecretKey / algorithmName          │
-│     encryptSecretKey / decryptSecretKey                            │
-│           ▲                                                       │
-│    实现示例: AES 算法插件（AES/GCM/NoPadding，官方/社区提供）          │
-│           │                                                       │
-│  [持久化] config_info.encrypted_data_key ← 加密的数据密钥            │
-│          his_config_info.encrypted_data_key                        │
-│  [读取] HistoryService / ConfigServletInner → decryptHandler() 解密  │
-│                                                                    │
-│  [客户端] ConfigEncryptionFilter + LocalEncryptedDataKeyProcessor   │
-│    从响应/本地解析 encryptedDataKey，decryptHandler 还原明文          │
-│                                                                    │
-│  dataId 约定: "cipher-" + algorithmName + "-" + businessKey          │
-│  示例: cipher-AES-dataIdKey    → parseAlgorithmName 提取 "AES"       │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">3.16.2</span><span class="tt">配置加密插件核心类关系图（2.5.3）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">[服务端] ConfigController.publishConfig / ConfigOperationService</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>└ <span class="fld">EncryptionHandler.encryptHandler(dataId, content)</span></li><li>&nbsp;&nbsp;&nbsp;dataId 以 "cipher-" 开头？是 → 走插件；否 → 原样返回</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EncryptionPluginManager</span><span class="s">单例 · SPI 加载 map&lt;algorithmName, svc&gt;</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">NacosServiceLoader.load(EncryptionPluginService.class)</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card dgm-card--deep"><div class="h"><span class="k">SPI 接口</span><span class="t">EncryptionPluginService</span></div><ul><li>encrypt / decrypt / generateSecretKey / algorithmName</li><li>encryptSecretKey / decryptSecretKey</li></ul></div><div class="dgm-card"><div class="h"><span class="k">实现示例</span><span class="t">AES 算法插件</span></div><ul><li>AES/GCM/NoPadding（官方 / 社区提供）</li></ul></div></div><div class="dgm-cols dgm-cols-3" style="margin-top:12px;"><div class="dgm-note"><b>[持久化]</b>config_info.encrypted_data_key ← 加密的数据密钥；his_config_info.encrypted_data_key</div><div class="dgm-note"><b>[读取]</b>HistoryService / ConfigServletInner → decryptHandler() 解密</div><div class="dgm-note"><b>[客户端]</b>ConfigEncryptionFilter + LocalEncryptedDataKeyProcessor：从响应/本地解析 encryptedDataKey，decryptHandler 还原明文</div></div><div class="dgm-note" style="margin-top:8px;"><b>dataId 约定：</b><code>"cipher-" + algorithmName + "-" + businessKey</code>　·　<b>示例：</b><code>cipher-AES-dataIdKey</code> → parseAlgorithmName 提取 "AES"</div></div>
 
 ### 3.16.3 源码走读
 
@@ -2357,64 +1826,7 @@ Nacos 2.5.3 将持久化逻辑从 Config 模块中分离为独立的 `persistenc
 
 **【核心类关系图】**
 
-```
-/* 图 3-17：persistence 模块核心类关系图（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────────┐
-│                    DynamicDataSource (单例适配器)                    │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │  - INSTANCE: DynamicDataSource (饿汉式单例)               │ │
-│  │  - localDataSourceService: DataSourceService               │ │
-│  │  - basicDataSourceService: DataSourceService               │ │
-│  │  + getDataSource(): DataSourceService                     │ │
-│  │    └─ 首次调用时 init() → 缓存到 localDataSourceService    │ │
-│  └──────────────────────────────────────────────────────────┐ │
-│                             │                                   │
-│         ┌───────────────────┴───────────────────┐               │
-│         ▼                                       ▼               │
-│  ┌─────────────────┐               ┌─────────────────────┐       │
-│  │ LocalDataSource │               │ ExternalDataSource   │       │
-│  │ ServiceImpl    │               │ ServiceImpl         │       │
-│  │ (Derby 嵌入式) │               │ (MySQL 外置)       │       │
-│  │                │               │                     │       │
-│  │ · init():      │               │ · init():           │       │
-│  │   Derby RDBMS  │               │   HikariCP 连接池   │       │
-│  │   + 建表 SQL  │               │   + JMX 监控注册   │       │
-│  │ · reload()     │               │ · reload()          │       │
-│  │   master 切换  │               │   datasource 重建    │       │
-│  └────────┬───────┘               └──────────┬──────────┘       │
-│           │                                   │                   │
-│           └───────────────┬───────────────┘                   │
-│                           ▼                                       │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │              条件加载器 (Spring @Conditional)                │ │
-│  │  ┌────────────────────┐  ┌─────────────────────────┐        │ │
-│  │  │ ConditionOnEmbedded│  │ConditionStandaloneEmbedded│        │ │
-│  │  │ Storage (集群内嵌) │  │ Storage (单机内嵌)       │        │ │
-│  │  └────────────────────┘  └─────────────────────────┘        │ │
-│  │  ┌────────────────────┐  ┌─────────────────────────┐        │ │
-│  │  │ConditionOnExternal│  │ConditionDistributedEmbed │        │ │
-│  │  │ Storage (外置DB)  │  │ Storage (集群外置DB)     │        │ │
-│  │  └────────────────────┘  └─────────────────────────┘        │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │            EmbeddedStorageContextHolder (ThreadLocal)        │ │
-│  │  ┌──────────────────────────────────────────────────────┐   │ │
-│  │  │ · addSqlContext(SqlContext)  → 注册 SQL 构建上下文  │   │ │
-│  │  │ · getCurrentSqlContext()     → 获取当前构建上下文  │   │ │
-│  │  │ · cleanAllContext()          → 清理所有上下文      │   │ │
-│  │  └──────────────────────────────────────────────────────┘   │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-│                                                                 │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │              EmbeddedApplyHook (初始化 Hook 钩子)             │ │
-│  │  ┌──────────────────────────────────────────────────────┐   │ │
-│  │  │ · apply() → 在 EmbeddedStorageContextHolder          │   │ │
-│  │  │   初始化后自动执行 SQL（如 CREATE TABLE）          │   │ │
-│  │  └──────────────────────────────────────────────────────┘   │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 3-17</span><span class="tt">persistence 模块核心类关系图（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DynamicDataSource (单例适配器)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>INSTANCE: DynamicDataSource (饿汉式单例)</li><li>localDataSourceService: DataSourceService</li><li>basicDataSourceService: DataSourceService</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ getDataSource(): DataSourceService</div><div class="dgm-note" style="border:none;background:none;padding:0;">首次调用时 init() → 缓存到 localDataSourceService</div><div class="dgm-note" style="border:none;background:none;padding:0;">▼</div><div class="dgm-note" style="border:none;background:none;padding:0;">条件加载器 (Spring @Conditional)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ataSource                   ExternalDat</span><span class="s">eImpl                      ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">嵌入式)                   (MySQL 外置)</div><div class="dgm-note" style="border:none;background:none;padding:0;">():                        · init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">y RDBMS                      HikariCP 连</div><div class="dgm-note" style="border:none;background:none;padding:0;">SQL                      + JMX 监控注册</div><div class="dgm-note" style="border:none;background:none;padding:0;">ad()                       · reload()</div><div class="dgm-note" style="border:none;background:none;padding:0;">er 切换                      datasource 重</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConditionStandaloneEmbedd</span><span class="s">rage (单机内嵌)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">onditionDistributedEmbed</span><span class="s">orage (集群外置DB)</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EmbeddedStorageContextHolder (ThreadLocal)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>addSqlContext(SqlContext)  → 注册 SQL 构建上下文</li><li>getCurrentSqlContext()     → 获取当前构建上下文</li><li>cleanAllContext()          → 清理所有上下文</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EmbeddedApplyHook (初始化 Hook 钩子)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>apply() → 在 EmbeddedStorageContextHolder</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">初始化后自动执行 SQL（如 CREATE TABLE）</div></div></div></div>
 
 **【源码走读】**
 

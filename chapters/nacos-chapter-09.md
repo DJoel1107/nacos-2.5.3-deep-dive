@@ -100,8 +100,7 @@ server.port=8848
 
 Nacos 启动时 Spring Boot 基础配置的加载时序如下：
 
-```
-启动流程:
+<div class="dgm"><div class="dgm-tree">启动流程:
 1. SpringApplication.run()
    └── 加载 application.properties（distribution/conf/application.properties）
        ├── server.port=8848
@@ -124,8 +123,7 @@ Nacos 启动时 Spring Boot 基础配置的加载时序如下：
        └── 注册 RequestMapping: /nacos/v1/cs/**, /nacos/v1/ns/**
 
 5. GrpcSdkServer.start()（GrpcSdkServer.java:62-68）
-   └── port = server.port + portOffset(1000) = 9848
-```
+   └── port = server.port + portOffset(1000) = 9848</div></div>
 
 关键代码路径：
 
@@ -825,8 +823,7 @@ public Boolean publishConfig(HttpServletRequest request, HttpServletResponse res
 
 `nacos.config.push.maxRetryTime=50` 控制配置变更推送的最大重试次数。推送流程由 `AsyncNotifyService` 管理（`config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java`）：
 
-```
-推送流程:
+<div class="dgm"><div class="dgm-tree">推送流程:
 1. ConfigController.publishConfig() → NotifyCenter.publishEvent(ConfigDataChangeEvent)
 2. AsyncNotifyService.onEvent(ConfigDataChangeEvent)
    └── for each clusterNode in ServerMemberManager.getServerList():
@@ -841,15 +838,14 @@ public Boolean publishConfig(HttpServletRequest request, HttpServletResponse res
            ├── sleep(min(2^(retryCount-1) * 1000, 60000))  // 指数退避: 1s, 2s, 4s, ..., max 60s
            ├── POST http://{node}:8848/nacos/v1/cs/communication/dataChange
            └── if success → return
-   └── if retryCount > maxRetryTime:
+   └── if retryCount &gt; maxRetryTime:
        └── LOG.warn("Async notify failed after {} retries", maxRetryTime)
        └── // 放弃推送，依赖 Distro 协议集群同步保证最终一致
 
 重试间隔计算（指数退避）:
 retry i: delay = min(2^(i-1) * 1000, 60000) ms
   i=1: 1s      i=10: 512s (9min)   i=30: 60s (cap)
-  i=2: 2s       i=20: 60s (cap)     i=50: 60s (cap)
-```
+  i=2: 2s       i=20: 60s (cap)     i=50: 60s (cap)</div></div>
 
 **关键设计决策**：`maxRetryTime=50` 配合指数退避上限 60s，最长重试时间约 50×60s=3000s=50 分钟。超过此时间放弃推送，依赖 Distro 协议的集群同步机制在节点恢复后自动补齐缺失数据。
 
@@ -950,32 +946,7 @@ retry i: delay = min(2^(i-1) * 1000, 60000) ms
 
 `LongPollingService`（`config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:60-570`）是整个 Nacos 配置中心客户端感知配置变更的核心引擎。其架构分为四层：
 
-```
-┌─────────────────────────────────────────────────────────┐
-│               LongPollingService 架构                         │
-├─────────────────────────────────────────────────────────┤
-│  1. HTTP 接入层（addLongPollingClient）                     │
-│     ├── 解析客户端 Header: Long-Pulling-Timeout              │
-│     ├── compareMd5() → 若有变更 → 立即返回内容           │
-│     ├── checkLimit() → 连接数校验                         │
-│     └── AsyncContext.startAsync() → 释放 HTTP 线程         │
-├─────────────────────────────────────────────────────────┤
-│  2. 客户端队列层（allSubs: Queue）                          │
-│     ├── ClientLongPolling 封装每个客户端连接               │
-│     ├── clientMd5Map: Map<groupKey, md5>                  │
-│     └── timeoutTime: long（长轮询超时时间戳）               │
-├─────────────────────────────────────────────────────────┤
-│  3. 变更检测层（DataChangeTask + StatTask）               │
-│     ├── StatTask: 每 10s 统计 and subs 数量               │
-│     └── DataChangeTask: 配置变更时遍历 allSubs             │
-│         └── 匹配 clientMd5Map.containsKey(groupKey)            │
-│             └── sendResponse(changedGroups) → 唤醒客户端     │
-├─────────────────────────────────────────────────────────┤
-│  4. 超时控制层（ScheduledExecutorService）                 │
-│     └── scheduleLongPolling() 定时唤醒超时客户端            │
-│         └── sendResponse(null) → 304 Not Modified             │
-└─────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">9.5.5</span><span class="tt">LongPollingService 四层架构</span></div><div class="dgm-panel"><div class="dgm-panel-body" style="gap:0;"><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">HTTP 接入层<span class="en">addLongPollingClient</span></div><div class="sd">├ 解析客户端 Header：Long-Pulling-Timeout　├ compareMd5() → 若有变更 → 立即返回内容　├ checkLimit() → 连接数校验　└ AsyncContext.startAsync() → 释放 HTTP 线程</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">客户端队列层<span class="en">allSubs: Queue</span></div><div class="sd">├ ClientLongPolling 封装每个客户端连接　├ clientMd5Map：Map&lt;groupKey, md5&gt;　└ timeoutTime：long（长轮询超时时间戳）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">变更检测层<span class="en">DataChangeTask + StatTask</span></div><div class="sd">├ StatTask：每 10s 统计 allSubs 数量　└ DataChangeTask：配置变更时遍历 allSubs → 匹配 clientMd5Map.containsKey(groupKey) → sendResponse(changedGroups) 唤醒客户端</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">超时控制层<span class="en">ScheduledExecutorService</span></div><div class="sd">└ scheduleLongPolling() 定时唤醒超时客户端 → sendResponse(null) → 304 Not Modified</div></div></div></div></div></div></div>
 
 `addLongPollingClient()` 方法（`LongPollingService.java:241-286`）的完整流程：
 
@@ -1110,8 +1081,7 @@ class DataChangeTask implements Runnable {
 
 客户端长轮询的完整生命周期：
 
-```
-客户端生命周期:
+<div class="dgm"><div class="dgm-tree">客户端生命周期:
 1. ClientWorker.checkConfigData()
    └── POST /nacos/v1/cs/configs/listener
        Header: Long-Pulling-Timeout: 30000
@@ -1126,8 +1096,7 @@ class DataChangeTask implements Runnable {
 3. 客户端收到响应:
    ├── HTTP 200 + 新配置内容 → 回调 ConfigListener.receiveConfigInfo()
    ├── HTTP 304 → 立即发起下一次长轮询
-   └── 网络异常 → 等待 CONFIG_RETRY_TIME(2000ms) → 重试（最多 MAX_RETRY 次）
-```
+   └── 网络异常 → 等待 CONFIG_RETRY_TIME(2000ms) → 重试（最多 MAX_RETRY 次）</div></div>
 
 ### 9.5.7 大规模客户端场景线程池调优
 
@@ -1875,32 +1844,30 @@ Nacos 支持 4 种健康检查类型，各有适用场景：
 
 完整的健康检查生命周期（以默认配置为例）：
 
-```
-时间线（秒）：0    5    10   15   20   25   30   35   40   45   50
+<div class="dgm"><div class="dgm-cap"><span class="no">图示</span><span class="tt"></span></div><div class="dgm-tree">时间线（秒）：0    5    10   15   20   25   30   35   40   45   50
 客户端      ├─心跳─┼─心跳─┼─心跳─┼─心跳─┼（断连）
 服务端      │      │      │      │      ├─ClientBeatCheckTaskV2 检测
             │      │      │      │      ├─UnhealthyInstanceChecker: 
             │      │      │      │      │   lastHeartBeatTime=20s
             │      │      │      │      │   now=25s, beatTimeout=15s
-            │      │      │      │      │   → 25-20=5s < 15s → 仍健康
+            │      │      │      │      │   → 25-20=5s &lt; 15s → 仍健康
             │      │      │      │      ├─（下一个检查周期，30s）
             │      │      │      │      ├─UnhealthyInstanceChecker: 
             │      │      │      │      │   lastHeartBeatTime=20s
             │      │      │      │      │   now=35s, beatTimeout=15s  
-            │      │      │      │      │   → 35-20=15s >= 15s → 标记不健康！
+            │      │      │      │      │   → 35-20=15s &gt;= 15s → 标记不健康！
             │      │      │      │      ├─ExpiredInstanceChecker:
             │      │      │      │      │   lastHeartBeatTime=20s
             │      │      │      │      │   now=35s, deleteTimeout=30s
-            │      │      │      │      │   → 35-20=15s < 30s → 不剔除
+            │      │      │      │      │   → 35-20=15s &lt; 30s → 不剔除
             │      │      │      │      ├─（再下一个检查周期，40s）
             │      │      │      │      ├─ExpiredInstanceChecker:
             │      │      │      │      │   lastHeartBeatTime=20s
             │      │      │      │      │   now=45s, deleteTimeout=30s
-            │      │      │      │      │   → 45-20=25s < 30s → 仍不剔除
+            │      │      │      │      │   → 45-20=25s &lt; 30s → 仍不剔除
             │      │      │      │      ├─（下一个检查周期，50s）
             │      │      │      │      ├─ExpiredInstanceChecker:
-            │      │      │      │      │   now=55s, 55-20=35s >= 30s → 剔除！
-```
+            │      │      │      │      │   now=55s, 55-20=35s &gt;= 30s → 剔除！</div></div>
 
 关键时间点总结：
 - **T+15s**：客户端断连后 15s，实例被标记为不健康（`UnhealthyInstanceChecker`）
@@ -2145,8 +2112,7 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
 
 ### 9.10.5 防雪崩保护流程图
 
-```
-健康检查周期（每 5s）
+<div class="dgm"><div class="dgm-cap"><span class="no">图示</span><span class="tt"></span></div><div class="dgm-tree">健康检查周期（每 5s）
     │
     ├─ UnhealthyInstanceChecker：标记心跳超时实例为不健康
     │
@@ -2158,10 +2124,10 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
     │       │       │
     │       │       ├─ 计算 healthyRatio = healthyCount / totalCount
     │       │       │
-    │       │       ├─ healthyRatio >= protectThreshold
+    │       │       ├─ healthyRatio &gt;= protectThreshold
     │       │       │   └─ 正常剔除过期实例
     │       │       │
-    │       │       └─ healthyRatio < protectThreshold
+    │       │       └─ healthyRatio &lt; protectThreshold
     │       │           └─ 触发保护：
     │       │               ├─ 暂停剔除操作
     │       │               ├─ 保留所有实例（含不健康的）
@@ -2170,8 +2136,7 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
     │       │
     │       └─ 下一个周期重新计算 healthyRatio
     │
-    └─ Distro 同步前检查目标节点健康状态
-```
+    └─ Distro 同步前检查目标节点健康状态</div></div>
 
 ### 9.10.6 配置调优案例
 
@@ -2999,27 +2964,7 @@ NettyServerBuilder builder = NettyServerBuilder.forPort(port)
 
 Nacos 2.x 的完整 gRPC 通信协议栈层次如下：
 
-```
-┌─────────────────────────────────────────┐
-│            Nacos 业务层                  │
-│  ConfigService / NamingService         │
-├─────────────────────────────────────────┤
-│        gRPC Stub (客户端)              │
-│  GrpcClient.connectToServer()          │
-├─────────────────────────────────────────┤
-│        gRPC Channel                    │
-│  ManagedChannel (Netty transport)       │
-├─────────────────────────────────────────┤
-│        HTTP/2 Framing                  │
-│  PING / HEADERS / DATA / SETTINGS   │
-├─────────────────────────────────────────┤
-│        TLS (可选)                      │
-│  SSLContext (双向认证)                │
-├─────────────────────────────────────────┤
-│        TCP                             │
-│  NioSocketChannel                     │
-└─────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">9.15.3</span><span class="tt">gRPC 客户端协议栈分层</span><span class="src">自上而下 = 调用栈</span></div><div class="dgm-panel"><div class="dgm-panel-body" style="gap:0;"><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 业务层</div><div class="sd">ConfigService / NamingService</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">gRPC Stub（客户端）</div><div class="sd">GrpcClient.connectToServer()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">gRPC Channel</div><div class="sd">ManagedChannel（Netty transport）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">HTTP/2 Framing</div><div class="sd">PING / HEADERS / DATA / SETTINGS</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">TLS（可选）</div><div class="sd">SSLContext（双向认证）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">TCP</div><div class="sd">NioSocketChannel</div></div></div></div></div></div></div>
 
 `GrpcSdkServer` 和 `GrpcClusterServer` 都继承自 `BaseGrpcServer`，共用 gRPC 服务端基础设施（端口、keep-alive、max-inbound-message-size），但各自注册不同的 gRPC `ServiceDescriptor`：
 - SDK Server 注册 `BiRequestStream` 和 `Request` 服务（客户端↔服务端通信）
@@ -3278,25 +3223,39 @@ sequenceDiagram
     participant CM as ConnectionManager
     participant GP as GrpcPushHandler
 
-    Client->>GSS: 1. 建立 gRPC Channel (HTTP/2 握手)
-    GSS->>CM: 2. onConnect() 回调
-    CM->>CM: 3. register(connectionId, connection)
-    CM->>CM: 4. 检查 connections.size() < maxConnection
-    alt 超限
-        CM-->>Client: RESOURCE_EXHAUSTED
-    else 正常
-        CM->>CM: 5. connections.put(id, connection)
-        CM->>CM: 6. 注册 ConnectionEventListener
+    rect rgb(245, 248, 255)
+        Note over Client,CM: 阶段一：连接建立与注册（步骤 1-6）
+        Client->>GSS: 1. 建立 gRPC Channel (HTTP/2 握手)
+        GSS->>CM: 2. onConnect() 回调
+        CM->>CM: 3. register(connectionId, connection)
+        CM->>CM: 4. 检查 connections.size() < maxConnection
+        alt 超限
+            CM-->>Client: RESOURCE_EXHAUSTED
+        else 正常
+            CM->>CM: 5. connections.put(id, connection)
+            CM->>CM: 6. 注册 ConnectionEventListener
+        end
+    end
+
+    rect rgb(250, 250, 248)
+        Note over Client,GSS: 阶段二：心跳保活（步骤 7-8）
         loop 心跳周期 (5s)
             Client->>GSS: 7. HealthCheckRequest
             GSS->>CM: 8. updateLastActiveTime()
         end
+    end
+
+    rect rgb(255, 250, 243)
+        Note over Client,CM: 阶段三：空闲检测与回收（步骤 9-11）
         CM->>CM: 9. startIdleConnectionMonitor() 定期扫描
         alt 空闲超时 (15min)
             CM->>Client: 10. requestClose()
             CM->>CM: 11. unregister(id)
         end
-        Note over Client,GP: 12. 配置变更触发推送
+    end
+
+    rect rgb(244, 251, 246)
+        Note over Client,GP: 阶段四：配置变更推送（步骤 12-14）
         GP->>GP: 13. pushExecutor.submit(task)
         GP->>Client: 14. ConfigChangeNotifyRequest
     end
@@ -3613,27 +3572,33 @@ sequenceDiagram
     participant AM as AuthManager
     participant DB as Database/LDAP
 
-    Client->>AF: 1. POST /nacos/v1/auth/login (username+password)
-    AF->>AF: 2. isIgnoredPath(/v1/auth/login) → true, 放行
-    AF->>LS: 3. login(username, password)
-    LS->>DB: 4. 查询用户/绑定 LDAP
-    DB-->>LS: 5. 返回用户信息
-    LS->>JTM: 6. createToken(username)
-    JTM-->>LS: 7. JWT Token (签名+过期时间)
-    LS-->>Client: 8. {accessToken: "xxx", tokenTtl: 18000}
+    rect rgb(245, 248, 255)
+        Note over Client,JTM: 阶段一：登录认证（步骤 1-8）
+        Client->>AF: 1. POST /nacos/v1/auth/login (username+password)
+        AF->>AF: 2. isIgnoredPath(/v1/auth/login) → true, 放行
+        AF->>LS: 3. login(username, password)
+        LS->>DB: 4. 查询用户/绑定 LDAP
+        DB-->>LS: 5. 返回用户信息
+        LS->>JTM: 6. createToken(username)
+        JTM-->>LS: 7. JWT Token (签名+过期时间)
+        LS-->>Client: 8. {accessToken: "xxx", tokenTtl: 18000}
+    end
 
     Note over Client: 后续请求携带 accessToken
 
-    Client->>AF: 9. GET /nacos/v1/cs/configs (Header: accessToken=xxx)
-    AF->>AF: 10. isIgnoredPath → false, 需认证
-    AF->>JTM: 11. validateToken(accessToken)
-    JTM-->>AF: 12. JwtPayload {sub: username, exp: xxx}
-    AF->>AM: 13. hasPermission(username, resource, action)
-    AM-->>AF: 14. true/false
-    alt 有权限
-        AF->>AF: 15. chain.doFilter() → 正常业务处理
-    else 无权限
-        AF-->>Client: 16. 403 Forbidden
+    rect rgb(255, 250, 243)
+        Note over Client,AM: 阶段二：请求鉴权与访问控制（步骤 9-16）
+        Client->>AF: 9. GET /nacos/v1/cs/configs (Header: accessToken=xxx)
+        AF->>AF: 10. isIgnoredPath → false, 需认证
+        AF->>JTM: 11. validateToken(accessToken)
+        JTM-->>AF: 12. JwtPayload {sub: username, exp: xxx}
+        AF->>AM: 13. hasPermission(username, resource, action)
+        AM-->>AF: 14. true/false
+        alt 有权限
+            AF->>AF: 15. chain.doFilter() → 正常业务处理
+        else 无权限
+            AF-->>Client: 16. 403 Forbidden
+        end
     end
 ```
 
@@ -3827,15 +3792,26 @@ sequenceDiagram
     participant IstioCP as Istio Control Plane
     participant IstioDP as Istio Sidecar Proxy
 
-    App->>Nacos: 1. 服务注册/注销
-    Nacos->>Nacos: 2. 更新内存注册表
-    Nacos->>McpSvc: 3. sync.period 定时触发同步
-    McpSvc->>McpSvc: 4. diff 快照计算增量变更
-    McpSvc->>McpSvc: 5. convert Nacos Service → Istio ServiceEntry
-    McpSvc->>IstioCP: 6. MCP gRPC push ServiceEntry
-    IstioCP->>IstioCP: 7. 转换为 Istio CRD 配置
-    IstioCP->>IstioDP: 8. xDS 下发配置
-    IstioDP->>App: 9. 流量路由到目标服务实例
+    rect rgb(245, 248, 255)
+        Note over App,Nacos: 阶段一：服务注册（步骤 1-2）
+        App->>Nacos: 1. 服务注册/注销
+        Nacos->>Nacos: 2. 更新内存注册表
+    end
+
+    rect rgb(250, 250, 248)
+        Note over Nacos,McpSvc: 阶段二：定时同步与模型转换（步骤 3-5）
+        Nacos->>McpSvc: 3. sync.period 定时触发同步
+        McpSvc->>McpSvc: 4. diff 快照计算增量变更
+        McpSvc->>McpSvc: 5. convert Nacos Service → Istio ServiceEntry
+    end
+
+    rect rgb(255, 250, 243)
+        Note over McpSvc,App: 阶段三：MCP 推送与 xDS 下发（步骤 6-9）
+        McpSvc->>IstioCP: 6. MCP gRPC push ServiceEntry
+        IstioCP->>IstioCP: 7. 转换为 Istio CRD 配置
+        IstioCP->>IstioDP: 8. xDS 下发配置
+        IstioDP->>App: 9. 流量路由到目标服务实例
+    end
 ```
 
 关键步骤说明：
@@ -4067,17 +4043,28 @@ sequenceDiagram
     participant Prom as Prometheus Server
     participant Grafana as Grafana Dashboard
 
-    Nacos->>MR: 1. @PostConstruct 注册 Gauge/Counter
-    MR->>MR: 2. 定期采集当前时刻的指标瞬时值
-    Nacos->>MR: 3. 业务事件触发 Counter +1（如 HTTP 请求、配置变更）
-    Prom->>Actuator: 4. GET /nacos/actuator/prometheus (每 15s)
-    Actuator->>MR: 5. scrape() 获取全部注册的 Meter 当前值
-    MR-->>Actuator: 6. 返回 OpenMetrics 文本格式数据
-    Actuator-->>Prom: 7. HTTP 200 + text/plain 指标数据
-    Prom->>Prom: 8. 时序数据库存储（TSDB）
-    Grafana->>Prom: 9. PromQL 查询（每 30s 刷新 Dashboard）
-    Prom-->>Grafana: 10. 返回时序数据
-    Grafana->>Grafana: 11. 渲染 Dashboard 面板（折线图/柱状图/数字）
+    rect rgb(245, 248, 255)
+        Note over Nacos,MR: 阶段一：指标注册与采集（步骤 1-3）
+        Nacos->>MR: 1. @PostConstruct 注册 Gauge/Counter
+        MR->>MR: 2. 定期采集当前时刻的指标瞬时值
+        Nacos->>MR: 3. 业务事件触发 Counter +1（如 HTTP 请求、配置变更）
+    end
+
+    rect rgb(250, 250, 248)
+        Note over Prom,MR: 阶段二：Prometheus 抓取（步骤 4-7）
+        Prom->>Actuator: 4. GET /nacos/actuator/prometheus (每 15s)
+        Actuator->>MR: 5. scrape() 获取全部注册的 Meter 当前值
+        MR-->>Actuator: 6. 返回 OpenMetrics 文本格式数据
+        Actuator-->>Prom: 7. HTTP 200 + text/plain 指标数据
+    end
+
+    rect rgb(255, 250, 243)
+        Note over Grafana,Prom: 阶段三：存储与可视化（步骤 8-11）
+        Prom->>Prom: 8. 时序数据库存储（TSDB）
+        Grafana->>Prom: 9. PromQL 查询（每 30s 刷新 Dashboard）
+        Prom-->>Grafana: 10. 返回时序数据
+        Grafana->>Grafana: 11. 渲染 Dashboard 面板（折线图/柱状图/数字）
+    end
 ```
 
 ### 9.19.4 Trade-off 分析
@@ -4568,22 +4555,30 @@ sequenceDiagram
     participant Adapter as LoggingAdapter
     participant Logback as Logback Logger
 
-    Admin->>API: 1. POST /nacos/v1/cs/configs (dynamic-logging=DEBUG)
-    API->>Config: 2. 存储配置到 config_info 表
-    API-->>Admin: 3. 配置发布成功
-
-    loop 每隔 dynamic.interval=30s
-        Lookup->>Config: 4. getConfig("dynamic-logging")
-        Config-->>Lookup: 5. 返回当前配置内容
-        Lookup->>Lookup: 6. 解析每行 "loggerName=LEVEL"
-        Lookup->>Adapter: 7. setLogLevel("com.alibaba.nacos.naming", "DEBUG")
-        Adapter->>Logback: 8. logger.setLevel(Level.DEBUG)
-        Logback-->>Adapter: 9. 级别切换成功（立即生效）
+    rect rgb(245, 248, 255)
+        Note over Admin,Config: 阶段一：配置发布（步骤 1-3）
+        Admin->>API: 1. POST /nacos/v1/cs/configs (dynamic-logging=DEBUG)
+        API->>Config: 2. 存储配置到 config_info 表
+        API-->>Admin: 3. 配置发布成功
     end
 
-    Note over Admin: 排查完成后恢复 INFO
-    Admin->>API: 10. POST /nacos/v1/cs/configs (dynamic-logging=INFO)
-    Note over Lookup: 下次检测周期自动恢复为 INFO
+    rect rgb(250, 250, 248)
+        Note over Lookup,Logback: 阶段二：动态检测与级别切换（步骤 4-9）
+        loop 每隔 dynamic.interval=30s
+            Lookup->>Config: 4. getConfig("dynamic-logging")
+            Config-->>Lookup: 5. 返回当前配置内容
+            Lookup->>Lookup: 6. 解析每行 "loggerName=LEVEL"
+            Lookup->>Adapter: 7. setLogLevel("com.alibaba.nacos.naming", "DEBUG")
+            Adapter->>Logback: 8. logger.setLevel(Level.DEBUG)
+            Logback-->>Adapter: 9. 级别切换成功（立即生效）
+        end
+    end
+
+    rect rgb(244, 251, 246)
+        Note over Admin,Lookup: 阶段三：恢复默认级别（步骤 10）
+        Admin->>API: 10. POST /nacos/v1/cs/configs (dynamic-logging=INFO)
+        Note over Lookup: 下次检测周期自动恢复为 INFO
+    end
 ```
 
 ### 9.21.4 Trade-off 分析

@@ -74,39 +74,7 @@ Nacos 2.5.3 的决策边界不依据"配置 vs 服务"这种粗粒度划分，�
 
 图 4-1 展示了 Nacos 2.5.3 一致性协议的 5 层抽象分层架构（业务接入→协议接口→协议实现→组件注册与任务引擎→外部依赖）：
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│ 业务协议接入层（naming 核心业务）                                            │
-│   DistroClientDataProcessor（AP 实现入口，同时扮演 DataProcessor/Storage）   │
-│   PersistentClientOperationServiceImpl / PersistentConsistencyService        │
-│                  │                                                            │
-│                  ▼                                                            │
-│ 协议抽象接口层（consistency/ 独立模块，仅接口）                              │
-│   ConsistencyProtocol◄────APProtocol◄──（AP实现）                            │
-│          ▲                 CPProtocol◄──（CP实现）                           │
-│          │  getData/write/writeAsync/memberChange/isReady                      │
-│          │  RequestProcessor◄──RequestProcessor4AP / RequestProcessor4CP      │
-│          │  Serializer◄──HessianSerializer / JacksonSerializer                │
-│          │  SnapshotOperation / ProtocolMetaData / Config / CommandOperations │
-│                  │                                                            │
-│                  ▼                                                            │
-│ 协议实现层（core/distributed）                                              │
-│   AbstractConsistencyProtocol（模板基类，持有 metaData/processorMap）        │
-│   DistroProtocol（AP：任务引擎 + 组件分派）                                  │
-│   JRaftProtocol（CP：封装 JRaftServer）                                     │
-│                  │                                                            │
-│                  ▼                                                            │
-│ 组件注册表与任务引擎（core/distributed/distro）                              │
-│   DistroComponentHolder（按 resourceType 分派）                              │
-│   DistroTaskEngineHolder ◄── DistroDelayTaskExecuteEngine                    │
-│                            └── DistroExecuteTaskExecuteEngine                │
-│                  │                                                            │
-│                  ▼                                                            │
-│ 外部依赖与基础设施                                                        │
-│   ServerMemberManager（成员管理）/ ClusterRpcClientProxy（节点 RPC）         │
-│   jraft-core 1.3.14（外部 JRaft 库）/ persistence 模块（数据持久化）         │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">业务协议接入层（naming 核心业务）</span><span class="s">DistroClientDataProcessor（AP 实现入口，同时扮演 DataProcessor/Storage）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PersistentClientOperationServiceImpl / PersistentConsistencyService</div></div></div><div class="dgm-link"><span class="lbl">CPProtocol◄（CP实现）</span><div class="dgm-varrow dgm-varrow--up"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">协议抽象接口层（consistency/ 独立模块，仅接口）</span><span class="s">ConsistencyProtocol◄APProtocol◄（AP实现）</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">getData/write/writeAsync/memberChange/isReady</span><span class="s">RequestProcessor◄RequestProcessor4AP / RequestProcessor4CP</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Serializer◄HessianSerializer / JacksonSerializer</div><div class="dgm-note" style="border:none;background:none;padding:0;">SnapshotOperation / ProtocolMetaData / Config / CommandOperatio</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">协议实现层（core/distributed）</span><span class="s">AbstractConsistencyProtocol（模板基类，持有 metaData/processorMap）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroProtocol（AP：任务引擎 + 组件分派）</div><div class="dgm-note" style="border:none;background:none;padding:0;">JRaftProtocol（CP：封装 JRaftServer）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">组件注册表与任务引擎（core/distributed/distro）</span><span class="s">DistroComponentHolder（按 resourceType 分派）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroTaskEngineHolder ◄ DistroDelayTaskExecuteEngine</div><div class="dgm-note" style="border:none;background:none;padding:0;">DistroExecuteTaskExecuteEngine</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">外部依赖与基础设施</span><span class="s">ServerMemberManager（成员管理）/ ClusterRpcClientProxy（节点 RPC）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">jraft-core 1.3.14（外部 JRaft 库）/ persistence 模块（数据持久化）</div></div></div></div></div></div>
 
 分层职责划分如下：
 
@@ -212,41 +180,7 @@ Nacos 2.5.3 通过 `ConsistencyProtocol` 统一契约 + AP/CP 双实现，将"CA
 
 图 4-2 展示了 `consistency/` 模块核心接口体系：协议抽象 `ConsistencyProtocol`←→`APProtocol`/`CPProtocol`、请求处理器 `RequestProcessor` 层级、序列化 `Serializer` 与快照 `SnapshotOperation` 抽象：
 
-```
-consistency/ 独立模块（仅接口 + 抽象 + 工厂）
-
-┌─────────────────────────────────────────────────────────────────┐
-│ CommandOperations（命令执行扩展）                                 │
-│        ▲                                                         │
-│ ConsistencyProtocol<T extends Config, P extends RequestProcessor>│
-│   ├── init(T) / addRequestProcessors(Collection<P>)               │
-│   ├── protocolMetaData(): ProtocolMetaData                        │
-│   ├── getData(ReadRequest) / aGetData(ReadRequest)               │
-│   ├── write(WriteRequest) / writeAsync(WriteRequest)             │
-│   ├── memberChange(Set<String>) / isReady() / shutdown()         │
-│        │                                                          │
-│        ├──────────────────────────────┐                           │
-│        ▼                              ▼                           │
-│  APProtocol<C, P:RequestProcessor4AP> CPProtocol<C:P:4CP>        │
-│                                        └── isLeader(String group) │
-│                                                                   │
-│ RequestProcessor（abstract）                                      │
-│   ├── RequestProcessor4AP（abstract，无新增）                     │
-│   └── RequestProcessor4CP（abstract，loadSnapshotOperate()）      │
-│                                                                   │
-│ Serializer（interface）──SerializeFactory──► HessianSerializer    │
-│                                        └──────► JacksonSerializer │
-│                                                                   │
-│ SnapshotOperation（interface）──► Reader / Writer / LocalFileMeta │
-│                                                                   │
-│ Config（interface）/ ProtocolMetaData / DataOperation(enum)       │
-└─────────────────────────────────────────────────────────────────┘
-
-下游装配（core 模块）：
-  AbstractConsistencyProtocol（模板基类，持有 ProtocolMetaData + 处理器 Map）
-     ├── JRaftProtocol（实现 CPProtocol，封装 jraft-core 1.3.14）
-     └── （AP 侧重由 DistroProtocol + naming 侧 DataProcessor 承接）
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">CommandOperations（命令执行扩展）</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConsistencyProtocol&lt;T extends Config, P extends RequestProcessor</span><span class="s">init(T) / addRequestProcessors(Collection&lt;P&gt;)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">protocolMetaData()</span><span class="typ">: ProtocolMetaData</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getData(ReadRequest) / aGetData(ReadRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">write(WriteRequest) / writeAsync(WriteRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">memberChange(Set&lt;String&gt;) / isReady() / shutdown()</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">APProtocol&lt;C, P:RequestProcessor4AP&gt; CPProtocol&lt;C:P:4CP&gt;</span><span class="s">isLeader(String group</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">RequestProcessor（abstract）</div><div class="dgm-note" style="border:none;background:none;padding:0;">RequestProcessor4AP（abstract，无新增）</div><div class="dgm-note" style="border:none;background:none;padding:0;">RequestProcessor4CP（abstract，loadSnapshotOperate()）</div><div class="dgm-note" style="border:none;background:none;padding:0;">Serializer（interface）SerializeFactory► HessianSerializer</div><div class="dgm-note" style="border:none;background:none;padding:0;">► JacksonSerialize</div><div class="dgm-note" style="border:none;background:none;padding:0;">SnapshotOperation（interface）► Reader / Writer / LocalFileMeta</div><div class="dgm-note" style="border:none;background:none;padding:0;">Config（interface）/ ProtocolMetaData / DataOperation(enum)</div></div></div></div></div></div>
 
 ### 4.2.3 源码走读
 
@@ -362,40 +296,7 @@ Distro v2 约定资源类型常量 `public static final String TYPE = "Nacos:Nam
 
 图 4-3 展示了 Distro v2 数据面核心类 `DistroClientDataProcessor`（同时实现 `SmartSubscriber` + `DistroDataStorage` + `DistroDataProcessor`）及其与传输代理 `DistroClientTransportAgent` 的协作关系：
 
-```
-                    naming 业务事件（Client 连接/断开/变更/校验失败）
-                                   │ NotifyCenter 事件总线
-                                   ▼
-   ┌──────────────────────────────────────────────────────────┐
-   │ DistroClientDataProcessor（v2 数据面核心）                │
-   │   implements SmartSubscriber / DistroDataProcessor /     │
-   │              DistroDataStorage                            │
-   │   TYPE = "Nacos:Naming:v2:ClientData"                     │
-   │   ┌─────────────┬─────────────────────┬────────────────┐  │
-   │   │ 事件入口     │ 数据/校验/快照接收    │ 数据输出        │  │
-   │   │ onEvent()   │ processData()       │ getDistroData()│  │
-   │   │ syncToAll   │ processVerifyData() │ getDatumSnap() │  │
-   │   │ Server()    │ processSnapshot()   │ getVerifyData()│  │
-   │   └─────────────┴─────────────────────┴────────────────┘  │
-   └──────────────┬───────────────┬──────────────┬────────────┘
-                  │               │              │
-        distroProtocol        ClientManager    Serializer(Hessian)
-        .sync/.syncToTarget                       │
-                  ▼                               ▼
-   ┌──────────────────────────┐        ClientSyncData / DistroClientVerifyInfo
-   │ DistroClientTransportAgent│        / ClientSyncDatumSnapshot（载荷模型）
-   │   implements              │
-   │   DistroTransportAgent    │
-   │   ┌───────────────────┐   │
-   │   │ syncData(同步/回调)│   │
-   │   │ syncVerifyData     │   │
-   │   │ getData/snapshot   │   │
-   │   └───────────────────┘   │
-   └──────────────────────────┘
-                  │ ClusterRpcClientProxy（节点间请求/响应）
-                  ▼
-     成员节点（Member）→ onReceive → DistroProtocol 路由回 DataProcessor
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientDataProcessor（v2 数据面核心）</span><span class="s">implements SmartSubscriber / DistroDataProcessor /</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroDataStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">TYPE = "Nacos:Naming:v2:ClientData"</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">事件入口       数据/校验/快照接收      数据输出</span><span class="s">onEvent()     processData()         getDistroData()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">syncToAll     processVerifyData()   getDatumSnap()</div><div class="dgm-note" style="border:none;background:none;padding:0;">Server()      processSnapshot()     getVerifyData()</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientTransportAgen</span><span class="s">implements</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroTransportAgent</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">syncData(同步/回调)</span><span class="s">syncVerifyData</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">getData/snapshot</div></div></div></div></div></div>
 
 ### 4.3.3 源码走读
 
@@ -536,70 +437,7 @@ Distro v2 的客户端数据分发包含三条相互作用但职责分明的子�
 
 图 4-4 展示了 Distro v2 组件注册与数据分发链路的两层结构：① `DistroClientComponentRegistry` 装配层 + ② 增量同步链路（事件→DataProcessor→DistroProtocol→两级任务引擎）：
 
-```
-① 装配层：DistroClientComponentRegistry（@Component，@PostConstruct）
-   doRegister()：
-     dataProcessor   = new DistroClientDataProcessor(clientManager, distroProtocol)
-     transportAgent  = new DistroClientTransportAgent(clusterRpcClientProxy, memberManager)
-     failedHandler   = new DistroClientTaskFailedHandler(taskEngineHolder)
-     componentHolder.registerDataStorage(TYPE, dataProcessor)     // 存储
-     componentHolder.registerDataProcessor(dataProcessor)         // 处理
-     componentHolder.registerTransportAgent(TYPE, transportAgent) // 传输
-     componentHolder.registerFailedTaskHandler(TYPE, failedHandler)// 失败重试
-
-② 增量同步链路（事件驱动）
-   本地 Client 变更
-      │ ClientChangedEvent / ClientDisconnectEvent（NotifyCenter 发布）
-      ▼
-   DistroClientDataProcessor.onEvent()
-      │ syncToAllServer / syncToVerifyFailedServer
-      ▼
-   DistroProtocol.sync(distroKey, action[, delay])
-      │ 对 allMembersWithoutSelf 循环
-      ▼
-   DistroProtocol.syncToTarget(key, action, target, delay)
-      │ 封装 DistroDelayTask 投入
-      ▼
-   DistroDelayTaskExecuteEngine（key=DistroKey→resourceType 聚合，delay=1000ms）
-      ▼
-   DistroDelayTaskProcessor.process()
-      ▼
-   按 action: DistroSyncChangeTask / DistroSyncDeleteTask → DistroExecuteTaskExecuteEngine
-      ▼
-   AbstractDistroExecuteTask.doExecute()
-      │ findDataStorage().getDistroData() → findTransportAgent().syncData()
-      ▼
-   DistroClientTransportAgent.syncData() → ClusterRpcClientProxy → 目标 Member
-
-③ 周期校验链路（定时自愈）
-   DistroProtocol.startVerifyTask()（verifyIntervalMillis=5000ms）
-      ▼
-   DistroVerifyTimedTask.run()
-      │ 每个 dataStorageTypes + 每个非自身成员
-      ▼
-   DistroVerifyExecuteTask.run()
-      │ getVerifyData() → transportAgent.syncVerifyData()
-      ▼
-   DistroClientTransportAgent.syncVerifyData()（改写 targetServer=本机）→ 对端
-      ▼
-   对端 DistroDataProcessor.processVerifyData() → clientManager.verifyClient()
-      ▼ 校验失败
-   DistroClientTransportAgent.DistroVerifyCallbackWrapper.onResponse()
-      ▼ 发布 ClientVerifyFailedEvent
-   → DistroClientDataProcessor.syncToVerifyFailedServer() → 定向即时 ADD 同步
-
-④ 全量加载链路（启动）
-   DistroProtocol.startLoadTask()
-      ▼
-   DistroLoadDataTask.run()
-      ▼ 等待成员列表/存储注册就绪
-      loadAllDataSnapshotFromRemote(type)
-         ▼ transportAgent.getDatumSnapshot(target)（loadDataTimeoutMillis=30000ms）
-         ▼
-      dataProcessor.processSnapshot(distroData)
-         ▼ 逐 Client handlerClientSyncData
-      findDataStorage(type).finishInitial() → 该类型存储标记初始完成
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">4.4.2</span><span class="tt">DistroClient 组件装配、增量同步与周期校验链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">① 装配层</span><span class="s">DistroClientComponentRegistry（@Component，@PostConstruct）</span></div><div class="dgm-box-b"><div class="dgm-note">doRegister()：</div><div class="dgm-kv"><li><span class="fld">dataProcessor</span> = new DistroClientDataProcessor(clientManager, distroProtocol)</li><li><span class="fld">transportAgent</span> = new DistroClientTransportAgent(clusterRpcClientProxy, memberManager)</li><li><span class="fld">failedHandler</span> = new DistroClientTaskFailedHandler(taskEngineHolder)</li><li>componentHolder.registerDataStorage(TYPE, dataProcessor)<span class="typ"> // 存储</span></li><li>componentHolder.registerDataProcessor(dataProcessor)<span class="typ"> // 处理</span></li><li>componentHolder.registerTransportAgent(TYPE, transportAgent)<span class="typ"> // 传输</span></li><li>componentHolder.registerFailedTaskHandler(TYPE, failedHandler)<span class="typ"> // 失败重试</span></li></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">② 增量同步链路</span><span class="s">事件驱动</span></div><div class="dgm-box-b"><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">本地 Client 变更</div><div class="sd">ClientChangedEvent / ClientDisconnectEvent（NotifyCenter 发布）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroClientDataProcessor.onEvent()</div><div class="sd">syncToAllServer / syncToVerifyFailedServer</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroProtocol.sync(distroKey, action[, delay])</div><div class="sd">对 allMembersWithoutSelf 循环</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroProtocol.syncToTarget(key, action, target, delay)</div><div class="sd">封装 DistroDelayTask 投入</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroDelayTaskExecuteEngine</div><div class="sd">key = DistroKey → resourceType 聚合，delay = 1000ms</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroDelayTaskProcessor.process()</div><div class="sd">按 action：DistroSyncChangeTask / DistroSyncDeleteTask → DistroExecuteTaskExecuteEngine</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">AbstractDistroExecuteTask.doExecute()</div><div class="sd">findDataStorage().getDistroData() → findTransportAgent().syncData()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroClientTransportAgent.syncData()</div><div class="sd">→ ClusterRpcClientProxy → 目标 Member</div></div></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">③ 周期校验链路</span><span class="s">定时自愈</span></div><div class="dgm-box-b"><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroProtocol.startVerifyTask()</div><div class="sd">verifyIntervalMillis = 5000ms</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroVerifyTimedTask.run()</div><div class="sd">每个 dataStorageTypes + 每个非自身成员</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroVerifyExecuteTask.run()</div><div class="sd">getVerifyData() → transportAgent.syncVerifyData()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroClientTransportAgent.syncVerifyData()</div><div class="sd">改写 targetServer = 本机 → 对端</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">对端 DistroDataProcessor.processVerifyData() → clientManager.verifyClient()</div><div class="sd">校验失败 ↓</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">DistroVerifyCallbackWrapper.onResponse()</div><div class="sd">发布 ClientVerifyFailedEvent → DistroClientDataProcessor.syncToVerifyFailedServer() → 定向即时 ADD 同步</div></div></div></div></div></div></div>
 
 ### 4.4.3 源码走读
 
@@ -746,77 +584,7 @@ Nacos 2.5.3 的 Distro v2 子系统负责集群内临时实例（ephemeral clien
 
 图 4-5 展示了失败重试与数据校验两条链路涉及的核心类之间的调用关系。
 
-```
-                          ┌──────────────────────────────────┐
-                          │     DistroProtocol              │
-                          │  (定时调度 + onVerify 入口)      │
-                          └──────────┬───────────────────────┘
-                                     │
-              ┌──────────────────────┼──────────────────────┐
-              │                      │                       │
-     ┌────────▼─────────┐  ┌──────▼──────────┐  ┌───────▼──────────────┐
-     │ DistroVerifyTimed │  │AbstractDistro    │  │DistroClientData      │
-     │ Task (Runnable)   │  │ExecuteTask      │  │Processor              │
-     │                  │  │                 │  │                       │
-     │ run()            │  │ run()           │  │ implements:            │
-     │ └→getVerifyData()│  │ └→doExecute()  │  │ DistroDataStorage     │
-     │ └→syncVerifyData│  │ └→handleFailed│  │ DistroDataProcessor    │
-     └──────────────────┘  │ │   Task()       │  │ SmartSubscriber       │
-                          └────────┬────────┘  │                       │
-                                  │            │ + getVerifyData()     │
-                   ┌──────────────┘            │ + processVerifyData()  │
-                   │                           │ + onEvent()           │
-          ┌────────▼─────────┐                 │ + processData()       │
-          │handleFailedTask() │                 └───────────┬───────────┘
-          └────────┬─────────┘                             │
-                   │                                      │
-                   │  findFailedTaskHandler(type)          │
-                   ▼                                      │
-     ┌─────────────────────────────┐                    │
-     │ DistroClientTaskFailed     │                    │
-     │ Handler                    │                    │
-     │ implements               │                    │
-     │ DistroFailedTaskHandler   │                    │
-     │                            │                    │
-     │ retry(DistroKey,         │                    │
-     │   DataOperation)          │                    │
-     │ └→new DistroDelayTask    │                    │
-     │ └→addTask(engine)        │                    │
-     └─────────────────────────────┘                    │
-                                                        │
-     ┌──────────────────────────────────────────────────────┘
-     │
-     │  onEvent(ClientVerifyFailedEvent)
-     │  └→syncToVerifyFailedServer()
-     │
-     ▼
-  ┌───────────────────────────────────────────────┐
-  │  DistroClientTransportAgent                  │
-  │  implements DistroTransportAgent             │
-  │                                              │
-  │  + syncData(data, targetServer)              │
-  │  + syncData(data, target, callback)          │
-  │  + syncVerifyData(data, target)              │
-  │  + syncVerifyData(data, target, callback)    │
-  │                                              │
-  │  inner class DistroRpcCallbackWrapper         │
-  │  inner class DistroVerifyCallbackWrapper      │
-  └───────────────────────────────────────────────┘
-                              │
-                              │ 序列化传输
-                              ▼
-                   ┌─────────────────────┐
-                   │ DistroClientVerify  │
-                   │ Info                │
-                   │ implements          │
-                   │ Serializable        │
-                   │                    │
-                   │ - clientId: String │
-                   │ - revision: long   │
-                   └─────────────────────┘
-
-              图 4-5 失败重试与校验链路核心类关系图
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroProtocol</span><span class="s">(定时调度 + onVerify 入口)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroVerifyTimed</span><span class="s">Task (Runnable)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">run()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→getVerifyData()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→syncVerifyData</div></div></div><div class="dgm-note">+ getVerifyData()                                         + processVerifyData()                                                    + onEvent()</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">handleFailedTask()</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientTaskFailed</span><span class="s">Handler</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">implements</div><div class="dgm-note" style="border:none;background:none;padding:0;">DistroFailedTaskHandler</div><div class="dgm-note" style="border:none;background:none;padding:0;">retry(DistroKey,</div><div class="dgm-note" style="border:none;background:none;padding:0;">DataOperation)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→new DistroDelayTask</div><div class="dgm-note" style="border:none;background:none;padding:0;">→addTask(engine)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientTransportAgent</span><span class="s">implements DistroTransportAgent</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ syncData(data, targetServer)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ syncData(data, target, callback)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ syncVerifyData(data, target)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ syncVerifyData(data, target, callback)</div><div class="dgm-note" style="border:none;background:none;padding:0;">inner class DistroRpcCallbackWrapper</div><div class="dgm-note" style="border:none;background:none;padding:0;">inner class DistroVerifyCallbackWrapper</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientVerify</span><span class="s">Info</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">implements</div><div class="dgm-note" style="border:none;background:none;padding:0;">Serializable</div><ul class="dgm-kv"><li>clientId: String</li><li>revision: long</li></ul></div></div></div>
 
 **说明**：
 
@@ -1171,46 +939,7 @@ Nacos 2.5.3 在 v2 Distro 中引入了"以客户端为同步粒度"的新模型�
 
 ### 4.6.2 核心类关系图
 
-```
-                          ┌─────────────────────────────┐
-                          │  DistroClientComponentRegistry │  @PostConstruct
-                          │  .doRegister()              │
-                          └─────────────┬───────────────┘
-                                        │
-                    ┌───────────────────┼───────────────────────┐
-                    │                   │                       │
-                    ▼                   ▼                       ▼
-     ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────┐
-     │ DistroClient     │  │ DistroClient     │  │ DistroClient         │
-     │ DataProcessor    │  │ TransportAgent   │  │ TaskFailedHandler    │
-     │ (SmartSubscriber)│  │                  │  │                      │
-     └────────┬─────────┘  └────────┬─────────┘  └──────────┬───────────┘
-              │                    │                        │
-    ┌─────────┴─────────┐         │                        │
-    │ implements        │         │                        │
-    ▼                  ▼         ▼                        ▼
-┌────────────┐ ┌────────────┐ ┌─────────────────┐ ┌──────────────────────┐
-│ DistroData │ │ DistroData │ │ DistroTransport │ │ DistroFailedTask     │
-│ Storage    │ │ Processor  │ │ Agent           │ │ Handler              │
-│ (interface)│ │(interface) │ │ (interface)     │ │ (interface)          │
-└────────────┘ └────────────┘ └─────────────────┘ └──────────────────────┘
-                    │                    │                        │
-                    └────────────────────┼────────────────────────┘
-                                        │
-                                        ▼
-                         ┌──────────────────────────┐
-                         │  DistroComponentHolder    │  (Service Locator)
-                         │  Map<type, impl>         │
-                         └────────────┬─────────────┘
-                                      │
-                    ┌─────────────────┼─────────────────┐
-                    ▼                 ▼                 ▼
-          ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
-          │ DistroDelay  │ │DistroExecute │ │DistroProtocol│
-          │ TaskEngine   │ │TaskEngine    │ │ (Facade)     │
-          └──────────────┘ └──────────────┘ └──────────────┘
-                    图 4-6 Distro v2 组件注册与数据分发链路类关系图
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientComponentRegist</span><span class="s">.doRegister()</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClient          DistroClient</span><span class="s">TransportAgent        TaskFailedHan</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">er)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">roData     DistroTransport     DistroFailed</span><span class="s">essor      Agent               Handler</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">rface)     (interface)         (interface)</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroComponentHolder</span><span class="s">Map&lt;type, impl&gt;</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroProtocol</span><span class="s">(Facade)</span></div><div class="dgm-box-b"></div></div></div>
 
 `DistroClientComponentRegistry` 作为注册网关，在容器启动时将 v2 四个角色一次性注入 `DistroComponentHolder`。`DistroClientDataProcessor` 同时实现 `DistroDataStorage`、`DistroDataProcessor` 和 `SmartSubscriber` 三个接口，是数据分发的「读写调度枢纽」：写路径（获取同步数据、快照、校验包）通过 `DistroDataStorage` 接口供框架查询调用；读路径（处理远端同步、校验、快照数据）通过 `DistroDataProcessor` 接口接收框架回调；事件驱动通过 `SmartSubscriber` 订阅 `ClientEvent` 触发同步。`DistroClientTransportAgent` 封装了基于 gRPC 的集群内数据收发，`DistroClientTaskFailedHandler` 将失败任务重新投递到两级引擎的重试队列。
 
@@ -1409,44 +1138,7 @@ Distro v2 的数据分布机制由 `naming/core/DistroMapper.java` 单一承载�
 
 ### 4.7.2 核心类关系图
 
-```
-图 4-7  DistroMapper 核心类关系
-
-┌──────────────────────────────────────────────────────────┐
-│                    NotifyCenter                          │
-│              (common.notify)                            │
-│  ┌──────────────────────────────────────────────┐      │
-│  │        MembersChangeEvent publishes         │      │
-│  │   when cluster members change              │      │
-│  └──────────────────┬───────────────────────────┘      │
-└────────────────────┼──────────────────────────────────────┘
-                     │ 订阅
-                     ▼
-┌──────────────────────────────────────────────────────────┐
-│           MemberChangeListener  ┌───────────────────┐   │
-│  (core/cluster/)              │  DistroMapper     │   │
-│  extends Subscriber           │  @Component       │◄──┼─── ServerMemberManager
-│  <MembersChangeEvent>        │                   │   │   (core/cluster/)
-│                               │ - healthyList     │   │   注入构造函数
-│  + subscribeType()            │ - switchDomain   │   │
-│  + ignoreExpireEvent()       │ - memberManager  │   │
-│  + onEvent(event)            │                   │   │
-│      ▲                       │ + init()         │   │
-│      │                       │ + responsible()   │   │
-┌──────┴──────────────┐       │ + mapSrv()       │   │
-│   DistroMapper      │       │ + getHealthyList()│   │
-│  (naming/core/)    │       │ + onEvent()      │   │
-│                     │       │ - distroHash()   │   │
-│ - healthyList:      │       └───────────────────┘   │
-│   volatile List     │                               │
-│                     │          使用方                │
-└─────────────────────┘       ┌───────────────────────┐
-                              │ HealthCheckCommonV2   │
-                              │ OperatorController    │
-                              │ Distro v2 client     │
-                              │ sync chain           │
-                              └───────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter</span><span class="s">(common.notify)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">MembersChangeEvent publishes</div><div class="dgm-note" style="border:none;background:none;padding:0;">when cluster members change</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberChangeListener</span><span class="s">(core/cluster/)                 DistroMapper</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">extends Subscriber              @Component        ◄</div><div class="dgm-note" style="border:none;background:none;padding:0;">&lt;MembersChangeEvent&gt;</div><ul class="dgm-kv"><li>healthyList</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ subscribeType()              - switchDomain</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ ignoreExpireEvent()         - memberManager</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onEvent(event)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">+ responsible()</span><span class="s">+ mapSrv()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroMapper                + getHealthyList()</div><div class="dgm-note" style="border:none;background:none;padding:0;">(naming/core/)              + onEvent()</div><ul class="dgm-kv"><li>distroHash()</li><li>healthyList:</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">volatile List</div><div class="dgm-note" style="border:none;background:none;padding:0;">使用方</div></div></div></div></div></div>
 
 **关系说明**：
 
@@ -1764,77 +1456,7 @@ Nacos 2.5.3 以 **外部依赖** 方式接入 JRaft 库（`com.alipay.sofa:jraft
 
 ### 4.8.2 核心类关系图
 
-```
-图 4-8  JRaft 接入层核心类关系图
-
-┌────────────────────────────────────────────────────────────────────┐
-│                    consistency/ 接口层（仅接口定义）                    │
-│  ConsistencyProtocol<C,P>  CPProtocol<C,P>  RequestProcessor4CP    │
-│  SerializeFactory  SnapshotOperation  LocalFileMeta              │
-└────────────────────────────────────────────────────────────────────┘
-                        ▲  implements
-          ┌─────────────┴──────────────┐
-          │  AbstractConsistencyProtocol  │
-          └─────────────┬──────────────┘
-                         │ extends
-          ┌─────────────┴──────────────┐
-          │      JRaftProtocol          │  ◀── 适配层入口（实现 CPProtocol）
-          │  - raftConfig: RaftConfig    │
-          │  - raftServer: JRaftServer  │
-          │  - jRaftMaintainService     │
-          │  + init(config)             │
-          │  + write(request)→Response   │
-          │  + getData(request)→Response │
-          │  + isLeader(group)→boolean   │
-          └─────────────┬──────────────┘
-                         │ 持有 & 委托
-          ┌─────────────┴──────────────┐
-          │       JRaftServer           │  ◀── 多 Raft Group 管理器
-          │  - multiRaftGroup: Map      │
-          │  - rpcServer: RpcServer     │
-          │  - cliClientService         │
-          │  + init(config)             │
-          │  + start()                 │
-          │  + createMultiRaftGroup()   │
-          │  + commit(group,data,fut)   │
-          │  + get(request)             │
-          │  + applyOperation(node,..)  │
-          │  + peerChange(...)          │
-          │  + shutdown()               │
-          │                             │
-          │  ▶ RaftGroupTuple          │
-          │    - node: Node            │──▶ JRaft 库原生对象
-          │    - processor: ReqProc    │
-          │    - raftGroupService      │
-          │    - machine: NacosSM     │
-          └─────────────┬──────────────┘
-                         │ 创建 & 注入
-          ┌─────────────┴──────────────┐
-          │    NacosStateMachine        │  ◀── 状态机适配器
-          │  extends StateMachineAdapter│
-          │  - server: JRaftServer      │
-          │  - processor: ReqProcessor   │
-          │  - operations: Collection    │
-          │  + onApply(iter)           │
-          │  + onSnapshotSave(writer)  │
-          │  + onSnapshotLoad(reader)   │
-          │  + onLeaderStart(term)     │
-          │  + onLeaderStop(status)     │
-          │  + onStartFollowing(ctx)    │
-          └─────────────┬──────────────┘
-                         │ 持有
-          ┌─────────────┴──────────────┐
-          │   JSnapshotOperation        │  ◀── 快照操作接口
-          │  + onSnapshotSave(...)      │
-          │  + onSnapshotLoad(...)      │
-          └────────────────────────────┘
-
-图例：
-  ◀── 标注关键语义
-  ▶ 标注关键对象
-  ── 关联/持有关系
-  ... 省略部分字段与方法
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">consistency/ 接口层（仅接口定义）</span><span class="s">ConsistencyProtocol&lt;C,P&gt;  CPProtocol&lt;C,P&gt;  RequestProcessor4CP</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">SerializeFactory  SnapshotOperation  LocalFileMeta</div></div></div><div class="dgm-note">▲  implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractConsistencyProtoco</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">extends</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaftProtocol</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>raftConfig: RaftConfig</li><li>raftServer: JRaftServer</li><li>jRaftMaintainService</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ init(config)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ write(request)→Response</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getData(request)→Respons</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ isLeader(group)→boolean</div></div></div><div class="dgm-note">持有 &amp; 委托</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaftServer</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>multiRaftGroup: Map</li><li>rpcServer: RpcServer</li><li>cliClientService</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ init(config)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ start()</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ createMultiRaftGroup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ commit(group,data,fut)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ get(request)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ applyOperation(node,..)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ peerChange(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ shutdown()</div><div class="dgm-note" style="border:none;background:none;padding:0;">▶ RaftGroupTuple</div><ul class="dgm-kv"><li>node: Node</li><li>processor: ReqProc</li><li>raftGroupService</li><li>machine: NacosSM</li></ul></div></div><div class="dgm-note">创建 &amp; 注入</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosStateMachine</span><span class="s">extends StateMachineAdapte</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>server: JRaftServer</li><li>processor: ReqProcessor</li><li>operations: Collection</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ onApply(iter)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onSnapshotSave(writer)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onSnapshotLoad(reader)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onLeaderStart(term)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onLeaderStop(status)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onStartFollowing(ctx)</div></div></div><div class="dgm-note">持有</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JSnapshotOperation</span><span class="s">+ onSnapshotSave(...)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ onSnapshotLoad(...)</div></div></div></div>
 
 ### 4.8.3 源码走读
 
@@ -2033,24 +1655,7 @@ public class JRaftProtocol extends AbstractConsistencyProtocol<RaftConfig, Reque
 
 架构协作视图：
 
-```
-            ProtocolManager (core/distributed/ProtocolManager)
-               │  initCPProtocol()
-               ▼
-   ┌──────────────────────────────────────────────┐
-   │              JRaftProtocol                    │  ← CPProtocol 门面
-   │  ├─ Serializer         (Protobuf 序列化)      │
-   │  ├─ JRaftServer        (Raft 运行时容器)       │
-   │  ├─ JRaftMaintainService (运维命令分发)        │
-   │  └─ ServerMemberManager(集群成员源)            │
-   └──────────────┬───────────────────────────────┘
-                  │
-        JRaftServer（核心容器，未纳入 Spring IOC)
-        ├─ RpcServer / CliService / CliClientService   ← JRaft RPC 服务端
-        ├─ multiRaftGroup: Map<group, RaftGroupTuple>  ← 每业务一个 Raft Group
-        │     RaftGroupTuple = {Node, RequestProcessor, RaftGroupService, NacosStateMachine}
-        └─ NodeOptions / RaftOptions                  ← JRaft 参数注入
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaftProtocol</span><span class="s">Serializer         (Protobuf 序列化)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">JRaftServer        (Raft 运行时容器)</div><div class="dgm-note" style="border:none;background:none;padding:0;">JRaftMaintainService (运维命令分发)</div><div class="dgm-note" style="border:none;background:none;padding:0;">ServerMemberManager(集群成员源)</div></div></div></div>
 
 两个关键设计决定：
 
@@ -2193,8 +1798,7 @@ public void memberChange(Set<String> addresses) {
 
 CP 一致性栈的启动与请求闭环可归纳为如下时序：
 
-```
-1. Spring 装配：ProtocolManager 解析成员，注入 raftPort 到 CP 配置
+<div class="dgm"><div class="dgm-cap"><span class="no">图示</span><span class="tt"></span></div><div class="dgm-tree">1. Spring 装配：ProtocolManager 解析成员，注入 raftPort 到 CP 配置
    └─ injectMembers4CP：self=ip:raftPort；members=全体 ip:raftPort
 2. JRaftProtocol 构造：new JRaftServer() + new JRaftMaintainService(raftServer)
 3. ProtocolManager.initCPProtocol() → protocol.init(raftConfig)
@@ -2205,8 +1809,7 @@ CP 一致性栈的启动与请求闭环可归纳为如下时序：
 5. 写请求 arrive → CPProtocol.write → raftServer.commit
    └─ 若 Leader：applyOperation(node.apply)；否则 invokeToLeader 转发
 6. 读请求 arrive → CPProtocol.getData → raftServer.get → node.readIndex → 本地 onRequest
-7. 运维/成员变更 → CPProtocol.memberChange / execute → JRaftMaintainService
-```
+7. 运维/成员变更 → CPProtocol.memberChange / execute → JRaftMaintainService</div></div>
 
 其中成员变更由 `ProtocolManager extends MemberChangeListener` 监听 `MembersChangeEvent`，在 `onEvent` 中通过 `cpMemberChange` 线程池回调 `cpProtocol.memberChange`。该事件驱动的**观察者**接入，使一致性层与集群成员管理彻底解耦。
 
@@ -2269,20 +1872,7 @@ class NacosStateMachine extends StateMachineAdapter {
 
 类关系视图：
 
-```
-                       JRaft 侧（com.alipay.sofa.jraft）
-   ┌────────────────────────────────────────────────────┐
-   │  StateMachine  (接口)                               │
-   │      ▲  StateMachineAdapter  (适配器基类)           │
-   │          ▲                                          │
-   │      NacosStateMachine  (Nacos 侧实现)              │
-   └────────────────────────────────────────────────────┘
-              │ onApply / onSnapshotSave / onSnapshotLoad / onLeader*
-              ▼
-   RequestProcessor4CP (Nacos 业务处理器)  ← 委托 onApply/onRequest
-              ▼
-   JSnapshotOperation (列表)  ← 由 consistency 的 SnapshotOperation 适配而来
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">StateMachine  (接口)</span></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--up"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosStateMachine  (Nacos 侧实现)</span></div></div></div></div></div>
 
 快照层存在**两套抽象**：Nacos 侧 `consistency/snapshot` 定义 `SnapshotOperation/Writer/Reader/LocalFileMeta`，JRaft 侧定义 `SnapshotWriter/SnapshotReader/Closure`。`adapterToJRaftSnapshot` 负责把前者包装成后者，屏蔽两份快照 API 的差异。
 

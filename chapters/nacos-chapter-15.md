@@ -37,40 +37,7 @@ Spring Cloud Alibaba 是一个**版本约束极强的生态**:`spring-cloud-star
 
 ### 核心架构关系图
 
-```
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│            Spring Cloud Alibaba 依赖收敛体系(BOM 视角)                            │
-├───────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                   │
-│          ┌─────────────────────────────────────────┐                               │
-│          │  Parent POM  dependencyManagement        │                               │
-│          │  (本工程统一版本收敛层)                  │                               │
-│          └──────────────────┬──────────────────────┘                               │
-│                             │ 托管版本                                               │
-│        ┌────────────────────┼───────────────────────┐                             │
-│        ▼                    ▼                       ▼                             │
-│  ┌─────────────────┐ ┌─────────────────┐ ┌─────────────────┐                       │
-│  │ spring-cloud-   │ │ spring-cloud-   │ │ spring-cloud-   │                       │
-│  │ alibaba-dep     │ │ dependencies    │ │ boot-dep        │                       │
-│  │ (SCA BOM)       │ │ (Cloud BOM)     │ │ (Boot BOM)      │                       │
-│  └────────┬────────┘ └────────┬────────┘ └────────┬────────┘                       │
-│           └───────────────────┼───────────────────┘                                │
-│                               ▼                                                    │
-│        ┌─────────────────────────────────────────┐                                 │
-│        │ 业务模块声明(不写版本号)                  │                                 │
-│        │  spring-cloud-starter-alibaba-nacos-      │                                 │
-│        │  config / discovery                       │                                 │
-│        └──────────────────┬──────────────────────┘                                 │
-│                           │ 传递依赖                                                   │
-│                           ▼                                                        │
-│        ┌─────────────────────────────────────────┐                                 │
-│        │  nacos-client(config+naming 原生客户端)  │                                 │
-│        │  commons-lang / protobuf / grpc-netty    │                                 │
-│        └─────────────────────────────────────────┘                                 │
-└───────────────────────────────────────────────────────────────────────────────────┘
-
-                  图 15-1:Spring Cloud Alibaba 依赖收敛与传递关系
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Spring Cloud Alibaba 依赖收敛体系(BOM 视角)</span><span class="s">托管版本</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">传递依赖</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Parent POM  dependencyManagement</span><span class="s">(本工程统一版本收敛层)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">g-cloud-       spring-cloud-       spring-cl</span><span class="s">ba-dep         dependencies        boot-dep</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">BOM)           (Cloud BOM)         (Boot BOM</div></div></div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">业务模块声明(不写版本号)</span><span class="s">spring-cloud-starter-alibaba-nacos-</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">config / discovery</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">nacos-client(config+naming 原生客户端)</span><span class="s">commons-lang / protobuf / grpc-netty</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 源码走读:nacos-client 的依赖根基
 
@@ -307,32 +274,7 @@ mvn dependency:tree -Dincludes=com.google.protobuf:*,io.grpc:*
 
 ### 核心架构关系图
 
-```
-启动时序:
-  SpringApplication.run()
-        │
-        ▼
-  bootstrap 上下文(bootstrap.yml 被读取)
-        │  spring.cloud.nacos.config.* 属性
-        ▼
-  NacosPropertySourceLocator.locate(environment)
-        │  把属性翻译成 Properties
-        ▼
-  NacosFactory.createConfigService(properties)
-        │  ↓ nacos-client
-        ▼
-  NacosConfigService  ──►  ClientWorker  ──►  gRPC 长连接
-        │                  │
-        │                  ├─ 首次全量拉取
-        │                  └─ 长轮询监听(30s 间隔 + 服务端 29.5s 挂起)
-        ▼
-  PropertySources 注入主上下文
-        │
-        ▼
-  @Value / @ConfigurationProperties 完成绑定
-
-  图 15-2:bootstrap 上下文 → Nacos 配置中心加载时序
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-2</span><span class="tt">bootstrap 上下文 → Nacos 配置中心加载时序</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">SpringApplication.run()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">bootstrap 上下文</div><div class="sd">bootstrap.yml 被读取 · spring.cloud.nacos.config.* 属性</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosPropertySourceLocator.locate(environment)</div><div class="sd">把属性翻译成 Properties</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosFactory.createConfigService(properties)</div><div class="sd">↓ nacos-client</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosConfigService → ClientWorker → gRPC 长连接</div><div class="sd">├ 首次全量拉取　└ 长轮询监听（30s 间隔 + 服务端 29.5s 挂起）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">PropertySources 注入主上下文</div><div class="sd">@Value / @ConfigurationProperties 完成绑定</div></div></div></div></div>
 
 ### 源码走读:从 bootstrap.yml 到 ConfigService
 
@@ -519,29 +461,7 @@ spring:
 
 ### 核心架构关系图
 
-```
-Nacos 服务端配置变更
-        │  push/long-polling
-        ▼
-ClientWorker 长轮询线程发现 CacheData 变化
-        │  CacheData.checkListenerMd5
-        ▼
-Listener.receiveConfigInfo(newContent)
-        │
-        ▼
-NacosContextRefresher -- 发布 RefreshEvent
-        │
-        ▼
-RefreshEventListener.onApplicationEvent
-        │  清空 RefreshScope 缓存
-        ▼
-RefreshScope.destroy() → 下次 getBean 时重建 @RefreshScope Bean
-        │
-        ▼
-@Value("${order.timeout:3000}") 重新注入,取到新值
-
-  图 15-3:@RefreshScope 配置动态刷新调用链
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">push / long-polling</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker 长轮询线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
 
 ### 源码走读:CacheData 监听与 MD5 校验
 
@@ -722,36 +642,7 @@ public class OrderController {
 
 ### 核心架构关系图
 
-```
-应用启动(@EnableDiscoveryClient)
-     │  WebServerInitializedEvent
-     ▼
-NacosServiceRegistry.register(instance)
-     │  组装 Instance(ip/port/weight/metadata/ephemeral)
-     ▼
-NacosNamingService.registerInstance(serviceName, groupName, instance)
-     │
-     ▼
-NamingClientProxy(NamingGrpcClientProxy)
-     │  gRPC InstanceRequest(双向流)
-     ▼
-Nacos 服务端 InstanceOperatorClientImpl.registerInstance
-
-┌────────────────────────── 发现侧 ──────────────────────────┐
-│  业务代码注入 DiscoveryClient                                │
-│       │                                                     │
-│       ▼                                                     │
-│  NacosDiscoveryClient.getInstances(serviceId)               │
-│       │                                                     │
-│       ▼                                                     │
-│  NacosNamingService.selectInstances / getAllInstances       │
-│       │  本地缓存优先,未命中则 gRPC 查询                    │
-│       ▼                                                     │
-│  List<Instance>(ip/port/healthy/weight/cluster)           │
-└────────────────────────────────────────────────────────────┘
-
-  图 15-4:@EnableDiscoveryClient 注册与发现链路
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">业务代码注入 DiscoveryClient</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosDiscoveryClient.getInstances(serviceId)</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosNamingService.selectInstances / getAllInstances</span><span class="s">本地缓存优先,未命中则 gRPC 查询</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">List&lt;Instance&gt;(ip/port/healthy/weight/cluster)</span></div></div></div></div></div>
 
 ### 源码走读:注册与查询核心
 
@@ -935,29 +826,7 @@ Spring Cloud LoadBalancer 是 2020.0 起替代 Ribbon 的新方案。需要说�
 
 ### 核心架构关系图
 
-```
-@LoadBalanced RestTemplate 调用 http://order-service/api/orders
-        │
-        ▼
-LoadBalancerInterceptor.intercept
-        │  识别虚拟主机名 order-service(非 IP)
-        ▼
-LoadBalancerClient.choose("order-service")
-        │  ↓ Spring Cloud LoadBalancer
-        ▼
-ServiceInstanceListSupplier.get()  →  Nacos 实例列表
-        │                               (来自 NacosNamingService 缓存)
-        ▼
-LoadBalancer 策略选一个实例(RoundRobin / Random / Weighted)
-        │
-        ▼
-拼接真实 URL:http://10.0.0.8:8080/api/orders
-        │
-        ▼
-RestTemplate 实际请求目标实例
-
-  图 15-5:@LoadBalanced RestTemplate 服务调用链路
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-5</span><span class="tt">@LoadBalanced RestTemplate 服务调用链路</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">@LoadBalanced RestTemplate 调用 http://order-service/api/orders</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">LoadBalancerInterceptor.intercept</div><div class="sd">识别虚拟主机名 order-service（非 IP）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">LoadBalancerClient.choose("order-service")</div><div class="sd">↓ Spring Cloud LoadBalancer</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ServiceInstanceListSupplier.get() → Nacos 实例列表</div><div class="sd">来自 NacosNamingService 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">负载均衡策略选一个实例</div><div class="sd">RoundRobin / Random / Weighted</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">拼接真实 URL：http://10.0.0.8:8080/api/orders</div><div class="sd">RestTemplate 实际请求目标实例</div></div></div></div></div>
 
 ### 源码走读:服务端实例来源
 
@@ -1224,33 +1093,7 @@ Spring Cloud LoadBalancer 把"选实例"抽为可替换的 `LoadBalancer` 策略
 
 ### 核心架构关系图
 
-```
-                      Nacos 配置中心
-┌─────────────────────────────────────────────────────────────┐
-│  namespace: dev                                              │
-│   ├─ order-service.yaml        └─ order-service-dev.yaml     │
-│                                                              │
-│  namespace: test                                             │
-│   ├─ order-service.yaml        └─ order-service-test.yaml    │
-│                                                              │
-│  namespace: prod  ◄── 线上服务连这里                          │
-│   ├─ order-service.yaml        └─ order-service-prod.yaml    │
-└─────────────────────────────────────────────────────────────┘
-
-本地 bootstrap.yml:
-  spring.profiles.active=prod
-  spring.cloud.nacos.config.namespace=<prod-namespace-id>
-        │
-        ▼
-NacosPropertySourceLocator 加载 dataId:
-  order-service.yaml(基础)
-  order-service-prod.yaml(prod 覆盖)
-        │  Profile 后缀 → namespace 定位
-        ▼
-Spring Environment(prod 配置优先覆盖基础配置)
-
-  图 15-6:namespace + profile 多环境配置隔离
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-6</span><span class="tt">namespace + profile 多环境配置隔离</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">Nacos 配置中心</span></div><div class="dgm-panel-body"><div class="dgm-cols dgm-cols-3"><div class="dgm-box"><div class="dgm-box-h"><span class="t">namespace: dev</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>order-service.yaml</li><li>order-service-dev.yaml</li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">namespace: test</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>order-service.yaml</li><li>order-service-test.yaml</li></div></div></div><div class="dgm-box" style="border-color:var(--accent);"><div class="dgm-box-h dgm-box-h--blue"><span class="t">namespace: prod</span><span class="s">← 线上服务连这里</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>order-service.yaml</li><li>order-service-prod.yaml</li></div></div></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">本地 bootstrap.yml</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">spring.profiles.active</span> = prod</li><li><span class="fld">spring.cloud.nacos.config.namespace</span> = &lt;prod-namespace-id&gt;</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">Profile 后缀 → namespace 定位</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosPropertySourceLocator 加载 dataId</div><div class="sd">order-service.yaml（基础）· order-service-prod.yaml（prod 覆盖）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Spring Environment</div><div class="sd">prod 配置优先覆盖基础配置</div></div></div></div></div>
 
 ### 源码走读:namespace 与 profile 如何进入 dataId 加载
 
@@ -1323,11 +1166,9 @@ spring:
 
 **Nacos 控制台配置规划(以 prod 命名空间为例)**
 
-```
-命名空间:prod(ID: 例如 2a1b3c4d-...)
+<div class="dgm"><div class="dgm-tree">命名空间:prod(ID: 例如 2a1b3c4d-...)
 ├── order-service.yaml(基础配置,含通用数据源、公共超时)
-└── order-service-prod.yaml(prod 覆盖,含生产数据源地址、生产熔断参数)
-```
+└── order-service-prod.yaml(prod 覆盖,含生产数据源地址、生产熔断参数)</div></div>
 
 **区分两者的使用场景**
 
@@ -1440,27 +1281,7 @@ Sentinel 是阿里开源的**面向分布式服务架构的流量治理组件**,
 
 ### 核心架构关系图
 
-```
-请求进入 @SentinelResource("createOrder") 方法
-        │
-        ▼
-Sentinel Entry(SphU.entry / 注解切面)
-        │  匹配规则(流控 / 熔断 / 热点)
-        ├──► 命中流控/熔断 → blockHandler 处理(BlockException)
-        │
-        ▼ 未拦截
-业务方法执行
-        │
-        ├──► 正常返回
-        │
-        └──► 抛出业务异常 → fallback 处理(返回值兜底)
-        │
-        ▼
-规则更新流:
-  Nacos(规则 DataSource)──► Sentinel 数据源适配器 ──► 内存规则更新
-
-  图 15-7:@SentinelResource 流控 / 熔断 / 降级处理流
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-7</span><span class="tt">@SentinelResource 流控 / 熔断 / 降级处理流</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">请求进入 @SentinelResource("createOrder") 方法</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Sentinel Entry（SphU.entry / 注解切面）</div><div class="sd">匹配规则（流控 / 熔断 / 热点）</div></div></div></div><div class="dgm-cols dgm-cols-2" style="margin:10px 0;"><div class="dgm-card dgm-card--ink"><div class="h"><span class="k">命中规则</span><span class="t">流控 / 熔断</span></div><ul><li>→ blockHandler 处理（BlockException）</li></ul></div><div class="dgm-card dgm-card--deep"><div class="h"><span class="k">未拦截</span><span class="t">业务方法执行</span></div><ul><li>正常返回</li><li>抛出业务异常 → fallback 处理（返回值兜底）</li></ul></div></div><div class="dgm-box" style="margin-top:6px;"><div class="dgm-box-h"><span class="t">规则更新流</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">Nacos（规则 DataSource）</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">Sentinel 数据源适配器</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">内存规则更新</span></div></div></div></div></div>
 
 ### 源码走读:Sentinel 与 Nacos 数据源绑定
 
@@ -1735,24 +1556,7 @@ Sentinel Dashboard 是 Sentinel 的可视化控制台,用于**实时查看**接�
 
 ### 核心架构关系图
 
-```
-┌─────────────── Sentinel Dashboard ───────────────┐
-│  实时监控    规则管理    系统保护                  │
-│  ┌────────────────────────────────────────────┐  │
-│  │  流控规则  降级规则  热点规则  系统规则      │  │
-│  └───────────────┬────────────────────────────┘  │
-└──────────────────┼───────────────────────────────┘
-                   │ transport(8080→客户端 api 端口)
-                   ▼
-           Sentinel 客户端(接入应用)
-           内存规则(FlowRuleManager / DegradeRuleManager)
-                   ▲
-                   │ NacosDataSource 监听(生产路径)
-                   │
-               Nacos 配置中心(规则持久化)
-
-  图 15-8:Sentinel Dashboard 与 Nacos 规则源协作
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">实时监控    规则管理    系统保护</span><span class="s">流控规则  降级规则  热点规则  系统规则</span></div><div class="dgm-box-b"></div></div></div>
 
 ### 源码走读:Dashboard 规则下发与 Nacos 持久化的双轨
 
@@ -2008,25 +1812,7 @@ Dashboard 的价值不仅在于配规则,更在于**用实时指标校准阈值*
 
 ### 核心架构关系图
 
-```
-版本兼容三角(以本工程对接 Nacos 2.5.3 为例)
-┌───────────────────────────────────────────────────────────┐
-│                                                            │
-│   Spring Cloud Alibaba (spring-cloud-alibaba-dependencies) │
-│            ▲                ▲                ▲             │
-│            │ 约束            │ 约束            │ 约束       │
-│            ▼                ▼                ▼             │
-│   Spring Boot         Spring Cloud        nacos-client     │
-│   (boot-dep)          (cloud-dep)         (客户端协议)       │
-│            │                │                │             │
-│            └────────────────┴───────┬────────┘             │
-│                                     ▼                      │
-│                          Nacos Server 2.5.3                │
-│                          (gRPC 双通道 / config+naming)      │
-└───────────────────────────────────────────────────────────┘
-
-  图 15-9:Spring Cloud Alibaba 版本兼容三角
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Spring Cloud Alibaba (spring-cloud-alibaba-dependencies)</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">约束              约束              约束</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Spring Boot         Spring Cloud        nacos-client</span><span class="s">(boot-dep)          (cloud-dep)         (客户端协议)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos Server 2.5.3</span><span class="s">(gRPC 双通道 / config+naming)</span></div></div></div></div></div>
 
 ### 版本选型方法论
 
@@ -2200,23 +1986,7 @@ public static String getFullClientVersion() {
 
 ### 核心架构关系图
 
-```
-集成问题排查总纲
-┌───────────────────────────────────────────────────────────┐
-│ 1 版本不匹配 ──► 先查 dependency:tree → nacos-client 版本   │
-│        │          → SCA/Boot/Cloud 矩阵                     │
-│        ▼                                                    │
-│ 2 配置不生效 ──► bootstrap 是否开启 → dataId 拼装 →          │
-│        │          @RefreshScope → 本地 failover/快照干扰      │
-│        ▼                                                    │
-│ 3 服务发现失败 ─► 注册日志 → 订阅缓存 → ephemeral →          │
-│                   网络/gRPC → 服务名拼写                     │
-│                                                             │
-│ 公共底座:nacos-client gRPC 连接日志 + 客户端日志级别        │
-└───────────────────────────────────────────────────────────┘
-
-  图 15-10:三大集成问题排查主路径
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">push / long-polling</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker 长轮询线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
 
 ### 排障前置:日志与可观测性配置
 

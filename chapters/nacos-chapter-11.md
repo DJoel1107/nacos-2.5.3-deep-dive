@@ -32,44 +32,7 @@ Eureka 2.0 已停止开发，Consul 和 ZooKeeper 均仅支持单一 CP 模式�
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 2.5.3 AP+CP 混合模式架构                               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                      ┌─────────────────────┐                              │
-│                      │   Nacos Server       │                              │
-│                      └──────────┬──────────┘                              │
-│                                 │                                         │
-│           ┌─────────────────────┼─────────────────────┐                   │
-│           │                     │                     │                   │
-│     ┌─────▼─────┐      ┌────▼────┐       ┌──────▼──────┐           │
-│     │  Naming 模块│      │ Config 模块│       │ 一致性协议层  │           │
-│     │ (服务发现)  │      │ (配置管理) │       │               │           │
-│     └─────┬─────┘      └────┬────┘       └──────┬──────┘           │
-│           │                   │                     │                     │
-│     ┌─────▼─────┐      ┌────▼────┐       ┌──────▼──────┐           │
-│     │   Distro    │      │   JRaft   │       │  自研 vs     │           │
-│     │   协议     │      │   协议    │       │  开源 Raft    │           │
-│     └─────┬─────┘      └────┬────┘       └──────┬──────┘           │
-│           │                   │                     │                     │
-│     ┌─────▼─────────────────▼─────────────────────▼──────┐           │
-│     │                    CAP 属性                              │           │
-│     │                                                     │           │
-│     │  Distro (AP):  牺牲 C → 最终一致性                  │           │
-│     │  • 节点间异步同步，允许短暂不一致                     │           │
-│     │  • 所有节点可独立接受写入                           │           │
-│     │  • Naming 模块专用                                  │           │
-│     │                                                     │           │
-│     │  JRaft (CP):  牺牲 A → 强一致性                     │           │
-│     │  • Leader 单点写入，Follower 同步确认                │           │
-│     │  • 多数派确认后才返回成功                            │           │
-│     │  • Config 模块专用                                  │           │
-│     └─────────────────────────────────────────────────────┘           │
-│                                                                          │
-│               图 11-1：Nacos AP+CP 混合模式架构                           │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 2.5.3 AP+CP 混合模式架构</span><span class="s">图 11-1：Nacos AP+CP 混合模式架构</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos Server</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Naming 模块</span><span class="s">(服务发现)</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Distro</span><span class="s">协议</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Distro (A</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>节点间异步同步</li><li>所有节点可独立</li><li>Naming</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">JRaft (CP</div><ul class="dgm-kv"><li>Leader</li><li>多数派确认后才</li><li>Config</li></ul></div></div></div></div></div></div></div>
 
 ### CAP 属性在 Nacos 中的映射矩阵
 
@@ -87,15 +50,13 @@ Nacos 自研的 Distro 协议是专为服务发现场景设计的 AP 协议。�
 
 与 JRaft 的 Leader 单点写入不同，Distro 允许每个 Nacos 节点独立接受客户端的服务注册请求。当一个节点接收到注册请求时：
 
-```
-client → Nacos Node1: register(serviceA, 192.168.1.1:8080)
+<div class="dgm"><div class="dgm-tree">client → Nacos Node1: register(serviceA, 192.168.1.1:8080)
                 │
                 ├── 1. 本地写入内存注册表 (立即返回成功)
                 │
                 └── 2. 异步同步到其他节点 (Distro 同步任务)
                      ├── Node1 → Node2: sync(serviceA, 192.168.1.1:8080)
-                     └── Node1 → Node3: sync(serviceA, 192.168.1.1:8080)
-```
+                     └── Node1 → Node3: sync(serviceA, 192.168.1.1:8080)</div></div>
 
 Distro 同步任务的核心入口位于：
 - `NamingDistroDataTransport.distributeData()`（`naming/src/main/java/com/alibaba/nacos/naming/cluster/transport/NamingDistroDataTransport.java:94-118`）：构建 DistroData 并发送到目标节点
@@ -118,8 +79,7 @@ JRaft 是阿里巴巴基于 Raft 论文实现的开源 Java Raft 库。Nacos 2.5
 
 **1. Leader 单点写入**
 
-```
-Client → Nacos Node1 (Leader):
+<div class="dgm"><div class="dgm-tree">Client → Nacos Node1 (Leader):
   publishConfig(dataId, group, content)
     │
     ├── 1. Leader 先写入本地日志 (Raft Log Entry)
@@ -130,8 +90,7 @@ Client → Nacos Node1 (Leader):
     │
     ├── 3. Leader 收到多数派 ACK (≥ 2/3) → 提交日志
     │
-    └── 4. Leader 返回客户端成功
-```
+    └── 4. Leader 返回客户端成功</div></div>
 
 JRaft 协议在 Nacos 中的集成点位于 CP 协议层：
 - `JRaftProtocol.submit()`（`consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftProtocol.java:76-125`）：将 Config 写入操作提交为 Raft 日志条目
@@ -255,72 +214,7 @@ Nacos 客户端在注册服务实例时需要明确指定实例类型：**临时
 
 ### 核心决策树
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│              AP vs CP 模式选择决策树                                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                        ┌─────────────────────┐                            │
-│                        │ 开始：我的微服务    │                            │
-│                        │ 应该用哪种实例？   │                            │
-│                        └──────────┬──────────┘                            │
-│                                   │                                       │
-│                         ┌─────────▼─────────┐                            │
-│                         │ Q1: 服务实例宕机后  │                            │
-│                         │ 需要自动恢复吗？   │                            │
-│                         └─────────┬─────────┘                            │
-│                                   │                                       │
-│                    ┌──────────────┼──────────────┐                        │
-│                    │              │              │                        │
-│               ┌────▼────┐   ┌───▼───┐   ┌────▼────┐                  │
-│               │ 不需要   │   │ 需要    │   │ 需要    │                  │
-│               │ (无状态) │   │(自动恢复)│   │(持久化) │                  │
-│               └────┬────┘   └───┬───┘   └────┬────┘                  │
-│                    │              │              │                        │
-│                    │         ┌────▼────┐        │                        │
-│                    │         │ Q2: 心跳 │        │                        │
-│                    │         │ 频率多高？│        │                        │
-│                    │         └────┬────┘        │                        │
-│                    │              │              │                        │
-│                    │    ┌─────────┼─────────┐    │                        │
-│                    │    │         │         │    │                        │
-│                    │  ┌─▼──┐  ┌──▼──┐  ┌──▼──┐ │                        │
-│                    │  │ >10s│  │5-10s│  │ <5s  │ │                        │
-│                    │  └─┬──┘  └──┬──┘  └──┬──┘ │                        │
-│                    │    │        │        │      │                        │
-│                    │    │        │    ┌───▼───┐  │                        │
-│                    │    │        │    │ Q3: 需 │  │                        │
-│                    │    │        │    │ 要保持 │  │                        │
-│                    │    │        │    │ 实例   │  │                        │
-│                    │    │        │    │ 列表？ │  │                        │
-│                    │    │        │    └───┬───┘  │                        │
-│                    │    │        │        │      │                        │
-│                    │    │        │   ┌────┼────┐ │                        │
-│                    │    │        │   │    │    │ │                        │
-│                    │    │        │ ┌─▼─┐┌─▼─┐ │                        │
-│                    │    │        │ │ 是││ 否│ │                        │
-│                    │    │        │ └─┬─┘└─┬─┘ │                        │
-│                    │    │        │   │    │   │                        │
-│                    ▼    ▼        ▼   ▼    ▼   ▼                        │
-│               ┌────────────────────────────────────────┐                 │
-│               │           AP (ephemeral=true)          │                 │
-│               │  * Distro 协议                       │                 │
-│               │  * 客户端心跳保活                    │                 │
-│               │  * 宕机自动剔除                     │                 │
-│               │  * 不持久化到 MySQL                  │                 │
-│               └────────────────────────────────────────┘                 │
-│                                                                          │
-│               ┌────────────────────────────────────────┐                 │
-│               │           CP (ephemeral=false)         │                 │
-│               │  * JRaft 协议                        │                 │
-│               │  * 服务端主动健康检查                │                 │
-│               │  * 宕机不自动剔除                   │                 │
-│               │  * 持久化到 MySQL                    │                 │
-│               └────────────────────────────────────────┘                 │
-│                                                                          │
-│                      图 11-2：AP vs CP 模式选择决策树                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">AP vs CP 模式选择决策树</span><span class="s">图 11-2：AP vs CP 模式选择决策树</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">开始：我的微服务</span><span class="s">应该用哪种实例？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Q1</span><span class="typ">: 服务实例宕机后</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">需要自动恢复吗？</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">不需要</span><span class="s">(无状态)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">* Distr</span><span class="s">* 客户端心跳</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">* 宕机自动剔</div><div class="dgm-note" style="border:none;background:none;padding:0;">* 不持久化到</div></div></div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CP (ephemeral=false)</span><span class="s">* JRaft 协议</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">* 服务端主动健康检查</div><div class="dgm-note" style="border:none;background:none;padding:0;">* 宕机不自动剔除</div><div class="dgm-note" style="border:none;background:none;padding:0;">* 持久化到 MySQL</div></div></div></div></div></div>
 
 ### 三层决策逻辑详解
 
@@ -468,92 +362,7 @@ Nacos 2.5.3 集群基于 JRaft 协议，网络分区导致双 Leader 的典型�
 
 ### 核心时序图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              5 节点集群网络分区 → 双 Leader 完整时序                        │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  时间轴    分区 A (Node1-2)         分区 B (Node3-5)                    │
-│  ────────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  T0        ┌──────────────────────────────────────────────────────────┐     │
-│            │  集群正常：Node1=Leader, Node2-5=Follower               │     │
-│            │  Leader 定期发送心跳 (Heartbeat Interval = 500ms)      │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T1        ┌──────────────────────────────────────────────────────────┐     │
-│            │  ⚡ 网络分区发生！                                        │     │
-│            │  Node1-2 ←//→ Node3-5 (网络中断)                       │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T1+500ms  ┌──────────────────────┐  ┌──────────────────────────────────┐   │
-│            │ Node1: 发送心跳      │  │ Node3-5: 未收到 Leader 心跳    │   │
-│            │ → Node2: ACK        │  │ 启动选举超时计时器            │   │
-│            │ → Node3-5: 超时    │  │ (Election Timeout = 150ms)     │   │
-│            └──────────────────────┘  └──────────────────────────────────┘   │
-│                                                                          │
-│  T1+650ms  ┌──────────────────────┐  ┌──────────────────────────────────┐   │
-│            │ Node1: 仍认为自己是  │  │ Node3: 选举超时！              │   │
-│            │ Leader，继续接受    │  │ 进入 Candidate 状态             │   │
-│            │ 客户端写入请求      │  │ Term = CurrentTerm + 1          │   │
-│            │                     │  │ 给自己投票                    │   │
-│            └──────────────────────┘  └──────────────────────────────────┘   │
-│                                                                          │
-│  T1+660ms  ┌──────────────────────┐  ┌──────────────────────────────────┐   │
-│            │                     │  │ Node3 → Node4: RequestVote RPC  │   │
-│            │                     │  │ Node4: 检查 term > 自己的 term  │   │
-│            │                     │  │ → 投票给 Node3                │   │
-│            │                     │  │ Node3 → Node5: RequestVote RPC  │   │
-│            │                     │  │ Node5: 投票给 Node3            │   │
-│            └──────────────────────┘  └──────────────────────────────────┘   │
-│                                                                          │
-│  T1+670ms  ┌──────────────────────┐  ┌──────────────────────────────────┐   │
-│            │ ⚠️ Node1 仍是 Leader │  │ ✅ Node3 获得 3 票 (≥ 3/5) │   │
-│            │ (分区 A)           │  │ → 当选为新 Leader (分区 B)   │   │
-│            │                     │  │ Term = N+1                     │   │
-│            └──────────────────────┘  └──────────────────────────────────┘   │
-│                                                                          │
-│  T1+700ms  ┌──────────────────────────────────────────────────────────┐     │
-│            │          🔴 双 Leader 并存！                             │     │
-│            │                                                          │     │
-│            │  分区 A (Node1-2):       分区 B (Node3-5):             │     │
-│            │  Leader = Node1           Leader = Node3                 │     │
-│            │  Term = N                 Term = N+1                    │     │
-│            │  接受客户端写入         接受客户端写入               │     │
-│            │                          ↑                               │     │
-│            │                  两个 Leader 各自独立接受写入！         │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T2        ┌──────────────────────────────────────────────────────────┐     │
-│            │  分区 A 客户端写入:        分区 B 客户端写入:           │     │
-│            │  config.set("key1","v1")   config.set("key1","v2")    │     │
-│            │  → Node1 接受写入          → Node3 接受写入            │     │
-│            │  → 日志 Index=100, Term=N → 日志 Index=100, Term=N+1 │     │
-│            │                                                          │     │
-│            │  ⚠️ 同一个 key 在不同分区被写入不同的值！               │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T3        ┌──────────────────────────────────────────────────────────┐     │
-│            │  ⚡ 网络恢复！Node1-2 ←→ Node3-5 重新互通              │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T3+10ms   ┌──────────────────────────────────────────────────────────┐     │
-│            │  Node1 (Term=N) 收到 Node3 (Term=N+1) 的心跳         │     │
-│            │  → Node1 发现 Node3 的 Term > 自己的 Term              │     │
-│            │  → Node1 退位：Step Down，转为 Follower                │     │
-│            │  → Node3 成为全集群唯一 Leader (Term=N+1)            │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│  T3+20ms   ┌──────────────────────────────────────────────────────────┐     │
-│            │  Leader Node3 发送 AppendEntries RPC 给所有节点        │     │
-│            │  → Node1 的未提交日志 (Index=100, Term=N) 被覆盖     │     │
-│            │  → Node1 接受 Leader Node3 的日志 (Index=100, Term=N+1)│     │
-│            │  → 分区 A 的写入 "v1" 丢失 (被 Leader Node3 覆盖)    │     │
-│            └──────────────────────────────────────────────────────────┘     │
-│                                                                          │
-│              图 11-3：5 节点集群网络分区 → 双 Leader 完整时序            │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">5 节点集群网络分区 → 双 Leader 完整时序</span><span class="s">时间轴    分区 A (Node1-2)         分区 B (Node3-5)</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 11-3：5 节点集群网络分区 → 双 Leader 完整时序</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">集群正常：Node1=Leader, Node2-5=Follower</span><span class="s">Leader 定期发送心跳 (Heartbeat Interval = 500ms)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">⚡ 网络分区发生！</span><span class="s">Node1-2 ←//→ Node3-5 (网络中断)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Node1</span><span class="typ">: 发送心跳</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node2: ACK</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node3-5: 超时</div><ul class="dgm-kv"><li><span class="fld">Node1</span><span class="typ">: 仍认为自己是       N</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Leader，继续接受         进</div><div class="dgm-note" style="border:none;background:none;padding:0;">客户端写入请求           Ter</div><div class="dgm-note" style="border:none;background:none;padding:0;">⚠️ Node1 仍是 Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">(分区 A)</div><div class="dgm-note" style="border:none;background:none;padding:0;">🔴 双 Leader 并</div><div class="dgm-note" style="border:none;background:none;padding:0;">分区 A (Node1-2):</div><div class="dgm-note" style="border:none;background:none;padding:0;">Leader = Node1</div><div class="dgm-note" style="border:none;background:none;padding:0;">Term = N</div><div class="dgm-note" style="border:none;background:none;padding:0;">接受客户端写入         接受客户</div><div class="dgm-note" style="border:none;background:none;padding:0;">两个 L</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">分区 A 客户端写入:        分区 B 客户端写入:</span><span class="s">config.set("key1","v1")   config.set("key1","v2")</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node1 接受写入          → Node3 接受写入</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 日志 Index=100, Term=N → 日志 Index=100, Term=N+1</div><div class="dgm-note" style="border:none;background:none;padding:0;">⚠️ 同一个 key 在不同分区被写入不同的值！</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">⚡ 网络恢复！Node1-2 ←→ Node3-5 重新互通</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node1 (Term=N) 收到 Node3 (Term=N+1) 的心跳</span><span class="s">→ Node1 发现 Node3 的 Term &gt; 自己的 Term</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node1 退位：Step Down，转为 Follower</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node3 成为全集群唯一 Leader (Term=N+1)</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Leader Node3 发送 AppendEntries RPC 给所有节点</span><span class="s">→ Node1 的未提交日志 (Index=100, Term=N) 被覆盖</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node1 接受 Leader Node3 的日志 (Index=100, Term=N+1)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 分区 A 的写入 "v1" 丢失 (被 Leader Node3 覆盖)</div></div></div></div></div></div>
 
 ### 双 Leader 的关键触发条件
 
@@ -594,8 +403,7 @@ Candidate 发起 Pre-Vote RPC，携带自己的 `lastLogTerm` 和 `lastLogIndex`
 
 三层检查通过后，Candidate 才正式发起 RequestVote RPC。Pre-Vote 机制在网络分区场景下阻止双 Leader 的过程：
 
-```
-分区 A (Node1-2, 含旧 Leader Node1)        分区 B (Node3-5)
+<div class="dgm"><div class="dgm-tree">分区 A (Node1-2, 含旧 Leader Node1)        分区 B (Node3-5)
 ─────────────────────────────────────────────────────────────────────
 
 Node1 (Leader):                           Node3 (Follower):
@@ -607,7 +415,7 @@ Node1 (Leader):                           Node3 (Follower):
   │                                          ├── Pre-Vote RPC → Node4
   │                                          │   Q: 愿意投票给我吗？
   │                                          │   Node4 检查:
-  │                                          │   Layer 1 (Term): ✅ Node3.term > mine
+  │                                          │   Layer 1 (Term): ✅ Node3.term &gt; mine
   │                                          │   Layer 2 (Leader存活): ✅ 150ms 内
   │                                          │       未收到 Leader 心跳
   │                                          │   Layer 3 (日志最新): ✅ Node3 日志
@@ -625,10 +433,9 @@ Node1 (Leader):                           Node3 (Follower):
   │  ← 网络恢复 →                            │
   │                                          │
   ├── 收到 Node3 的 AppendEntries RPC         │
-  │   (Term=N+1 > 自己的 Term=N)              │
+  │   (Term=N+1 &gt; 自己的 Term=N)              │
   │   → Step Down (退位为 Follower)          │
-  │   → 覆盖未提交日志                     │
-```
+  │   → 覆盖未提交日志                     │</div></div>
 
 如果没有 Pre-Vote 机制，Node3 在网络分区后直接发起 RequestVote RPC——即使成功当选为新 Leader（获得多数派投票），旧 Leader Node1 在分区 A 中仍认为自己是 Leader（因为在分区 A 中 Node1 仍能收到 Node2 的心跳响应）——导致双 Leader 持续时间更长（直到网络恢复）。
 
@@ -712,86 +519,7 @@ JRaft 实现了完整的 Pre-Vote 机制（参考 Raft 论文第 9.6 节），�
 
 ### 核心流程图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              JRaft Pre-Vote 3 层检查完整流程                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  Follower (选举超时 150ms)                                              │
-│       │                                                                  │
-│       ├── 1. 不立即增加 Term！先进入 Pre-Candidate 状态                  │
-│       │                                                                  │
-│       ├── 2. 向所有节点发送 Pre-Vote RPC                               │
-│       │    (lastLogTerm, lastLogIndex)                                   │
-│       │                                                                  │
-│       ▼                                                                  │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │              接收方 3 层检查 (每个节点独立执行)                    │    │
-│  │                                                                     │    │
-│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
-│  │  │ Layer 1: Term 检查                                          │  │    │
-│  │  │                                                             │  │    │
-│  │  │ if (Candidate.lastLogTerm < myLastLogTerm)                  │  │    │
-│  │  │     → REJECT: Candidate 日志落后，不应该成为 Leader       │  │    │
-│  │  │                                                             │  │    │
-│  │  │ if (Candidate.lastLogTerm == myLastLogTerm &&               │  │    │
-│  │  │     Candidate.lastLogIndex < myLastLogIndex)                 │  │    │
-│  │  │     → REJECT: Candidate 日志不够新                         │  │    │
-│  │  └───────────────────────────────────────────────────────────────┘  │    │
-│  │                              │                                       │    │
-│  │                              ▼                                       │    │
-│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
-│  │  │ Layer 2: Leader 存活检查                                    │  │    │
-│  │  │                                                             │  │    │
-│  │  │ if (timeSinceLastHeartbeat < ElectionTimeout)               │  │    │
-│  │  │     → REJECT: Leader 仍存活，不需要新选举                │  │    │
-│  │  │                                                             │  │    │
-│  │  │ 说明：如果我在最近 ElectionTimeout 时间内收到过           │  │    │
-│  │  │ Leader 的心跳 → Leader 仍然存活 → 没有选举必要          │  │    │
-│  │  └───────────────────────────────────────────────────────────────┘  │    │
-│  │                              │                                       │    │
-│  │                              ▼                                       │    │
-│  │  ┌───────────────────────────────────────────────────────────────┐  │    │
-│  │  │ Layer 3: 日志最新检查                                      │  │    │
-│  │  │                                                             │  │    │
-│  │  │ if (myLastLogTerm > Candidate.lastLogTerm)                  │  │    │
-│  │  │     → REJECT: 我的日志比 Candidate 更新                   │  │    │
-│  │  │                                                             │  │    │
-│  │  │ if (myLastLogTerm == Candidate.lastLogTerm &&               │  │    │
-│  │  │     myLastLogIndex > Candidate.lastLogIndex)                 │  │    │
-│  │  │     → REJECT: 我的日志更长                               │  │    │
-│  │  └───────────────────────────────────────────────────────────────┘  │    │
-│  │                              │                                       │    │
-│  │                              ▼                                       │    │
-│  │                        ┌─────────────┐                             │    │
-│  │                        │ 3 层全通过？ │                             │    │
-│  │                        └──────┬──────┘                             │    │
-│  │                               │                                       │    │
-│  │                    ┌──────────┴──────────┐                          │    │
-│  │                    │                     │                          │    │
-│  │               ┌────▼────┐          ┌───▼───┐                     │    │
-│  │               │ GRANTED  │          │ REJECT │                     │    │
-│  │               └────┬────┘          └───┬───┘                     │    │
-│  │                    │                   │                             │    │
-│  └────────────────────┼───────────────────┼───────────────────────────┘    │
-│                       │                   │                                │
-│                       ▼                   ▼                                │
-│  ┌─────────────────────────────────────────────────────────────────────┐    │
-│  │                     Pre-Candidate 收集结果                          │    │
-│  │                                                                   │    │
-│  │  if (GRANTED 票数 >= 多数派 (⌊N/2⌋+1)):                        │    │
-│  │      → 正式进入 Candidate 状态                                   │    │
-│  │      → 增加 CurrentTerm                                           │    │
-│  │      → 向所有节点发送 RequestVote RPC (正式投票)               │    │
-│  │                                                                   │    │
-│  │  else:                                                            │    │
-│  │      → 保持 Follower 状态                                        │    │
-│  │      → Term 不增加！(关键：避免无效 Term 递增)                 │    │
-│  └─────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│                  图 11-4：JRaft Pre-Vote 3 层检查完整流程                 │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaft Pre-Vote 3 层检查完整流程</span><span class="s">Follower (选举超时 150ms)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. 不立即增加 Term！先进入 Pre-Candidate 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 向所有节点发送 Pre-Vote RPC</div><div class="dgm-note" style="border:none;background:none;padding:0;">(lastLogTerm, lastLogIndex)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">接收方 3 层检查 (每个节点独立执行)</span><span class="s">Layer 1: Term 检查</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm &lt; myLastLogTerm)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志落后，不应该成为 Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm == myLastLogTerm &amp;&amp;</div><div class="dgm-note" style="border:none;background:none;padding:0;">Candidate.lastLogIndex &lt; myLastLogIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志不够新</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 2: Leader 存活检查</span><span class="s">if (timeSinceLastHeartbeat &lt; ElectionTimeout)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Leader 仍存活，不需要新选举</div><div class="dgm-note" style="border:none;background:none;padding:0;">说明：如果我在最近 ElectionTimeout 时间内收到过</div><div class="dgm-note" style="border:none;background:none;padding:0;">Leader 的心跳 → Leader 仍然存活 → 没有选举必要</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 3: 日志最新检查</span><span class="s">if (myLastLogTerm &gt; Candidate.lastLogTerm)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: 我的日志比 Candidate 更新</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (myLastLogTerm == Candidate.lastLogTerm &amp;&amp;</div><div class="dgm-note" style="border:none;background:none;padding:0;">myLastLogIndex &gt; Candidate.lastLogIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: 我的日志更长</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3 层全通过？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">REJEC</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Pre-Candidate 收集结果</span><span class="s">if (GRANTED 票数 &gt;= 多数派 (⌊N/2⌋+1)):</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 正式进入 Candidate 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 增加 CurrentTerm</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 向所有节点发送 RequestVote RPC (正式投票)</div><div class="dgm-note" style="border:none;background:none;padding:0;">else:</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 保持 Follower 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Term 不增加！(关键：避免无效 Term 递增)</div></div></div></div>
 
 ### 3 层检查逐一详解
 
@@ -969,86 +697,7 @@ Nacos 2.5.3 基于 JRaft 的脑裂恢复不依赖人工干预——完全自动�
 
 ### 核心阶段时序图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              脑裂恢复 3 阶段完整时序                                       │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  阶段 1: 检测 (Detection)                                                 │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  网络恢复 → Node1 (旧 Leader, Term=N) 收到 Node3 (新 Leader, Term=N+1)│
-│  的心跳/AppendEntries RPC                                                │
-│                                                                          │
-│  Node1 检测到自己 Term < Leader Term:                                     │
-│    → 立即 Step Down (退位为 Follower)                                   │
-│    → 停止接受客户端写入                                               │
-│    → 清空未提交日志 (pendingCommitIndex = Leader.commitIndex)             │
-│                                                                          │
-│  检测完成 ✅  (耗时: < 10ms)                                             │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  阶段 2: 仲裁 (Arbitration)                                              │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  Leader Node3 (Term=N+1) 向所有节点发送 AppendEntries RPC:              │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ Node1 (旧 Leader, Term=N):                                        │    │
-│  │   Log[100]: set("key1","v1") ← 未提交 (Term=N)               │    │
-│  │   Log[101]: set("key2","v2") ← 未提交 (Term=N)               │    │
-│  │                                                                   │    │
-│  │ Node3 (新 Leader, Term=N+1):                                     │    │
-│  │   Log[100]: set("key1","v2") ← 已提交 (Term=N+1)             │    │
-│  │   Log[101]: set("key3","v3") ← 已提交 (Term=N+1)             │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Leader Node3 AppendEntries RPC → Node1:                                 │
-│    prevLogIndex=99, prevLogTerm=N                                       │
-│    entries=[Log[100]: set("key1","v2"), Log[101]: set("key3","v3")]   │
-│                                                                          │
-│  Node1 执行日志冲突仲裁:                                                │
-│    Log[100] 冲突: Node1.Term=N < Leader.Term=N+1                        │
-│    → 删除本地 Log[100] (旧 Leader 的未提交日志)                       │
-│    → 接受 Leader 的 Log[100] (set("key1","v2"))                        │
-│                                                                          │
-│    Log[101] 冲突: Node1.Term=N < Leader.Term=N+1                        │
-│    → 删除本地 Log[101] (旧 Leader 的未提交日志)                       │
-│    → 接受 Leader 的 Log[101] (set("key3","v3"))                        │
-│                                                                          │
-│  仲裁规则: 以 Leader 日志为准 — Leader.Term > Follower.Term            │
-│   → 所有冲突日志以 Leader 的版本覆盖 Follower 的版本                  │
-│                                                                          │
-│  仲裁完成 ✅  (耗时: ~1-10ms, 取决于冲突日志数量)                      │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  阶段 3: 数据合并 (Data Reconciliation)                                    │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  所有 Follower 已同步到 Leader 的日志 → 集群日志一致                   │
-│                                                                          │
-│  Leader 提交日志 (commitIndex = 101):                                  │
-│    → Log[100] 已提交: set("key1","v2") ✅                             │
-│    → Log[101] 已提交: set("key3","v3") ✅                             │
-│                                                                          │
-│  State Machine 应用日志:                                                 │
-│    Node1: 应用 Log[100] → key1 = "v2"                                  │
-│          应用 Log[101] → key3 = "v3"                                    │
-│    Node3: 应用 Log[100] → key1 = "v2" (已应用)                       │
-│          应用 Log[101] → key3 = "v3" (已应用)                         │
-│                                                                          │
-│  全集群状态一致 ✅                                                       │
-│                                                                          │
-│  ⚠️ 数据丢失：旧 Leader (Node1) 在分区期间接受的写入                    │
-│     set("key1","v1") 永久丢失 (未提交日志被 Leader 覆盖)            │
-│                                                                          │
-│  合并完成 ✅  (耗时: ~5ms, State Machine 应用日志)                     │
-│                                                                          │
-│              图 11-5：脑裂恢复 3 阶段完整时序                             │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">脑裂恢复 3 阶段完整时序</span><span class="s">阶段 1: 检测 (Detection)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">网络恢复 → Node1 (旧 Leader, Term=N) 收到 Node3 (新 Leader, Term=N+1)</div><div class="dgm-note" style="border:none;background:none;padding:0;">的心跳/AppendEntries RPC</div><div class="dgm-note" style="border:none;background:none;padding:0;">Node1 检测到自己 Term &lt; Leader Term:</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 立即 Step Down (退位为 Follower)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 停止接受客户端写入</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 清空未提交日志 (pendingCommitIndex = Leader.commitIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">检测完成 ✅  (耗时: &lt; 10ms)</div><div class="dgm-note" style="border:none;background:none;padding:0;">═══════════════════════════════════════════════════════════════════</div><div class="dgm-note" style="border:none;background:none;padding:0;">阶段 2: 仲裁 (Arbitration)</div><div class="dgm-note" style="border:none;background:none;padding:0;">Leader Node3 (Term=N+1) 向所有节点发送 AppendEntries RPC:</div><div class="dgm-note" style="border:none;background:none;padding:0;">Node1 (旧 Leader, Term=N):</div><ul class="dgm-kv"><li><span class="fld">Log[100]</span><span class="typ">: set("key1","v1") ← 未提交 (Term=N)</span></li></ul><ul class="dgm-kv"><li><span class="fld">Log[101]</span><span class="typ">: set("key2","v2") ← 未提交 (Term=N)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Node3 (新 Leader, Term=N+1):</div><ul class="dgm-kv"><li><span class="fld">Log[100]</span><span class="typ">: set("key1","v2") ← 已提交 (Term=N+1)</span></li></ul><ul class="dgm-kv"><li><span class="fld">Log[101]</span><span class="typ">: set("key3","v3") ← 已提交 (Term=N+1)</span></li></ul></div></div></div>
 
 ### 阶段 1：检测（Detection）
 
@@ -1183,53 +832,7 @@ Config 模块（JRaft CP 模式）的配置发布写入在脑裂恢复期间的�
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                  Nacos 异地三中心多活架构                                        │
-├──────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│                          ┌──────────────────────┐                                  │
-│                          │   GeoDNS (智能解析)  │                                  │
-│                          │   + 全局负载均衡     │                                  │
-│                          └──────────┬───────────┘                                  │
-│                                     │                                           │
-│              ┌──────────────────────┼──────────────────────┐                      │
-│              │                      │                      │                      │
-│     ┌────────▼────────┐  ┌──────▼──────┐  ┌─────────▼────────┐              │
-│     │  中心 A (华东)   │  │  中心 B (华南) │  │  中心 C (华北)    │              │
-│     │  主数据中心      │  │  同城灾备     │  │  异地灾备         │              │
-│     │                 │  │               │  │                    │              │
-│     │ ┌─────────────┐ │  │┌────────────┐│  │┌──────────────────┐│              │
-│     │ │ Nacos 集群  │ │  ││Nacos 集群  ││  ││  Nacos 集群     ││              │
-│     │ │ 3 节点      │ │  ││3 节点      ││  ││  3 节点         ││              │
-│     │ └──────┬──────┘ │  │└──────┬─────┘│  │└────────┬─────────┘│              │
-│     │        │        │  │       │       │  │         │          │              │
-│     │ ┌──────▼──────┐ │  │┌──────▼─────┐│  │┌────────▼─────────┐│              │
-│     │ │ MySQL Master │ │  ││ MySQL Slave ││  ││  MySQL Slave     ││              │
-│     │ │ (读写)      │ │  ││ (只读)     ││  ││  (只读)         ││              │
-│     │ └──────┬──────┘ │  │└────────────┘│  │└──────────────────┘│              │
-│     │        │        │  │               │  │                    │              │
-│     │        │ 半同步复制 (rpl_semi_sync_master)                          │
-│     │        ├────────┼───────────────┼────────────────────────┤              │
-│     │        │        │  Binlog 同步  │                        │              │
-│     │        │        │               │                        │              │
-│     │        │  等待至少 1 个 Slave ACK 后才返回客户端成功               │
-│     │        │        │               │                        │              │
-│     └────────┴────────┘  └──────────────────────────────────────┘              │
-│                                                                                  │
-│   数据同步策略：                                                                │
-│   • 同城 (中心 A → 中心 B): MySQL 半同步复制 (rpl_semi_sync_master)         │
-│     → Master 等待 Slave B ACK 后提交 (RPO ≈ 0)                               │
-│   • 异地 (中心 B → 中心 C): MySQL 异步复制 (Binlog 异步传输)               │
-│     → Slave C 异步同步 (RPO < 1s)                                           │
-│                                                                                  │
-│   故障切换策略：                                                                │
-│   • 中心 A 故障 → 中心 B 提升为 Master (半同步复制已实时同步)               │
-│   • 中心 A+B 同时故障 → 中心 C 提升为 Master (异步复制可能有 < 1s 延迟)    │
-│                                                                                  │
-│            图 11-6：异地三中心多活架构 (同城半同步 + 异地异步)                 │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 异地三中心多活架构</span><span class="s">数据同步策略：</span></div><div class="dgm-panel-body"><ul class="dgm-kv"><li>同城 (中心 A → 中心 B): MySQL 半同步复制 (rpl_semi_sync_master)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ Master 等待 Slave B ACK 后提交 (RPO ≈ 0)</div><ul class="dgm-kv"><li>异地 (中心 B → 中心 C): MySQL 异步复制 (Binlog 异步传输)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ Slave C 异步同步 (RPO &lt; 1s)</div><div class="dgm-note" style="border:none;background:none;padding:0;">故障切换策略：</div><ul class="dgm-kv"><li>中心 A 故障 → 中心 B 提升为 Master (半同步复制已实时同步)</li><li>中心 A+B 同时故障 → 中心 C 提升为 Master (异步复制可能有 &lt; 1s 延迟)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 11-6：异地三中心多活架构 (同城半同步 + 异地异步)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GeoDNS (智能解析)</span><span class="s">+ 全局负载均衡</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">心 B (华南)</span><span class="s">灾备</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">acos 集群</div><div class="dgm-note" style="border:none;background:none;padding:0;">节点</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL Slav</span><span class="s">(只读)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">semi_sync_mas</div><div class="dgm-note" style="border:none;background:none;padding:0;">inlog 同步</div><div class="dgm-note" style="border:none;background:none;padding:0;">lave ACK 后才返回</div></div></div></div></div></div></div></div>
 
 ### MySQL 半同步复制配置
 
@@ -1493,38 +1096,7 @@ Nacos 集群的高可用不仅依赖 Raft 协议的自动故障转移，还需�
 
 ### 单节点故障切换流程
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              单节点宕机流量切换完整时序 (HTTP 8848)                        │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  T0: Node1 (192.168.1.101:8848) 宕机                                   │
-│                                                                          │
-│  T0+1s: 客户端请求到达 Nginx                                           │
-│         Nginx 按 least_conn 选择 Node1                                     │
-│         → proxy_pass http://192.168.1.101:8848                          │
-│         → 连接超时 (proxy_connect_timeout=5s)                            │
-│         → 记录失败 (max_fails 计数 +1)                                   │
-│                                                                          │
-│  T0+1s: proxy_next_upstream → 尝试下一个节点 (Node2)                    │
-│         → Node2 正常响应 → 返回客户端成功                                │
-│                                                                          │
-│  T0+6s: 第 2 次请求 → Node1 超时 → max_fails=2                        │
-│  T0+11s: 第 3 次请求 → Node1 超时 → max_fails=3                       │
-│          → Nginx 标记 Node1 为 DOWN (fail_timeout=30s 冷却期开始)       │
-│                                                                          │
-│  T0+11s ~ T0+41s: 所有请求自动路由到 Node2/Node3 (Node1 冷却期)      │
-│                                                                          │
-│  T0+41s: fail_timeout 过期 → Nginx 发送探测请求到 Node1               │
-│          (若 Node1 已恢复) → 探测成功 → 标记 Node1 为 UP                │
-│                                                                          │
-│  总切换耗时: ~11s (3 次失败 × 5s 超时)                                │
-│  (实际 Nginx 超时默认 proxy_connect_timeout=60s → 更慢;                │
-│   推荐生产调小为 5s)                                                    │
-│                                                                          │
-│            图 11-7：Nginx 单节点宕机被动健康检查完整时序                   │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 11-7</span><span class="tt">Nginx 单节点宕机被动健康检查完整时序（HTTP 8848）</span><span class="src">总切换耗时 ~11s（3 次失败 × 5s 超时）</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0：Node1（192.168.1.101:8848）宕机</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0+1s：客户端请求到达 Nginx</div><div class="sd">按 least_conn 选择 Node1 → proxy_pass http://192.168.1.101:8848 → 连接超时（proxy_connect_timeout=5s）→ 记录失败（max_fails 计数 +1）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0+1s：proxy_next_upstream → 尝试下一个节点（Node2）</div><div class="sd">Node2 正常响应 → 返回客户端成功</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0+6s ~ T0+11s：连续失败计数</div><div class="sd">第 2 次请求 → Node1 超时 → max_fails=2；第 3 次请求 → max_fails=3 → Nginx 标记 Node1 为 DOWN（fail_timeout=30s 冷却期开始）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0+11s ~ T0+41s：Node1 冷却期</div><div class="sd">所有请求自动路由到 Node2 / Node3</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">T0+41s：fail_timeout 过期 → 探测恢复</div><div class="sd">Nginx 发送探测请求到 Node1 →（若 Node1 已恢复）探测成功 → 标记 Node1 为 UP</div></div></div></div><div class="dgm-note" style="margin-top:12px;"><b>调优提示：</b>实际 Nginx 默认 proxy_connect_timeout=60s → 切换更慢；生产推荐调小为 5s。</div></div>
 
 ### 中心级故障切换流程
 
@@ -1905,97 +1477,7 @@ Nacos 2.5.3 提供了 `shutdown.sh` 脚本实现优雅停机。流程分为 4 �
 
 ### 核心流程图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│              Nacos 节点优雅停机完整流程                                    │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  Step 1: 从 LB 摘除                                                      │
-│  ────────────────────────────────────────────────────────────────────────     │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ 1.1 Nginx upstream 摘除节点                                      │    │
-│  │     upstream nacos_http {                                        │    │
-│  │       server 192.168.1.101:8848 down;  ← 标记为 down           │    │
-│  │     }                                                             │    │
-│  │     nginx -s reload                                              │    │
-│  │                                                                   │    │
-│  │ 1.2 gRPC Stream upstream 摘除                                    │    │
-│  │     stream {                                                      │    │
-│  │       upstream nacos_grpc {                                      │    │
-│  │         server 192.168.1.101:9848 down;                          │    │
-│  │       }                                                           │    │
-│  │     }                                                             │    │
-│  │     nginx -s reload                                              │    │
-│  │                                                                   │    │
-│  │ 1.3 等待 Nginx 健康检查生效 (~5s)                              │    │
-│  │     新连接不再路由到该节点                                    │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Step 2: 等待现有连接完成                                                │
-│  ────────────────────────────────────────────────────────────────────────     │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ 2.1 检查 HTTP 活跃连接数                                        │    │
-│  │     curl -s http://localhost:8848/nacos/v1/console/server/state  │    │
-│  │     查看 connectionCount → 等待降至 0 (或接近 0)               │    │
-│  │                                                                   │    │
-│  │ 2.2 等待 gRPC 连接自然关闭                                     │    │
-│  │     客户端感知 LB 摘除 → 自动重连到其他节点                  │    │
-│  │     原有连接 Idle Timeout (proxy_timeout=120s) 后关闭        │    │
-│  │                                                                   │    │
-│  │ 2.3 等待 Distro 异步同步任务完成                               │    │
-│  │     Naming 模块 Distro 任务队列清空                            │    │
-│  │     所有本地暂存数据已同步到其他节点                          │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Step 3: shutdown.sh                                                     │
-│  ────────────────────────────────────────────────────────────────────────     │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ 3.1 执行 bin/shutdown.sh                                         │    │
-│  │                                                                   │    │
-│  │     shutdown.sh 内部执行:                                        │    │
-│  │     ┌──────────────────────────────────────────────────────────┐    │    │
-│  │     │ 1. 关闭 gRPC Server (9848)                             │    │    │
-│  │     │    → 不再接受新的 gRPC 连接                           │    │    │
-│  │     │                                                         │    │    │
-│  │     │ 2. 关闭 HTTP Server (8848)                             │    │    │
-│  │     │    → 不再接受新的 HTTP 请求                           │    │    │
-│  │     │                                                         │    │    │
-│  │     │ 3. 关闭 JRaft RPC Server (7848)                       │    │    │
-│  │     │    → 向 Leader 发送退位请求                          │    │    │
-│  │     │    → 停止接受新日志条目                               │    │    │
-│  │     │                                                         │    │    │
-│  │     │ 4. 关闭 MySQL 连接池 (HikariCP)                       │    │    │
-│  │     │    → 正常关闭所有数据库连接                           │    │    │
-│  │     │                                                         │    │    │
-│  │     │ 5. 刷盘 JRaft Raft Log                                 │    │    │
-│  │     │    → 确保所有已提交日志持久化到磁盘                  │    │    │
-│  │     │                                                         │    │    │
-│  │     │ 6. 关闭 Distro 异步同步任务                           │    │    │
-│  │     │    → 等待所有同步任务完成或超时                      │    │    │
-│  │     └──────────────────────────────────────────────────────────┘    │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Step 4: kill -15 (SIGTERM) - 最后手段                                  │
-│  ────────────────────────────────────────────────────────────────────────     │
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ 4.1 等待 shutdown.sh 执行完成 (默认超时 30s)                   │    │
-│  │                                                                   │    │
-│  │ 4.2 若超时 → kill -15 (SIGTERM)                                │    │
-│  │     SIGTERM: 允许 JVM 注册 Shutdown Hook                        │    │
-│  │     → 释放资源 (文件句柄 / Socket / 内存)                     │    │
-│  │                                                                   │    │
-│  │ 4.3 若 SIGTERM 后仍未退出 → kill -9 (SIGKILL)                 │    │
-│  │     SIGKILL: 强制终止 (不留任何清理机会)                       │    │
-│  │     ⚠️ 仅作为最后手段！                                         │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│              图 11-8：Nacos 节点优雅停机完整流程                          │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 节点优雅停机完整流程</span><span class="s">Step 1: 从 LB 摘除</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1.1 Nginx upstream 摘除节点</div><div class="dgm-note" style="border:none;background:none;padding:0;">upstream nacos_http {</div><div class="dgm-note" style="border:none;background:none;padding:0;">server 192.168.1.101:8848 down;  ← 标记为 down</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">nginx -s reload</div><div class="dgm-note" style="border:none;background:none;padding:0;">1.2 gRPC Stream upstream 摘除</div><div class="dgm-note" style="border:none;background:none;padding:0;">stream {</div><div class="dgm-note" style="border:none;background:none;padding:0;">upstream nacos_grpc {</div><div class="dgm-note" style="border:none;background:none;padding:0;">server 192.168.1.101:9848 down;</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">nginx -s reload</div><div class="dgm-note" style="border:none;background:none;padding:0;">1.3 等待 Nginx 健康检查生效 (~5s)</div><div class="dgm-note" style="border:none;background:none;padding:0;">新连接不再路由到该节点</div></div></div><div class="dgm-note">Step 2: 等待现有连接完成</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">2.1 检查 HTTP 活跃连接数</span><span class="s">curl -s http://localhost:8848/nacos/v1/console/server/state</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">查看 connectionCount → 等待降至 0 (或接近 0)</div><div class="dgm-note" style="border:none;background:none;padding:0;">2.2 等待 gRPC 连接自然关闭</div><div class="dgm-note" style="border:none;background:none;padding:0;">客户端感知 LB 摘除 → 自动重连到其他节点</div><div class="dgm-note" style="border:none;background:none;padding:0;">原有连接 Idle Timeout (proxy_timeout=120s) 后关闭</div><div class="dgm-note" style="border:none;background:none;padding:0;">2.3 等待 Distro 异步同步任务完成</div><div class="dgm-note" style="border:none;background:none;padding:0;">Naming 模块 Distro 任务队列清空</div><div class="dgm-note" style="border:none;background:none;padding:0;">所有本地暂存数据已同步到其他节点</div></div></div><div class="dgm-note">Step 3: shutdown.sh</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3.1 执行 bin/shutdown.sh</span><span class="s">shutdown.sh 内部执行:</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">1. 关闭 gRPC Server (9848)</span><span class="s">→ 不再接受新的 gRPC 连接</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">2. 关闭 HTTP Server (8848)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 不再接受新的 HTTP 请求</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 关闭 JRaft RPC Server (7848)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 向 Leader 发送退位请求</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 停止接受新日志条目</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. 关闭 MySQL 连接池 (HikariCP)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 正常关闭所有数据库连接</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. 刷盘 JRaft Raft Log</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确保所有已提交日志持久化到磁盘</div><div class="dgm-note" style="border:none;background:none;padding:0;">6. 关闭 Distro 异步同步任务</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 等待所有同步任务完成或超时</div></div></div></div></div><div class="dgm-note">Step 4: kill -15 (SIGTERM) - 最后手段</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">4.1 等待 shutdown.sh 执行完成 (默认超时 30s)</span><span class="s">4.2 若超时 → kill -15 (SIGTERM)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">SIGTERM</span><span class="typ">: 允许 JVM 注册 Shutdown Hook</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 释放资源 (文件句柄 / Socket / 内存)</div><div class="dgm-note" style="border:none;background:none;padding:0;">4.3 若 SIGTERM 后仍未退出 → kill -9 (SIGKILL)</div><ul class="dgm-kv"><li><span class="fld">SIGKILL</span><span class="typ">: 强制终止 (不留任何清理机会)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">⚠️ 仅作为最后手段！</div></div></div></div>
 
 ### shutdown.sh 详解
 
@@ -2157,89 +1639,7 @@ Nacos 2.5.3 集群的滚动重启需要考虑以下特殊因素：
 
 ### 核心流程图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│            Nacos 3 节点集群滚动重启完整流程                               │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  初始状态: Node1 (Leader), Node2 (Follower), Node3 (Follower)          │
-│            Nginx upstream: [Node1, Node2, Node3]                           │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  Round 1: 重启 Node3 (Follower)                                          │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  Phase 1: 摘除 Node3                                                    │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ Nginx upstream 标记 Node3 down → reload                          │    │
-│  │ 等待 5s → Nginx 健康检查生效                                   │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Phase 2: 优雅停机 Node3                                                │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ bash graceful-shutdown.sh (参见 11.9 节)                         │    │
-│  │ → 关闭 gRPC Server/HTTP Server/JRaft/MySQL                       │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Phase 3: 启动 Node3                                                     │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ bash bin/startup.sh                                             │    │
-│  │ → JRaft 重新加入集群 (作为 Follower)                          │    │
-│  │ → 从 Leader 同步日志 (追上最新日志)                           │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Phase 4: 验证 Node3                                                     │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ curl http://192.168.1.103:8848/nacos/v1/core/cluster/nodes   │    │
-│  │ → 确认 Node3 state = UP                                       │    │
-│  │ → 确认 role = FOLLOWER                                        │    │
-│  │ → 确认集群节点数 = 3                                        │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Phase 5: 恢复 Node3 LB                                                  │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ Nginx upstream 移除 Node3 down 标记 → reload                    │    │
-│  │ → Node3 重新加入 LB                                           │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Round 1 完成 ✅  集群状态: [Node1, Node2, Node3] 全 UP                │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  Round 2: 重启 Node2 (Follower)                                          │
-│  ───────────────────────────────────────────────────────────────────────────  │
-│  同 Round 1 流程 → Phase 1~5                                           │
-│  Round 2 完成 ✅                                                        │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  Round 3: 重启 Node1 (Leader) - 特殊处理！                              │
-│  ───────────────────────────────────────────────────────────────────────────────  │
-│                                                                          │
-│  ⚠️ 重启 Leader 前先主动退位！                                          │
-│                                                                          │
-│  Phase 0: Leader 主动退位 (Step Down)                                    │
-│  ┌──────────────────────────────────────────────────────────────────────┐    │
-│  │ # 通过 JRaft API 触发 Leader Step Down                         │    │
-│  │ curl -X POST http://192.168.1.101:7848/jraft/stepDown         │    │
-│  │ → Node1 主动退位为 Follower                                  │    │
-│  │ → Raft 自动选举新 Leader (Node2 或 Node3)                   │    │
-│  │ → 选举耗时 < 1s                                              │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  Phase 1~5: 同 Round 1 流程 (Node1 不再 Leader)                         │
-│                                                                          │
-│  Round 3 完成 ✅                                                        │
-│                                                                          │
-│  ═══════════════════════════════════════════════════════════════════   │
-│                                                                          │
-│  全集群滚动重启完成！                                                    │
-│  [Node1, Node2, Node3] 全 UP + 新版本                                   │
-│                                                                          │
-│       图 11-9：Nacos 3 节点集群滚动重启完整流程（含 Leader 特殊处理）  │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 3 节点集群滚动重启完整流程</span><span class="s">初始状态: Node1 (Leader), Node2 (Follower), Node3 (Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream: [Node1, Node2, Node3]</div><div class="dgm-note" style="border:none;background:none;padding:0;">═══════════════════════════════════════════════════════════════════</div><div class="dgm-note" style="border:none;background:none;padding:0;">Round 1: 重启 Node3 (Follower)</div><div class="dgm-note" style="border:none;background:none;padding:0;">Phase 1: 摘除 Node3</div><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream 标记 Node3 down → reload</div><div class="dgm-note" style="border:none;background:none;padding:0;">等待 5s → Nginx 健康检查生效</div></div></div><div class="dgm-note">Phase 2: 优雅停机 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash graceful-shutdown.sh (参见 11.9 节)</span><span class="s">→ 关闭 gRPC Server/HTTP Server/JRaft/MySQL</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Phase 3: 启动 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash bin/startup.sh</span><span class="s">→ JRaft 重新加入集群 (作为 Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从 Leader 同步日志 (追上最新日志)</div></div></div><div class="dgm-note">Phase 4: 验证 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">curl http://192.168.1.103:8848/nacos/v1/core/cluster/nodes</span><span class="s">→ 确认 Node3 state = UP</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认 role = FOLLOWER</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认集群节点数 = 3</div></div></div><div class="dgm-note">Phase 5: 恢复 Node3 LB</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx upstream 移除 Node3 down 标记 → reload</span><span class="s">→ Node3 重新加入 LB</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Round 1 完成 ✅  集群状态: [Node1, Node2, Node3] 全 UP                                                                                                ═══════════════════════════════════════════════════════════════════                                                                                   Round 2: 重启 Node2 (Follower)                                                    同 Round 1 流程 → Phase 1~5                                               Round 2 完成 ✅                                                                                                                                        ═══════════════════════════════════════════════════════════════════                                                                                   Round 3: 重启 Node1 (Leader) - 特殊处理！                                                                                                                    ⚠️ 重启 Leader 前先主动退位！                                                                                                                          Phase 0: Leader 主动退位 (Step Down)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t"># 通过 JRaft API 触发 Leader Step Down</span><span class="s">curl -X POST http://192.168.1.101:7848/jraft/stepDown</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node1 主动退位为 Follower</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Raft 自动选举新 Leader (Node2 或 Node3)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 选举耗时 &lt; 1s</div></div></div></div>
 
 ### Leader 重启的特殊处理
 

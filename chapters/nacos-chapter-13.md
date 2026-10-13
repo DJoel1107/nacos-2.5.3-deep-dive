@@ -16,34 +16,7 @@ Prometheus 模块的核心机制是：通过 `ServiceManager.getSingletons(names
 
 ### 核心类关系图
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          Prometheus 模块类关系                             │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────┐                                        │
-│  │  PrometheusController       │                                        │
-│  │  @RestController            │                                        │
-│  │  @ConditionalOnProperty(   │        ┌────────────────────────────┐  │
-│  │   "nacos.prometheus       │        │  PrometheusUtils           │  │
-│  │   .metrics.enabled")      │───────▶│  + assembleArrayNodes()   │  │
-│  │                           │        │  + getInstanceMetadata()   │  │
-│  │  + metric()               │        └────────────────────────────┘  │
-│  │  + metricNamespace()      │                                        │
-│  │  + metricNamespaceService()│                                        │
-│  └──────────┬──────────────────┘                                        │
-│             │                                                           │
-│             ▼                                                           │
-│  ┌─────────────────────────────┐        ┌────────────────────────────┐  │
-│  │  ServiceManager            │        │  InstanceOperatorClientImpl │  │
-│  │  (naming.core.v2)        │───────▶│  (naming.core)            │  │
-│  │  + getAllNamespaces()     │        │  + listAllInstances()     │  │
-│  │  + getSingletons()       │        └────────────────────────────┘  │
-│  └─────────────────────────────┘                                        │
-│                                                                          │
-│            图 13-1：Prometheus 模块核心类关系图                            │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Prometheus 模块类关系</span><span class="s">PrometheusController</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">@RestController</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ metricNamespace()</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ metricNamespaceService()</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PrometheusUtils</span><span class="s">+ assembleArrayNodes()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ getInstanceMetadata()</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager</span><span class="s">(naming.core.v2)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">+ getAllNamespaces()</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getSingletons()</div></div></div></div>
 
 ### 源码走读：PrometheusController
 
@@ -170,28 +143,7 @@ Prometheus HTTP SD 是 Nacos 2.5.3 内置的轻量级监控数据导出方案，
 
 ### 核心类关系图
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                     Nacos Prometheus 监控指标体系                            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌───────────────────────────┐  ┌───────────────────────────────────────┐  │
-│  │  连接层 (Connection)      │  │  服务层 (Naming)                    │  │
-│  │  • grpc_connections_total │  │  • naming_service_total             │  │
-│  │  • grpc_push_cost_millis │  │  • naming_instance_total            │  │
-│  │  • grpc_bi_stream_active │  │  • naming_health_check_cost_millis │  │
-│  └───────────────────────────┘  └───────────────────────────────────────┘  │
-│                                                                          │
-│  ┌───────────────────────────┐  ┌───────────────────────────────────────┐  │
-│  │  配置层 (Config)         │  │  JVM 层 (Runtime)                   │  │
-│  │  • config_publish_total  │  │  • jvm_heap_used_bytes             │  │
-│  │  • config_get_total      │  │  • jvm_gc_pause_seconds           │  │
-│  │  • config_listener_total │  │  • jvm_threads_current             │  │
-│  └───────────────────────────┘  └───────────────────────────────────────┘  │
-│                                                                          │
-│            图 13-2：Nacos 核心 Prometheus 指标四层体系                       │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos Prometheus 监控指标体系</span><span class="s">图 13-2：Nacos 核心 Prometheus 指标四层体系</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">务层 (Naming)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>naming_service_total</li><li>naming_instance_total</li><li>naming_health_check_cost_millis</li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">M 层 (Runtime)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jvm_heap_used_bytes</li><li>jvm_gc_pause_seconds</li><li>jvm_threads_current</li></ul></div></div></div></div></div>
 
 ### 核心指标表：11 个关键指标
 
@@ -361,30 +313,7 @@ Prometheus 收集指标数据后，需要可视化面板来直观展示 Nacos �
 
 ### 核心类关系图（Dashboard 架构）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                    Grafana Dashboard 架构                                   │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌─────────────────────────────────────────────────────────────────────────┐  │
-│  │                        Grafana Server                                 │  │
-│  │  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌─────────┐  │  │
-│  │  │ Panel 1 │  │ Panel 2 │  │ Panel 3 │  │ Panel 4 │  │ Panel 5 │  │  │
-│  │  │ 连接数  │  │ 服务数  │  │配置速率│  │ JVM 堆 │  │ GC暂停 │  │  │
-│  │  │ Graph   │  │ Graph   │  │ Graph   │  │ Graph   │  │ Heatmap │  │  │
-│  │  └────┬───┘  └────┬───┘  └────┬───┘  └────┬───┘  └────┬───┘  │  │
-│  └───────┼──────────┼──────────┼──────────┼──────────┼──────────────┘  │
-│          │          │          │          │          │                     │
-│          ▼          ▼          ▼          ▼          ▼                     │
-│  ┌─────────────────────────────────────────────────────────────────────────┐  │
-│  │                     Prometheus Server                               │  │
-│  │  tsdb {                                                }          │  │
-│  │  scrape_configs: [nacos-cluster:8848/prometheus]                  │  │
-│  └─────────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│            图 13-3：Grafana Dashboard 数据流架构                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Grafana Dashboard 架构</span><span class="s">Grafana Server</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Panel 1      Panel 2      Panel 3      Panel 4      Panel 5</div><div class="dgm-note" style="border:none;background:none;padding:0;">连接数       服务数      配置速率     JVM 堆      GC暂停</div><div class="dgm-note" style="border:none;background:none;padding:0;">Graph        Graph        Graph        Graph        Heatmap</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Prometheus Server</span><span class="s">tsdb {                                                }</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">scrape_configs</span><span class="typ">: [nacos-cluster:8848/prometheus]</span></li></ul></div></div></div>
 
 ### 5 个核心面板 PromQL 查询
 
@@ -624,29 +553,7 @@ Nacos 集群需要 5 条核心告警规则覆盖最常见的生产故障模式�
 
 ### 核心类关系图（告警路由架构）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                   Prometheus AlertManager 告警路由架构                      │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────────┐  │
-│  │ Prometheus Server │────▶│ AlertManager     │────▶│ Receiver: Webhook    │  │
-│  │ (alert_rules.yml)│     │ (route + group) │     │ → 企业微信 / Slack   │  │
-│  └──────────────────┘     └──────────────────┘     └──────────────────────┘  │
-│          │                       │                                          │
-│          ▼                       ▼                                          │
-│  ┌──────────────────┐     ┌──────────────────┐                             │
-│  │ 5 条核心告警规则 │     │ Grouping:       │                             │
-│  │ 1. HighConn      │     │   group_by:      │                             │
-│  │ 2. NodeDown     │     │   [alertname]    │                             │
-│  │ 3. DistroFail   │     │ group_wait: 10s  │                             │
-│  │ 4. HighHeap     │     │ group_interval:   │                             │
-│  │ 5. FrequentFullGC│     │   5m              │                             │
-│  └──────────────────┘     └──────────────────┘                             │
-│                                                                          │
-│          图 13-4：AlertManager 告警路由架构                                  │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Prometheus AlertManager 告警路由架构</span><span class="s">图 13-4：AlertManager 告警路由架构</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AlertManager</span><span class="s">(route + group)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ng:</span><span class="s">group_by:</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">[alertname]</div><ul class="dgm-kv"><li><span class="fld">group_wait</span><span class="typ">: 10s</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">group_interval:</div><div class="dgm-note" style="border:none;background:none;padding:0;">5m</div></div></div></div></div></div></div></div>
 
 ### 5 条核心告警规则
 
@@ -872,30 +779,7 @@ Nacos 运行时产生的 5 种核心日志文件各有其特定用途：`nacos-c
 
 ### 核心类关系图（日志体系架构）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                      Nacos 2.5.3 日志架构                                  │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌────────────────────────────────────────────────────────────┐             │
-│  │  logger-adapter-impl/                                    │             │
-│  │  ├── log4j2-adapter/ → Log4j2NacosLoggingAdapter       │             │
-│  │  └── logback-adapter-12/ → LogbackNacosLoggingAdapter  │             │
-│  └────────────────────────────────────────────────────────────┘             │
-│                           │                                              │
-│                           ▼                                              │
-│  ┌────────────────────────────────────────────────────────────┐             │
-│  │              日志输出 (${nacos.home}/logs/)              │             │
-│  ├── nacos-cluster.log    ← 集群操作（Raft 选举/成员变更）  │             │
-│  ├── naming-server.log    ← 命名服务（注册/发现/健康检查）  │             │
-│  ├── config-server.log    ← 配置服务（发布/订阅/监听）      │             │
-│  ├── remote-server.log    ← gRPC 通信（双向流/推送）        │             │
-│  ├── access.log          ← HTTP 访问日志（Tomcat Access）    │             │
-│  └── nacos.log           ← 根日志（所有未分类日志）        │             │
-│                                                                          │
-│            图 13-5：Nacos 2.5.3 日志体系架构                                │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 日志架构</span><span class="s">logger-adapter-impl/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">log4j2-adapter/ → Log4j2NacosLoggingAdapter</div><div class="dgm-note" style="border:none;background:none;padding:0;">logback-adapter-12/ → LogbackNacosLoggingAdapter</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">日志输出 (${nacos.home}/logs/)</span><span class="s">nacos-cluster.log    ← 集群操作（Raft 选举/成员变更）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">naming-server.log    ← 命名服务（注册/发现/健康检查）</div><div class="dgm-note" style="border:none;background:none;padding:0;">config-server.log    ← 配置服务（发布/订阅/监听）</div><div class="dgm-note" style="border:none;background:none;padding:0;">remote-server.log    ← gRPC 通信（双向流/推送）</div><div class="dgm-note" style="border:none;background:none;padding:0;">access.log          ← HTTP 访问日志（Tomcat Access）</div><div class="dgm-note" style="border:none;background:none;padding:0;">nacos.log           ← 根日志（所有未分类日志）</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-5：Nacos 2.5.3 日志体系架构</div></div></div></div>
 
 ### 5 种日志文件详解
 
@@ -1089,33 +973,7 @@ Nacos 2.5.3 使用 Logback 的 `TimeBasedRollingPolicy` 实现日志滚动（Rol
 
 ### 核心类关系图（滚动触发链路）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  Nacos 日志滚动触发链路（TimeBasedRollingPolicy）            │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  ┌─────────────────────────┐   ┌────────────────────────────────────────┐  │
-│  │  RollingFileAppender   │   │  TimeBasedRollingPolicy (策略)         │  │
-│  │  (Appender，日志落盘)  │──▶│  • fileNamePattern: *.%d{yyyy-MM-dd}  │  │
-│  └─────────────────────────┘   │  • maxHistory: 30                    │  │
-│              │                  │  • totalSizeCap: 3GB                │  │
-│              ▼                  └───────────────┬────────────────────────┘  │
-│  ┌─────────────────────────┐                    │                          │
-│  │  RollingCalendar       │                    ▼                          │
-│  │  (周期判定：今天≠昨天？) │               ┌──────────────────────────┐    │
-│  └─────────────────────────┘               │  RolloverStrategy       │    │
-│              │                              │  (重命名+压缩+.gz)       │    │
-│              │                              └───────────┬──────────────┘    │
-│              └──下一次写日志时询问 policy───────▶        │                  │
-│                                                          ▼                  │
-│                                        ┌──────────────────────────────────┐ │
-│                                        │  SizeAndTimeBasedFNATP 触发器   │ │
-│                                        │  (按大小 %i 触发二次滚动)        │ │
-│                                        └──────────────────────────────────┘ │
-│                                                                             │
-│            图 13-6：Nacos 日志滚动触发链路示意                                 │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 日志滚动触发链路（TimeBasedRollingPolicy）</span><span class="s">RollingFileAppender          TimeBasedRollingPolicy (策略)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(Appender，日志落盘)   ▶   • fileNamePattern: *.%d{yyyy-MM-dd}</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">RollingCalendar</span><span class="s">(周期判定：今天≠昨天？)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SizeAndTimeBasedFNATP 触发器</span><span class="s">(按大小 %i 触发二次滚动)</span></div><div class="dgm-box-b"></div></div></div>
 
 上图展示了 Nacos 日志从"写入"到"滚动归档"的完整链路：`RollingFileAppender` 每次写日志前会询问 `TimeBasedRollingPolicy` 是否已跨越滚动周期；若跨越（如当天首次写入、或当前活跃文件达到指定大小），则由 `RolloverStrategy` 将当前文件重命名归档（必要时压缩为 `.gz`），同时按 `maxHistory` / `totalSizeCap` 清理最旧归档，最后创建新的活跃日志文件继续写入。
 
@@ -1201,34 +1059,7 @@ Nacos 集群的健康运行依赖定期巡检（Health Check Audit）——通�
 
 ### 核心类关系图（巡检维度与数据源映射）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│              Nacos 运维巡检：7 项必检项 与 数据来源映射                     │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  巡检项                    数据来源                   告警联动               │
-│  ┌──────────────┐   ┌────────────────────┐   ┌──────────────────────┐     │
-│  │ 集群状态      │◀──│ v1/core/cluster/   │   │ NodeDown 告警         │     │
-│  │ 节点 UP?      │   │ nodes               │   │ (13.4 Rule 2)         │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ gRPC 连接数   │◀──│ ConnectionManager  │   │ HighGrpcConnections   │     │
-│  │ <80%上限?     │   │ (currentClients)   │   │ (13.4 Rule 1)         │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ JVM 堆内存    │◀──│ jstat/jmap          │   │ HighHeapMemory        │     │
-│  │ Old<85%?      │   │ (JVM 进程)          │   │ (13.4 Rule 4)         │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ MySQL 连接池  │◀──│ HikariCP MBean      │   │ (DB 健康指示器)        │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ 磁盘使用率    │◀──│ df -h 磁盘          │   │ 磁盘满 → 全部日志异常  │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ Raft 日志增长 │◀──│ raft/ns/default/    │   │ Raft Snapshot 失败     │     │
-│  ├──────────────┤   ├────────────────────┤   ├──────────────────────┤     │
-│  │ ERROR 日志    │◀──│ nacos-cluster.log  │   │ 各 ERROR 关联告警       │     │
-│  └──────────────┘   └────────────────────┘   └──────────────────────┘     │
-│                                                                             │
-│            图 13-7：7 项巡检必检项与数据来源/告警联动映射                      │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 运维巡检：7 项必检项 与 数据来源映射</span><span class="s">巡检项                    数据来源                   告警联动</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-7：7 项巡检必检项与数据来源/告警联动映射</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">deDown 告警</span><span class="s">(13.4 Rule 2)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ighGrpcConnections</div><div class="dgm-note" style="border:none;background:none;padding:0;">(13.4 Rule 1)</div><div class="dgm-note" style="border:none;background:none;padding:0;">HighHeapMemory</div><div class="dgm-note" style="border:none;background:none;padding:0;">(13.4 Rule 4)</div><div class="dgm-note" style="border:none;background:none;padding:0;">(DB 健康指示器)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 全部日志异常</div><div class="dgm-note" style="border:none;background:none;padding:0;">aft Snapshot 失败</div><div class="dgm-note" style="border:none;background:none;padding:0;">各 ERROR 关联告警</div></div></div></div></div></div>
 
 上图将 7 项巡检项分别映射到"数据来源"与"对应告警规则"，直观体现**巡检（主动预防）与告警（被动兜底）的互补关系**：巡检项发现的是"接近阈值但尚未越线"的存量风险；一旦越线被指标捕获，则由 13.4 节的对应规则告警。运维可据此将巡检脚本中的判定阈值与告警规则阈值保持口径一致，避免"巡检说正常、告警却触发"的矛盾。
 
@@ -1473,37 +1304,7 @@ Nacos 运维中，快速排查问题依赖一套熟练的运维命令集——�
 
 ### 核心类关系图（运维命令三引擎与故障定位路径）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│             Nacos 运维命令速查：三引擎 与 故障定位路径                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  故障现象 ──▶  定位入口 ──▶  命令引擎 ──▶  关键输出 ──▶  结论               │
-│                                                                             │
-│  ┌────────┐   ┌──────────┐   ┌──────────────┐   ┌──────────────┐           │
-│  │节点异常 │──▶│ HTTP API │   │ v1/core/     │   │ nodes: UP     │──▶ 节点  │
-│  │        │   │ 引擎     │   │ cluster/nodes │   │ / DOWN        │   状态   │
-│  ├────────┤   │(REST/OpenAPI)└──────────────┘   └──────────────┘           │
-│  │连接打满 │──▶│          │   ┌──────────────┐   ┌──────────────┐           │
-│  ├────────┤   │          │──▶│ v1/core/     │   │ client 列表    │──▶ 连接  │
-│  │注册失败 │──▶│          │   │ client/list  │   │ 与连接数       │  详情   │
-│  └────────┘   └────┬─────┘   └──────────────┘   └──────────────┘           │
-│                     │                                                        │
-│  ┌────────┐   ┌────▼─────┐   ┌──────────────┐   ┌──────────────┐           │
-│  │ERROR高  │──▶│ Shell 日志│   │ tail/grep/awk│   │ 命中关键字     │──▶ 根因  │
-│  ├────────┤   │ 引擎     │   │ 统计/过滤     │   │ 频次 TOP       │  定位    │
-│  │推送慢  │──▶│(日志分析) │   └──────────────┘   └──────────────┘           │
-│  └────────┘   └────┬─────┘                                                    │
-│                     │                                                        │
-│  ┌────────┐   ┌────▼─────┐   ┌──────────────┐   ┌──────────────┐           │
-│  │Full GC │──▶│ JVM 诊断 │   │ jstat/jstack │   │ O% / 线程栈    │──▶ 瓶颈  │
-│  ├────────┤   │ 引擎     │   │ jmap/async-  │   │ 对象分布/热点   │  确认    │
-│  │线程卡死 │──▶│(JDK工具) │   │ profiler     │   └──────────────┘           │
-│  └────────┘   └──────────┘   └──────────────┘                               │
-│                                                                             │
-│            图 13-8：运维命令三引擎与故障定位路径                               │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 运维命令速查：三引擎 与 故障定位路径</span><span class="s">故障现象 ▶  定位入口 ▶  命令引擎 ▶  关键输出 ▶  结论</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-8：运维命令三引擎与故障定位路径</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">TP API</span><span class="s">引擎</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(REST/Open</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Shell 日志</span><span class="s">引擎</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">分析)</div></div></div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">stat/jstack</span><span class="s">map/async-</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">iler</div></div></div></div></div></div>
 
 三类命令引擎在故障定位中承担不同角色：**HTTP API 引擎**回答"集群当前是什么状态"（事实层），**Shell 日志引擎**回答"发生了什么"（事件层），**JVM 诊断引擎**回答"为什么会这样"（根因层）。实际排查时通常按"事实→事件→根因"的顺序逐层深入，避免跳过中间层导致误判。
 
@@ -1738,29 +1539,7 @@ Nacos 集群长期运行过程中，会积累历史配置数据（`his_config_in
 
 ### 核心类关系图（定期任务与存储对象映射）
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  Nacos 定期运维任务：对象 / 动作 / 存储位置                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│  任务                清理对象              存储位置              触发方式    │
-│  ┌──────────────┐   ┌────────────────┐   ┌────────────────────────┐        │
-│  │ 历史配置清理  │──▶│ his_config_info│   │ MySQL 数据库            │──▶ SQL  │
-│  │  (config)     │   │ (历史版本)      │   │ (persistence)          │   删除 │
-│  ├──────────────┤   ├────────────────┤   ├────────────────────────┤        │
-│  │ 过期实例清理  │──▶│ 临时实例 (v2)   │   │ 内存 ServiceManager     │──▶ Java │
-│  │  (naming)     │   │ (心跳超时)     │   │ 注册表                  │  清理  │
-│  ├──────────────┤   ├────────────────┤   ├────────────────────────┤        │
-│  │ Raft 日志压缩 │──▶│ Raft 日志       │   │ data/protocol/raft/    │──▶ Raft │
-│  │ (Snapshot)    │   │ (已 compaction)│   │ ns/{group}/            │  Snaps │
-│  ├──────────────┤   ├────────────────┤   ├────────────────────────┤        │
-│  │ 日志文件轮转  │──▶│ logs/*.log     │   │ ${nacos.home}/logs/    │──▶Logback│
-│  │ (TimeBased)   │   │ (滚动归档)     │   │ *.%d{yyyy-MM-dd}.gz    │  滚动   │
-│  └──────────────┘   └────────────────┘   └────────────────────────┘        │
-│                                                                             │
-│            图 13-9：四类定期运维任务与存储对象映射                             │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 定期运维任务：对象 / 动作 / 存储位置</span><span class="s">任务                清理对象              存储位置              触发方式</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-9：四类定期运维任务与存储对象映射</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">L 数据库             ▶ SQ</span><span class="s">persistence)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">iceManager      ▶ Java</div><div class="dgm-note" style="border:none;background:none;padding:0;">表                     清理</div><div class="dgm-note" style="border:none;background:none;padding:0;">a/protocol/raft/     ▶</div><div class="dgm-note" style="border:none;background:none;padding:0;">ns/{group}/</div><div class="dgm-note" style="border:none;background:none;padding:0;">cos.home}/logs/     ▶L</div><div class="dgm-note" style="border:none;background:none;padding:0;">%d{yyyy-MM-dd}.gz</div></div></div></div></div></div>
 
 上图按"清理对象 → 存储位置 → 触发方式"三个维度梳理四类定期任务。它们的共同点是处理"随时间无限增长"的数据：历史配置与 Raft 日志若不清理会撑爆数据库与磁盘，临时实例残留会造成注册表膨胀，日志文件会耗尽磁盘空间。因此定期任务的核心目标是**控制数据规模的持续膨胀**，属于典型的容量治理范畴。
 
@@ -2813,37 +2592,7 @@ rate(hikaricp_connection_timeout_total{job="nacos"}[5m]) * 60
 
 ### Grafana Dashboard Row 布局推荐
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│ Row 1: 连接层                                                      │
-│ ┌──────────────────────┐  ┌──────────────────────┐                │
-│ │ Panel 1: gRPC 连接数│  │ Panel 8: gRPC 推送延迟│               │
-│ └──────────────────────┘  └──────────────────────┘                │
-├──────────────────────────────────────────────────────────────────┤
-│ Row 2: 服务层                                                      │
-│ ┌──────────────────────┐  ┌──────────────────────┐                │
-│ │ Panel 2: 服务/实例数 │  │ Panel 7: Distro 同步  │               │
-│ └──────────────────────┘  └──────────────────────┘                │
-│ ┌──────────────────────┐  ┌──────────────────────┐                │
-│ │ Panel 6: 健康检查耗时│  │ Panel 10: Raft Leader │               │
-│ └──────────────────────┘  └──────────────────────┘                │
-├──────────────────────────────────────────────────────────────────┤
-│ Row 3: 配置层                                                      │
-│ ┌──────────────────────┐  ┌──────────────────────┐                │
-│ │ Panel 3: 配置速率    │  │ Panel 9: Long Polling│               │
-│ └──────────────────────┘  └──────────────────────┘                │
-├──────────────────────────────────────────────────────────────────┤
-│ Row 4: JVM 层                                                       │
-│ ┌──────────────────────┐  ┌──────────────────────┐                │
-│ │ Panel 4: JVM 堆内存 │  │ Panel 5: GC 暂停分布│               │
-│ └──────────────────────┘  └──────────────────────┘                │
-├──────────────────────────────────────────────────────────────────┤
-│ Row 5: 数据库层                                                     │
-│ ┌──────────────────────┐                                           │
-│ │ Panel 11: MySQL 连接池│                                          │
-│ └──────────────────────┘                                           │
-└──────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Row 1: 连接层</span><span class="s">Row 2: 服务层</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">Row 3: 配置层</div><div class="dgm-note" style="border:none;background:none;padding:0;">Row 4: JVM 层</div><div class="dgm-note" style="border:none;background:none;padding:0;">Row 5: 数据库层</div><div class="dgm-note" style="border:none;background:none;padding:0;">Panel 11: MySQL 连接池</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">el 8: gRPC 推送延迟</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">l 7: Distro 同步</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">10: Raft Leader</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">el 9: Long Polling</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">el 5: GC 暂停分布</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 小结
 
@@ -3399,8 +3148,7 @@ async-profiler -d 30 -e cpu -f /tmp/nacos_cpu_flamegraph.html <nacos_pid>
 ```
 
 **火焰图解读**（自上而下）：
-```
-100% CPU
+<div class="dgm"><div class="dgm-tree">100% CPU
 ├── 62.3% GrpcBiStreamRequestAcceptor.processRequest()
 │   ├── 45.1% GrpcConnection.request()
 │   │   └── 38.2% gRPC writeAndFlush()  ← gRPC 写入阻塞（客户端消费慢）
@@ -3409,8 +3157,7 @@ async-profiler -d 30 -e cpu -f /tmp/nacos_cpu_flamegraph.html <nacos_pid>
 ├── 21.5% DistroClientDataProcessor.process()
 │   └── 18.3% DistroHttpClient.syncData()  ← Distro HTTP 同步阻塞
 └── 16.2% HealthCheckTask.run()
-    └── 12.1% InstanceOperatorClientImpl.listAllInstances()  ← 健康检查全量遍历
-```
+    └── 12.1% InstanceOperatorClientImpl.listAllInstances()  ← 健康检查全量遍历</div></div>
 
 **根因分析**：
 1. **gRPC 线程池饱和**：`grpc-default-worker-ELG` 线程池默认大小 = CPU 核数 × 2（如 8 核 → 16 线程），业务高峰时段涌入大量推送请求 → 线程池饱和 → 新推送请求排队

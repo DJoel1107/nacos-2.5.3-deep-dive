@@ -16,71 +16,7 @@ Nacos 2.5.3 将持久化层从 `config` 模块中独立抽取为 `persistence/` 
 
 图 6-1 展示了 `persistence/` 模块的顶层架构——`DataSourceService` 接口及其两大实现（`LocalDataSourceServiceImpl`/`ExternalDataSourceServiceImpl`），`DatasourceConfiguration` 通过条件注入选择实现，`PaginationHelper` 分页抽象，`ModifyRequest`/`SelectRequest` SQL 构造模型：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              persistence/ 模块顶层架构                           │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │          DatasourceConfiguration                       │   │
-│  │  ┌────────────────────────────────────────────────────┐  │   │
-│  │  │ @ConditionOnEmbeddedStorage → LocalDataSource     │   │
-│  │  │ @ConditionOnExternalStorage → ExternalDataSource   │   │
-│  │  │ @ConditionStandaloneEmbedStorage → Local+External │   │
-│  │  │ @ConditionDistributedEmbedStorage → External     │   │
-│  │  └────────────────────────────────────────────────────┘  │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│        │                                                      │
-│        ▼                                                      │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │         <<interface>> DataSourceService               │   │
-│  │  ├─ init(): void                                      │   │
-│  │  ├─ reload(): void                                   │   │
-│  │  ├─ checkMasterWritable(): boolean                    │   │
-│  │  ├─ getJdbcTemplate(): JdbcTemplate                 │   │
-│  │  ├─ getTransactionTemplate(): TransactionTemplate       │   │
-│  │  ├─ getCurrentDbUrl(): String                        │   │
-│  │  ├─ getHealth(): String                              │   │
-│  │  └─ getDataSourceType(): String                       │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│        △                              △                       │
-│        │                              │                       │
-│  ┌─────┴──────────────────┐  ┌────────┴──────────────────┐   │
-│  │ LocalDataSource       │  │ ExternalDataSource         │   │
-│  │ ServiceImpl          │  │ ServiceImpl               │   │
-│  │ (Derby 嵌入式)      │  │ (MySQL 外部)             │   │
-│  │ ├─ init(): 初始化    │  │ ├─ init(): HikariCP 池  │   │
-│  │ │   Derby 数据库     │  │ │   连接初始化          │   │
-│  │ ├─ reload(): 重载   │  │ ├─ reload(): 重载配置  │   │
-│  │ └─ getHealth()      │  │ └─ getHealth()           │   │
-│  └──────────────────────┘  └──────────────────────────────┘   │
-│                                                                │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  PaginationHelper<T> (abstract)                       │   │
-│  │  ├─ paginate(pageNo, pageSize, criteria): Page<T>  │   │
-│  │  ├─ findAll(criteria): List<T>                       │   │
-│  │  ├─ findOne(criteria): T                            │   │
-│  │  ├─ count(criteria): int                             │   │
-│  │  ├─ insert(entity): Boolean                           │   │
-│  │  ├─ update(entity): Boolean                           │   │
-│  │  └─ delete(entity): Boolean                           │   │
-│  │        △                              △               │   │
-│  │        │                              │               │   │
-│  │  ┌─────┴────────────┐  ┌──────────┴────────────┐   │   │
-│  │  │ EmbeddedPagination│  │ ExternalStorage         │   │   │
-│  │  │ HelperImpl       │  │ PaginationHelperImpl    │   │   │
-│  │  │ (Derby LIMIT     │  │ (MySQL LIMIT/OFFSET)  │   │   │
-│  │  │  OFFSET 语法)   │  │                        │   │   │
-│  │  └─────────────────┘  └────────────────────────────┘   │   │
-│  └──────────────────────────────────────────────────────────┘   │
-│                                                                │
-│  SQL 构造模型:                                                │
-│  ┌──────────────────────────────────────────────────────────┐   │
-│  │  ModifyRequest → INSERT/UPDATE/DELETE                  │   │
-│  │  SelectRequest → SELECT + WHERE + ORDER BY + LIMIT    │   │
-│  │  QueryType → 枚举（INSERT/UPDATE/DELETE/SELECT）      │   │
-│  └──────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence/ 模块顶层架构</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">@ConditionOnEmbeddedStorage → LocalDataSource</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnExternalStorage → ExternalDataSource</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionStandaloneEmbedStorage → Local+External</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionDistributedEmbedStorage → External</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(Derby 嵌入式)           (</div><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: 初始化</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Derby 数据库</div><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: 重载</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth()</div><div class="dgm-note" style="border:none;background:none;padding:0;">PaginationHelper&lt;T&gt; (a</div><div class="dgm-note" style="border:none;background:none;padding:0;">paginate(pageNo, pa</div><div class="dgm-note" style="border:none;background:none;padding:0;">findAll(criteria):</div><div class="dgm-note" style="border:none;background:none;padding:0;">findOne(criteria):</div><div class="dgm-note" style="border:none;background:none;padding:0;">count(criteria): in</div><div class="dgm-note" style="border:none;background:none;padding:0;">insert(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">update(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">delete(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">△</div><div class="dgm-note" style="border:none;background:none;padding:0;">EmbeddedPagination</div><div class="dgm-note" style="border:none;background:none;padding:0;">HelperImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Derby LIMIT</div><div class="dgm-note" style="border:none;background:none;padding:0;">OFFSET 语法)</div></div></div><div class="dgm-note">SQL 构造模型:</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest → INSERT/UPDATE/DELETE</span><span class="s">SelectRequest → SELECT + WHERE + ORDER BY + LIMIT</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">QueryType → 枚举（INSERT/UPDATE/DELETE/SELECT）</div></div></div></div>
 
 ### 6.1.3 源码走读
 
@@ -134,34 +70,7 @@ Nacos 2.5.3 将持久化层从 `config` 模块独立抽取为 `persistence/` 独
 
 图 6-2 展示了 `DatasourceConfiguration` 通过 `@Condition` 条件注解自动选择数据源实现的机制：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              DatasourceConfiguration                        │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ @Bean                                              │  │
-│  │ @ConditionOnEmbeddedStorage                         │  │
-│  │ localDataSourceService(): LocalDataSourceServiceImpl  │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ @Bean                                              │  │
-│  │ @ConditionOnExternalStorage                         │  │
-│  │ externalDataSourceService(): ExternalDataSourceService │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │                              │
-        │ @ConditionOnXxx               │ @ConditionOnXxx
-        ▼                              ▼
-┌──────────────────────────────────────────────────────────────┐
-│  Condition 条件注解映射表                                  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ 配置项: spring.datasource.platform                 │  │
-│  │ ├─ "" (空)         → @ConditionOnEmbeddedStorage  │  │
-│  │ ├─ "derby"          → @ConditionOnEmbeddedStorage  │  │
-│  │ ├─ "mysql"          → @ConditionOnExternalStorage  │  │
-│  │ ├─ "distributed"    → @ConditionDistributedEmbed   │  │
-│  │ └─ 未配置(standalone)→ @ConditionStandaloneEmbed   │  │
-│  └──────────────────────────────────────────────────────┘  │
-└──────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">@Bean</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnEmbeddedStorage</div><ul class="dgm-kv"><li><span class="fld">localDataSourceService()</span><span class="typ">: LocalDataSourceServiceImpl</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">@Bean</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnExternalStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">externalDataSourceService(): ExternalDataSourceService</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Condition 条件注解映射表</span><span class="s">配置项: spring.datasource.platform</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">"" (空)         → @ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"derby"          → @ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"mysql"          → @ConditionOnExternalStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"distributed"    → @ConditionDistributedEmbed</div><div class="dgm-note" style="border:none;background:none;padding:0;">未配置(standalone)→ @ConditionStandaloneEmbed</div></div></div></div>
 
 ### 6.2.3 源码走读
 
@@ -249,44 +158,7 @@ Nacos 2.5.3 选择 `@Condition` 而非 Spring Profiles：`@Condition.matches()` 
 
 图 6-3 展示了 `DataSourceService` 接口与 `DynamicDataSource` 的关系：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│         <<interface>> DataSourceService                    │
-│  ├─ init(): void                                         │
-│  ├─ reload(): void                                      │
-│  ├─ checkMasterWritable(): boolean                       │
-│  ├─ getJdbcTemplate(): JdbcTemplate                    │
-│  ├─ getTransactionTemplate(): TransactionTemplate          │
-│  ├─ getCurrentDbUrl(): String                           │
-│  ├─ getHealth(): String                                 │
-│  └─ getDataSourceType(): String                          │
-└────────────────────────────────────────────────────────────────┘
-        △                              △
-        │                              │
-┌───────┴──────────────────┐  ┌────────┴──────────────────────┐
-│ LocalDataSource         │  │ ExternalDataSource             │
-│ ServiceImpl            │  │ ServiceImpl                   │
-│ ├─ jdbcTemplate       │  │ ├─ jdbcTemplate: JdbcTemplate│
-│ ├─ transactionTemplate │  │ ├─ transactionTemplate       │
-│ ├─ init():           │  │ ├─ init():                  │
-│ │   Derby JDBC 连接    │  │ │   HikariCP 连接池初始化  │
-│ ├─ reload():         │  │ ├─ reload():                │
-│ │   重载 Derby 配置   │  │ │   重载 HikariCP 配置     │
-│ └─ getHealth():      │  │ └─ getHealth():             │
-│    Derby 连接健康检查  │  │    MySQL 连接健康检查        │
-└──────────────────────┘  └──────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│              DynamicDataSource                             │
-│  extends AbstractRoutingDataSource                        │
-│  ├─ determineCurrentLookupKey(): String                  │
-│  │   → LookupContextHolder.getLookupKey()              │
-│  ├─ masterDataSource: DataSource                        │
-│  ├─ slaveDataSource: DataSource                         │
-│  └─ afterPropertiesSet(): 初始化主从数据源              │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">jdbcTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">transactionTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">Derby JDBC 连接</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">重载 Derby 配置</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">Derby 连接健康检查</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DynamicDataS</span><span class="s">extends AbstractRoutingD</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">determineCurrentLooku</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LookupContextHolde</div><ul class="dgm-kv"><li><span class="fld">masterDataSource</span><span class="typ">: Dat</span></li></ul><ul class="dgm-kv"><li><span class="fld">slaveDataSource</span><span class="typ">: Data</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">afterPropertiesSet():</div></div></div></div></div></div>
 
 ### 6.3.3 源码走读
 
@@ -372,39 +244,7 @@ Nacos 2.5.3 选择嵌入式 Derby 而非 H2 的核心原因：Apache Derby 与 N
 
 图 6-4 展示了 `LocalDataSourceServiceImpl` 的嵌入式 Derby 初始化流程：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              LocalDataSourceServiceImpl                      │
-│  implements DataSourceService                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ - jdbcTemplate: JdbcTemplate                       │  │
-│  │ - transactionTemplate: TransactionTemplate           │  │
-│  │ - dataSource: DataSource                          │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ init():                                           │  │
-│  │   STEP 1: DriverManager.getConnection(DERBY_URL)  │  │
-│  │   STEP 2: new JdbcTemplate(dataSource)            │  │
-│  │   STEP 3: new TransactionTemplate(txManager)       │  │
-│  │   STEP 4: 执行 Derby 初始化 SQL (CREATE TABLE)    │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ reload():                                         │  │
-│  │   → 关闭旧连接 → 重新 getConnection()             │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ getHealth():                                      │  │
-│  │   → jdbcTemplate.queryForObject("SELECT 1", ...) │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │
-        │ Derby JDBC URL: jdbc:derby:{derby.home}/data;create=true
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│  Derby 嵌入式数据库                                      │
-│  ├─ 数据文件: ~/nacos/data/derby/                       │
-│  ├─ 表结构: config_info, his_config_info, users, roles, │
-│  │          permissions, tenant_info, tenant_capacity       │
-│  └─ 单连接写入（嵌入式 Derby 限制）                     │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSource: DataSource</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: DriverManager.getConnection(DERBY_URL)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: new JdbcTemplate(dataSource)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: new TransactionTemplate(txManager)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: 执行 Derby 初始化 SQL (CREATE TABLE)</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 关闭旧连接 → 重新 getConnection()</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.queryForObject("SELECT 1", ...)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库</span><span class="s">数据文件: ~/nacos/data/derby/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">表结构: config_info, his_config_info, users, roles,</div><div class="dgm-note" style="border:none;background:none;padding:0;">permissions, tenant_info, tenant_capacity</div><div class="dgm-note" style="border:none;background:none;padding:0;">单连接写入（嵌入式 Derby 限制）</div></div></div></div>
 
 ### 6.4.3 源码走读
 
@@ -492,45 +332,7 @@ Nacos 2.5.3 选择嵌入式 Derby 而非 H2 的核心原因：Apache Derby 是 A
 
 图 6-5 展示了 `ExternalDataSourceServiceImpl` 通过 HikariCP 连接池管理 MySQL 连接的架构：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              ExternalDataSourceServiceImpl                    │
-│  implements DataSourceService                              │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ - jdbcTemplate: JdbcTemplate                       │  │
-│  │ - transactionTemplate: TransactionTemplate           │  │
-│  │ - dataSource: HikariDataSource                     │  │
-│  │ - poolProperties: DataSourcePoolProperties         │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ init():                                           │  │
-│  │   STEP 1: HikariDataSource ds = new HikariDS()    │  │
-│  │   STEP 2: ds.setJdbcUrl(url)                     │  │
-│  │   STEP 3: ds.setUsername(username)                 │  │
-│  │   STEP 4: ds.setPassword(password)                 │  │
-│  │   STEP 5: ds.setMaximumPoolSize(maxPoolSize)      │  │
-│  │   STEP 6: ds.setMinimumIdle(minIdle)             │  │
-│  │   STEP 7: ds.setConnectionTimeout(connTimeout)     │  │
-│  │   STEP 8: jdbcTemplate = new JdbcTemplate(ds)     │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ getHealth():                                      │  │
-│  │   → jdbcTemplate.queryForObject("SELECT 1", ...) │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │
-        │ HikariCP 连接池
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│  HikariDataSource                                         │
-│  ├─ jdbcUrl: jdbc:mysql://localhost:3306/nacos           │
-│  ├─ username: root                                       │
-│  ├─ password: ****                                       │
-│  ├─ maximumPoolSize: 20                                  │
-│  ├─ minimumIdle: 10                                     │
-│  ├─ connectionTimeout: 30000                             │
-│  ├─ idleTimeout: 600000                                │
-│  └─ maxLifetime: 1800000                               │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSource: HikariDataSource</li><li>poolProperties: DataSourcePoolProperties</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: HikariDataSource ds = new HikariDS()</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: ds.setJdbcUrl(url)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: ds.setUsername(username)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: ds.setPassword(password)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 5: ds.setMaximumPoolSize(maxPoolSize)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 6: ds.setMinimumIdle(minIdle)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 7: ds.setConnectionTimeout(connTimeout)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 8: jdbcTemplate = new JdbcTemplate(ds)</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.queryForObject("SELECT 1", ...)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HikariDataSource</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcUrl</span><span class="typ">: jdbc:mysql://localhost:3306/nacos</span></li></ul><ul class="dgm-kv"><li><span class="fld">username</span><span class="typ">: root</span></li></ul><ul class="dgm-kv"><li><span class="fld">password</span><span class="typ">: ****</span></li></ul><ul class="dgm-kv"><li><span class="fld">maximumPoolSize</span><span class="typ">: 20</span></li></ul><ul class="dgm-kv"><li><span class="fld">minimumIdle</span><span class="typ">: 10</span></li></ul><ul class="dgm-kv"><li><span class="fld">connectionTimeout</span><span class="typ">: 30000</span></li></ul><ul class="dgm-kv"><li><span class="fld">idleTimeout</span><span class="typ">: 600000</span></li></ul><ul class="dgm-kv"><li><span class="fld">maxLifetime</span><span class="typ">: 1800000</span></li></ul></div></div></div>
 
 ### 6.5.3 源码走读
 
@@ -606,35 +408,7 @@ Nacos 2.5.3 选择 HikariCP 而非 DBCP2 的核心原因：HikariCP 是 Spring B
 
 图 6-6 展示了 `PaginationHelper<T>` 抽象基类与 `EmbeddedPaginationHelperImpl` 的分页机制：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│           PaginationHelper<T> (abstract)                    │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ + paginate(int pageNo, int pageSize, T criteria)  │  │
-│  │     → Page<T> (分页查询)                         │  │
-│  │ + findAll(T criteria) → List<T>                   │  │
-│  │ + findOne(T criteria) → T                         │  │
-│  │ + count(T criteria) → int                          │  │
-│  │ + insert(T entity) → Boolean                       │  │
-│  │ + update(T entity) → Boolean                       │  │
-│  │ + delete(T entity) → Boolean                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        △                              △
-        │                              │
-┌───────┴──────────────────┐  ┌────────┴──────────────────────┐
-│ EmbeddedPagination      │  │ ExternalStorage               │
-│ HelperImpl             │  │ PaginationHelperImpl          │
-│ ├─ paginate():       │  │ ├─ paginate():               │
-│ │   SELECT * FROM t   │  │ │   SELECT * FROM t         │
-│ │   OFFSET x ROWS   │  │ │   LIMIT x OFFSET y       │
-│ │   FETCH NEXT y     │  │ └─ count(): SELECT COUNT(*)  │
-│ │   ROWS ONLY        │  └──────────────────────────────┘
-│ ├─ count():          │
-│ │   SELECT COUNT(*)   │
-│ └────────────────────┘
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">PaginationHelper&lt;T&gt; (abstract)</span><span class="s">+ paginate(int pageNo, int pageSize, T criteria)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Page&lt;T&gt; (分页查询)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ findAll(T criteria) → List&lt;T&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ findOne(T criteria) → T</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ count(T criteria) → int</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ insert(T entity) → Boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ update(T entity) → Boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ delete(T entity) → Boolean</div></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EmbeddedPagination</span><span class="s">HelperImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">paginate():</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT * FROM t</div><div class="dgm-note" style="border:none;background:none;padding:0;">OFFSET x ROWS</div><div class="dgm-note" style="border:none;background:none;padding:0;">FETCH NEXT y</div><div class="dgm-note" style="border:none;background:none;padding:0;">ROWS ONLY</div><div class="dgm-note" style="border:none;background:none;padding:0;">count():</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT COUNT(*)</div></div></div></div>
 
 ### 6.6.3 源码走读
 
@@ -713,36 +487,7 @@ Nacos 2.5.3 选择嵌入式 Derby 用于单机和测试环境的核心原因：�
 
 图 6-7 展示了 `DatabaseOperate` 接口与 `ModifyRequest`/`SelectRequest` SQL DSL 的关系：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│          <<interface>> DatabaseOperate                      │
-│  ├─ executeModify(ModifyRequest): Boolean                 │
-│  ├─ executeQuery(SelectRequest): List<T>                 │
-│  ├─ executeCount(SelectRequest): int                      │
-│  └─ executeOne(SelectRequest): T                          │
-└────────────────────────────────────────────────────────────────┘
-        △
-        │ implements
-┌───────┴────────────────────────────────────────────────────────┐
-│            StandaloneDatabaseOperateImpl                    │
-│  ├─ jdbcTemplate: JdbcTemplate                           │
-│  ├─ executeModify(ModifyRequest):                        │
-│  │   → jdbcTemplate.update(sql, args)                   │
-│  └─ executeQuery(SelectRequest):                         │
-│      → jdbcTemplate.query(sql, args, rowMapper)          │
-└────────────────────────────────────────────────────────────────┘
-        │                              │
-        ▼                              ▼
-┌──────────────────────┐    ┌──────────────────────────────────┐
-│  ModifyRequest      │    │  SelectRequest                  │
-│  ├─ sql: String    │    │  ├─ selectColumns: String[]  │
-│  ├─ args: Object[] │    │  ├─ tableName: String        │
-│  ├─ tableName      │    │  ├─ whereClause: String      │
-│  └─ queryType      │    │  ├─ orderByClause: String    │
-│    (INSERT/UPDATE/  │    │  ├─ limitClause: String      │
-│     DELETE)        │    │  └─ queryType: QueryType      │
-└──────────────────────┘    └──────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DatabaseOperate</span><span class="s">executeModify(ModifyRequest): Boolean</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">executeQuery(SelectRequest): List&lt;T&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeCount(SelectRequest): int</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeOne(SelectRequest): T</div></div></div><div class="dgm-note">△          implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">StandaloneDatabaseOperateImpl</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcTemplate</span><span class="typ">: JdbcTemplate</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">executeModify(ModifyRequest):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.update(sql, args)</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeQuery(SelectRequest):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.query(sql, args, rowMapper)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">selectColumns</span><span class="typ">: String[]</span></li></ul><ul class="dgm-kv"><li><span class="fld">tableName</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">whereClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">orderByClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">limitClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">queryType</span><span class="typ">: QueryType</span></li></ul></div></div></div>
 
 ### 6.7.3 源码走读
 
@@ -833,22 +578,7 @@ Nacos 2.5.3 选择自研 SQL DSL 而非 MyBatis 的核心原因：`persistence/`
 
 图 6-8 展示了 `ExternalStoragePaginationHelperImpl` 基于 MySQL `LIMIT OFFSET` 分页语法：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│        ExternalStoragePaginationHelperImpl<T>               │
-│  extends PaginationHelper<T>                               │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ paginate(pageNo, pageSize, criteria): Page<T>      │  │
-│  │   SELECT * FROM t WHERE ... ORDER BY id            │  │
-│  │   LIMIT ? OFFSET ?                                │  │
-│  │   → jdbcTemplate.query(sql, args, rowMapper)      │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ count(criteria): int                               │  │
-│  │   SELECT COUNT(*) FROM t WHERE ...                 │  │
-│  │   → jdbcTemplate.queryForObject(sql, Integer.class)│  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">6.8.2</span><span class="tt">ExternalStoragePaginationHelperImpl 分页实现</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">ExternalStoragePaginationHelperImpl&lt;T&gt;</span><span class="s">extends PaginationHelper&lt;T&gt;</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">paginate(pageNo, pageSize, criteria): Page&lt;T&gt;</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>SELECT * FROM t WHERE … ORDER BY id LIMIT ? OFFSET ?</li><li>→ jdbcTemplate.query(sql, args, rowMapper)</li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">count(criteria): int</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>SELECT COUNT(*) FROM t WHERE …</li><li>→ jdbcTemplate.queryForObject(sql, Integer.class)</li></div></div></div></div></div></div>
 
 ### 6.8.3 源码走读
 
@@ -904,49 +634,7 @@ Nacos 2.5.3 选择数据库层分页而非应用程序内存分页的核心原�
 
 图 6-9 展示了 `ModifyRequest`/`SelectRequest` SQL 构造 DSL 的层次结构：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              ModifyRequest                                 │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ - sql: String          ← 最终构造的 SQL 语句       │  │
-│  │ - args: Object[]       ← 参数绑定数组              │  │
-│  │ - tableName: String    ← 操作表名                  │  │
-│  │ - queryType: QueryType ← INSERT/UPDATE/DELETE      │  │
-│  │ - SqlLimiter          ← SQL 操作限制器            │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ + getSql(): String                                 │  │
-│  │ + getArgs(): Object[]                              │  │
-│  │ + getQueryType(): QueryType                        │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│              SelectRequest                                 │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ - selectColumns: String[] ← SELECT 列名数组         │  │
-│  │ - tableName: String       ← FROM 表名               │  │
-│  │ - whereClause: String    ← WHERE 条件子句          │  │
-│  │ - orderByClause: String ← ORDER BY 排序子句       │  │
-│  │ - limitClause: String    ← LIMIT OFFSET 分句子句  │  │
-│  │ - queryType: QueryType   ← SELECT / COUNT           │  │
-│  ├──────────────────────────────────────────────────────┤  │
-│  │ + getSql(): String                                 │  │
-│  │ + getArgs(): Object[]                              │  │
-│  │ + getRowMapper(): RowMapper<T>                    │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│              QueryType (enum)                               │
-│  ├─ INSERT    → executeModify(modifyRequest)             │
-│  ├─ UPDATE    → executeModify(modifyRequest)             │
-│  ├─ DELETE    → executeModify(modifyRequest)             │
-│  ├─ SELECT    → executeQuery(selectRequest)               │
-│  └─ COUNT     → executeCount(selectRequest)               │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>sql: String          ← 最终构造的 SQL 语句</li><li>args: Object[]       ← 参数绑定数组</li><li>tableName: String    ← 操作表名</li><li>queryType: QueryType ← INSERT/UPDATE/DELETE</li><li>SqlLimiter          ← SQL 操作限制器</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ getSql(): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getArgs(): Object[]</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getQueryType(): QueryType</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>selectColumns: String[] ← SELECT 列名数组</li><li>tableName: String       ← FROM 表名</li><li>whereClause: String    ← WHERE 条件子句</li><li>orderByClause: String ← ORDER BY 排序子句</li><li>limitClause: String    ← LIMIT OFFSET 分句子句</li><li>queryType: QueryType   ← SELECT / COUNT</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ getSql(): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getArgs(): Object[]</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getRowMapper(): RowMapper&lt;T&gt;</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">QueryType (enum)</span><span class="s">INSERT    → executeModify(modifyRequest)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">UPDATE    → executeModify(modifyRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">DELETE    → executeModify(modifyRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT    → executeQuery(selectRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">COUNT     → executeCount(selectRequest)</div></div></div></div>
 
 ### 6.9.3 源码走读
 
@@ -1043,33 +731,7 @@ Nacos 2.5.3 选择 Builder DSL 而非 ORM 框架的核心原因：`persistence/`
 
 图 6-10 展示了 Derby 事件体系的导入/导出流程：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│                  NotifyCenter (事件总线)                     │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ publishEvent(event): void                           │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │                    │                    │
-        ▼                    ▼                    ▼
-┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐
-│ DerbyImport  │  │ DerbyLoad    │  │ RaftDbError         │
-│ Event       │  │ Event        │  │ Event                │
-│ ├─ snapshot  │  │ ├─ tableName │  │ ├─ errorMsg: String │
-│ └─ data: byte│  │ └─ data: List│  │ └─ exception: Throw │
-└──────────────┘  └──────────────┘  └──────────────────────┘
-        │                    │                    │
-        ▼                    ▼                    ▼
-┌──────────────────────────────────────────────────────────────┐
-│  JRaftProtocol.onEvent(DerbyImportEvent)               │
-│  ├─ onSnapshotLoad(snapshot):                           │
-│  │   → 从 Leader 拉取快照 → 写入本地 Derby            │
-│  ├─ onSnapshotSave(snapshot):                           │
-│  │   → 从本地 Derby 加载快照 → 发送给 Follower       │
-│  └─ onRaftDbError(event):                               │
-│      → 记录错误日志 + 触发快照重试                     │
-└──────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter (事件总线)</span><span class="s">publishEvent(event): void</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DerbyImport</span><span class="s">Event</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">snapshot</div><ul class="dgm-kv"><li><span class="fld">data</span><span class="typ">: byte</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaftProtoco</span><span class="s">onSnapsho</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从 Lead</div><div class="dgm-note" style="border:none;background:none;padding:0;">onSnapsho</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从本地 De</div><div class="dgm-note" style="border:none;background:none;padding:0;">onRaftDbE</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 记录错误日志</div></div></div></div></div></div>
 
 ### 6.10.3 源码走读
 
@@ -1144,24 +806,7 @@ Nacos 2.5.3 在 `persistence/` 模块中引入 `DatasourceMetrics`（`persistenc
 
 图 6-11 展示了 `DatasourceMetrics` 数据源监控指标：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              DatasourceMetrics                             │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ @Bean                                              │  │
-│  │ datasourceMetrics(MeterRegistry registry):          │  │
-│  │   ├─ Gauge.builder("datasource.health", ds,       │  │
-│  │   │    ds -> ds.getHealth())                      │  │
-│  │   ├─ Gauge.builder("datasource.active", ds,       │  │
-│  │   │    ds -> ds.getActiveConnections())           │  │
-│  │   ├─ Gauge.builder("datasource.idle", ds,         │  │
-│  │   │    ds -> ds.getIdleConnections())             │  │
-│  │   ├─ Gauge.builder("datasource.pending", ds,      │  │
-│  │   │    ds -> ds.getPendingConnections())           │  │
-│  │   └─ Timer.builder("datasource.query.time")         │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">6.11.2</span><span class="tt">DatasourceMetrics 数据源监控指标注册</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">DatasourceMetrics</span><span class="s">@Bean 装配</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">datasourceMetrics(MeterRegistry registry)</span></li></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">注册的 Gauge / Timer</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">Gauge "datasource.health"</span><span class="typ">→ ds.getHealth()</span></li><li><span class="fld">Gauge "datasource.active"</span><span class="typ">→ ds.getActiveConnections()</span></li><li><span class="fld">Gauge "datasource.idle"</span><span class="typ">→ ds.getIdleConnections()</span></li><li><span class="fld">Gauge "datasource.pending"</span><span class="typ">→ ds.getPendingConnections()</span></li><li><span class="fld">Timer "datasource.query.time"</span></li></div></div></div></div></div></div>
 
 ### 6.11.3 源码走读
 
@@ -1228,29 +873,7 @@ Nacos 2.5.3 选择 Micrometer + Prometheus 而非自定义日志监控的核心�
 
 图 6-12 展示了 `ConnectionCheckUtil` 和 `DatasourcePlatformUtil` 工具类：
 
-```
-┌────────────────────────────────────────────────────────────────┐
-│              ConnectionCheckUtil                            │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ static checkConnection(DataSource ds): boolean       │  │
-│  │   → try { ds.getConnection().createStatement()     │  │
-│  │          .execute("SELECT 1") } catch { return false}│  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-        │
-        ▼
-┌────────────────────────────────────────────────────────────────┐
-│            DatasourcePlatformUtil                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ static getPlatform(DataSource ds): String            │  │
-│  │   → DatabaseMetaData meta = ds.getConnection()       │  │
-│  │     .getMetaData()                                 │  │
-│  │   → meta.getDatabaseProductName()                  │  │
-│  │   → "Apache Derby" → return "derby"               │  │
-│  │   → "MySQL" → return "mysql"                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConnectionCheckUtil</span><span class="s">static checkConnection(DataSource ds): boolean</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ try { ds.getConnection().createStatement()</div><div class="dgm-note" style="border:none;background:none;padding:0;">.execute("SELECT 1") } catch { return false}</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourcePlatformUtil</span><span class="s">static getPlatform(DataSource ds): String</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ DatabaseMetaData meta = ds.getConnection()</div><div class="dgm-note" style="border:none;background:none;padding:0;">.getMetaData()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ meta.getDatabaseProductName()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ "Apache Derby" → return "derby"</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ "MySQL" → return "mysql"</div></div></div></div>
 
 ### 6.12.3 源码走读
 

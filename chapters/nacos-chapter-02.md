@@ -8,46 +8,7 @@ Nacos Naming 模块（naming/src/main/java/com/alibaba/nacos/naming/）是 Nacos
 
 **【核心类关系图】**
 
-```
-/* 图 2-1：Naming 模块 20 个子包全景架构（基于 Nacos 2.5.3 源码） */
-┌──────────────────────────────────────────────────────────────────────┐
-│                   Naming 模块核心分层                                │
-│                                                                   │
-│  ┌────────────────── HTTP/SDK 入口层 ──────────────────────────┐   │
-│  │ controllers/ (12)     remote/ (10)        interceptor/ (4)  │   │
-│  │ InstanceController    GrpcPushService       NamingInterceptor │   │
-│  │ CatalogController    RpcPushHandler                        │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                              │                                    │
-│  ┌────────────────── 核心业务层 (core.v2/ 64) ─────────────────┐   │
-│  │ ServiceManager        ClientManagerDelegate                  │   │
-│  │ EphemeralClientOperationServiceImpl（AP/Distro）            │   │
-│  │ PersistentClientOperationServiceImpl（CP/JRaft）            │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                              │                                    │
-│  ┌────────── 一致性协议层 ──────────┐                            │
-│  │ consistency/ephemeral/distro/v2/ (11)                       │   │
-│  │   DistroClientDataProcessor                                │   │
-│  │   DistroClientComponentRegistry                             │   │
-│  └────────────────────────────────┘                              │
-│  ┌────────── 健康检查层 ─────────────┐                         │
-│  │ healthcheck/ (36)                                        │   │
-│  │ HealthCheckProcessorV2Delegate                              │   │
-│  │ TcpSuperSenseProcessor                                     │   │
-│  │ ClientBeatCheckTaskV2                                     │   │
-│  └────────────────────────────────┘                              │
-│  ┌────────── 推送层 ───────────────────┐                         │
-│  │ push/ (23)                                               │   │
-│  │ PushService + PushHandlerFactory                             │   │
-│  └────────────────────────────────┘                              │
-│  ┌── 模型/监控/工具层 ─────────────────┐                        │
-│  │ model/ (8)    monitor/ (9)    misc/ (14)    utils/ (4)    │   │
-│  │ cluster/ (9)   selector/ (6)    constants/ (5)             │   │
-│  └──────────────────────────────────────────────────────────────┘   │
-│                                                                   │
-│  总计: 356 Java文件 | 20个子包 | v2重构核心: core.v2/ (64文件)    │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-1</span><span class="tt">Naming 模块 20 个子包全景架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Naming 模块核心分层</span><span class="s">HTTP/SDK 入口层</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">controllers/ (12)     remote/ (10)        interceptor/ (4)</div><div class="dgm-note" style="border:none;background:none;padding:0;">InstanceController    GrpcPushService       NamingInterceptor</div><div class="dgm-note" style="border:none;background:none;padding:0;">CatalogController    RpcPushHandler</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager        ClientManagerDelegate</span><span class="s">EphemeralClientOperationServiceImpl（AP/Distro）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PersistentClientOperationServiceImpl（CP/JRaft）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">consistency/ephemeral/distr</span><span class="s">DistroClientDataProcessor</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroClientComponentRegi</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">healthcheck/ (36)</span><span class="s">HealthCheckProcessorV2Delegat</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">TcpSuperSenseProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">ClientBeatCheckTaskV2</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">push/ (23)</span><span class="s">PushService + PushHandlerFactory</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">model/ (8)    monitor/ (9)</span><span class="s">cluster/ (9)   selector/ (6)</span></div><div class="dgm-box-b"></div></div></div>
 
 **【源码走读】**
 
@@ -173,42 +134,7 @@ Naming 模块的核心类以 HTTP REST API 端点 `InstanceController` 为入口
 
 **【核心类关系图】**
 
-```
-/* 图 2-2：Naming 模块核心类关系图（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────────┐
-│                       HTTP / gRPC 请求入口                         │
-│  ┌──────────────────────────────────────────────────────────────┐ │
-│  │              InstanceController (controllers/)               │ │
-│  │  · register(Instance)  → 服务注册                        │ │
-│  │  · list(namespace,service) → 服务发现                     │ │
-│  │  · beat(BeatInfo) → 心跳上报                            │ │
-│  └──────────────────────────┬───────────────────────────────┘ │
-│                             │                                   │
-│  ┌──────────────────────────▼───────────────────────────────┐ │
-│  │           ServiceManager (core/v2/)                      │ │
-│  │  · serviceMap: ConcurrentHashMap<namespace, Map<service,  │ │
-│  │    ServiceSingleton>>                                       │ │
-│  │  · getOrCreateService(namespace, service) →返回singleton│ │
-│  │  · getSingleton(service): Service（含ephemeral标志）    │ │
-│  └──────────────────────────┬───────────────────────────────┘ │
-│                             │                                   │
-│  ┌──────────────────────────▼───────────────────────────────┐ │
-│  │    ClientOperationService (core/v2/service/)              │ │
-│  │  · registerInstance(service, instance, clientId)             │ │
-│  │    ├─ ephemeral=true → EphemeralClientOperationServiceImpl │ │
-│  │    │                → Distro 去中心化同步（AP）           │ │
-│  │    └─ ephemeral=false → PersistentClientOperationServiceImpl│ │
-│  │                     → JRaft Leader 日志复制（CP）          │ │
-│  └──────────────────────────┬───────────────────────────────┘ │
-│                             │                                   │
-│  ┌──────────────────────────▼───────────────────────────────┐ │
-│  │              PushService (push/)                           │ │
-│  │  · push(service, instances, subscribers)                    │ │
-│  │    ├─ gRPC Bi-directional Stream (主力推送通道)           │ │
-│  │    └─ UDP 兼容推送（待淘汰）                             │ │
-│  └──────────────────────────────────────────────────────────────┘ │
-└────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-2</span><span class="tt">Naming 模块核心类关系图（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HTTP / gRPC 请求入口</span><span class="s">InstanceController (controllers/)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>register(Instance)  → 服务注册</li><li>list(namespace,service) → 服务发现</li><li>beat(BeatInfo) → 心跳上报</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager (core/v2/)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>serviceMap: ConcurrentHashMap&lt;namespace, Map&lt;service,</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">ServiceSingleton&gt;&gt;</div><ul class="dgm-kv"><li>getOrCreateService(namespace, service) →返回singleton</li><li>getSingleton(service): Service（含ephemeral标志）</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientOperationService (core/v2/service/)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance(service, instance, clientId)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">ephemeral=true → EphemeralClientOperationServiceImp</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Distro 去中心化同步（AP）</div><div class="dgm-note" style="border:none;background:none;padding:0;">ephemeral=false → PersistentClientOperationServiceI</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ JRaft Leader 日志复制（CP）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushService (push/)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>push(service, instances, subscribers)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Bi-directional Stream (主力推送通道)</div><div class="dgm-note" style="border:none;background:none;padding:0;">UDP 兼容推送（待淘汰）</div></div></div></div>
 
 **【源码走读】**
 
@@ -365,45 +291,7 @@ Naming 模块的核心类以 `InstanceController` → `ServiceManager` → `Clie
 
 **【核心类关系图】**
 
-```
-/* 图 2-3：InstanceController.register() 服务注册流程（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────────┐
-│  Client POST /v2/ns/instance                                     │
-│  Body: {serviceName, ip, port, ephemeral, weight, healthy, ...} │
-└─────────────────────────────┬──────────────────────────────────┘
-                              │
-┌─────────────────────────────▼──────────────────────────────────┐
-│  InstanceController.register()                                │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 1. parseInstance(): Instance → 解析请求参数            │   │
-│  │    · ip, port, serviceName, weight, healthy, cluster  │   │
-│  │    · metadata: Map<String,String>                     │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 2. NamingUtils.checkInstanceIsLegal() → 校验合法性    │   │
-│  │    · ip格式校验 (IPv4/IPv6)                          │   │
-│  │    · port范围 (0~65535)                              │   │
-│  │    · weight 范围 (0~10000)                           │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 3. ServiceManager.getInstance().getSingleton(service)   │   │
-│  │    → Service.isEphemeral() → AP/CP路由决策           │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 4. ClientOperationService.registerInstance(             │   │
-│  │      service, instance, clientId)                       │   │
-│  │    ├─ ephemeral=true → EphemeralClientOperationServiceImpl│   │
-│  │    │   client.addServiceInstance(singleton, instanceInfo)│   │
-│  │    └─ ephemeral=false → PersistentClientOperationServiceImpl│
-│  │        → JRaft Leader 日志复制                         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 5. NotifyCenter.publishEvent(                          │   │
-│  │      ClientRegisterServiceEvent)                        │   │
-│  │    → DistroClientDataProcessor → Distro去中心化同步    │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-3</span><span class="tt">InstanceController.register() 服务注册流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client POST /v2/ns/instance</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Body</span><span class="typ">: {serviceName, ip, port, ephemeral, weight, healthy, ...}</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceController.register()</span><span class="s">1. parseInstance(): Instance → 解析请求参数</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ip, port, serviceName, weight, healthy, cluster</li><li>metadata: Map&lt;String,String&gt;</li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">2. NamingUtils.checkInstanceIsLegal() → 校验合法性</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ip格式校验 (IPv4/IPv6)</li><li>port范围 (0~65535)</li><li>weight 范围 (0~10000)</li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3. ServiceManager.getInstance().getSingleton(service)</span><span class="s">→ Service.isEphemeral() → AP/CP路由决策</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">4. ClientOperationService.registerInstance(</span><span class="s">service, instance, clientId)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ephemeral=true → EphemeralClientOperationServiceIm</div><div class="dgm-note" style="border:none;background:none;padding:0;">client.addServiceInstance(singleton, instanceInfo</div><div class="dgm-note" style="border:none;background:none;padding:0;">ephemeral=false → PersistentClientOperationService</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ JRaft Leader 日志复制</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">5. NotifyCenter.publishEvent(</span><span class="s">ClientRegisterServiceEvent)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ DistroClientDataProcessor → Distro去中心化同步</div></div></div></div>
 
 **【源码走读】**
 
@@ -535,32 +423,7 @@ public void registerInstance(Service service, Instance instance, String clientId
 
 **【核心类关系图】**
 
-```
-/* 图 2-4：ServiceManager 服务注册表核心数据结构（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│                    ServiceManager (单例)                       │
-│  ┌──────────────────────────────────────────────────────────┐ │
-│  │  namespaceMap: ConcurrentHashMap<                       │ │
-│  │    String namespace,                                   │ │
-│  │    Map<String, ServiceSingleton>                       │ │
-│  │  >                                                   │ │
-│  │                                                      │ │
-│  │  "public" ───► Map<String, ServiceSingleton>           │ │
-│  │                ├── "DEFAULT_GROUP@@nacos" → Singleton1 │ │
-│  │                ├── "DEFAULT_GROUP@@order" → Singleton2 │ │
-│  │                └── "MY_GROUP@@payment" → Singleton3    │ │
-│  │                                                      │ │
-│  │  "dev"    ───► Map<String, ServiceSingleton>           │ │
-│  │                └── "DEFAULT_GROUP@@nacos" → Singleton4 │ │
-│  └──────────────────────────────────────────────────────────┘ │
-│                                                             │
-│  核心方法:                                                  │
-│  · getOrCreateService(namespace, service) → ServiceSingleton│
-│  · getSingleton(service) → ServiceSingleton                │
-│  · removeSingleton(service) → remove                       │
-│  · getAllNamespaces() → Set<String>                      │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-4</span><span class="tt">ServiceManager 服务注册表核心数据结构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager (单例)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">namespaceMap</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">String namespace,</div><div class="dgm-note" style="border:none;background:none;padding:0;">Map&lt;String, ServiceSingleton&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"public" ► Map&lt;String, ServiceSingleton&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"DEFAULT_GROUP@@nacos" → Singleton1</div><div class="dgm-note" style="border:none;background:none;padding:0;">"DEFAULT_GROUP@@order" → Singleton2</div><div class="dgm-note" style="border:none;background:none;padding:0;">"MY_GROUP@@payment" → Singleton3</div><div class="dgm-note" style="border:none;background:none;padding:0;">"dev"    ► Map&lt;String, ServiceSingleton&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"DEFAULT_GROUP@@nacos" → Singleton4</div></div></div></div>
 
 **【源码走读】**
 
@@ -715,34 +578,7 @@ Nacos Naming 模块采用「双 Map」设计区分临时实例（ephemeral）和
 
 **【核心类关系图】**
 
-```
-/* 图 2-5：Cluster 双 Map 数据结构（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│                      Cluster                                │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ ephemeralInstances: ConcurrentHashMap<                │  │
-│  │   String instanceId, Instance>                       │  │
-│  │                                                    │  │
-│  │   "192.168.1.1#8080#DEFAULT" → Instance          │  │
-│  │     · ephemeral=true                                │  │
-│  │     · healthy=true                                 │  │
-│  │     · lastBeat: 1703123456789                     │  │
-│  │                                                    │  │
-│  │   AP → Distro 去中心化同步                        │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ persistentInstances: ConcurrentHashMap<               │  │
-│  │   String instanceId, Instance>                       │  │
-│  │                                                    │  │
-│  │   "192.168.1.100#8080#DEFAULT" → Instance       │  │
-│  │     · ephemeral=false                               │  │
-│  │     · healthy=true                                 │  │
-│  │                                                    │  │
-│  │   CP → JRaft Leader 日志复制                       │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-5</span><span class="tt">Cluster 双 Map 数据结构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Cluster</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ephemeralInstances</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">String instanceId, Instance&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.1.1#8080#DEFAULT" → Instance</div><ul class="dgm-kv"><li>ephemeral=true</li><li>healthy=true</li><li>lastBeat: 1703123456789</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">AP → Distro 去中心化同步</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">persistentInstances</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">String instanceId, Instance&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.1.100#8080#DEFAULT" → Instance</div><ul class="dgm-kv"><li>ephemeral=false</li><li>healthy=true</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CP → JRaft Leader 日志复制</div></div></div></div>
 
 **【源码走读】**
 
@@ -869,36 +705,7 @@ Nacos 2.5.3 将 AP/CP 路由核心从废弃的 `DelegateConsistencyServiceImpl` 
 
 **【核心类关系图】**
 
-```
-/* 图 2-6：ClientOperationService AP/CP 路由分发机制（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│           ClientOperationService (接口，service/ClientOperationService.java:36) │
-│  · registerInstance(Service, Instance, clientId)             │
-│  · deregisterInstance(Service, Instance, clientId)          │
-└────────────────────────┬───────────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │                             │
-┌─────────▼──────────────────┐ ┌──────▼───────────────────────┐
-│ EphemeralClientOperation  │ │ PersistentClientOperation      │
-│ ServiceImpl (AP/Distro)   │ │ ServiceImpl (CP/JRaft)       │
-│ service/impl/Ephemeral... │ │ service/impl/Persistent...    │
-│ .java:47                 │ │ .java:85                     │
-│                           │ │                               │
-│ · service.isEphemeral()   │ │ · service.isEphemeral()     │
-│   → MUST be true         │ │   → MUST be false            │
-│                           │ │                               │
-│ · client.addService       │ │ · RaftLeader.register       │
-│   Instance(singleton,    │ │   Instance(service,          │
-│   instanceInfo)           │ │   instance)                  │
-│                           │ │                               │
-│ · NotifyCenter.publish   │ │ · JRaft 日志复制到 Follower │
-│   Event(ClientRegister   │ │   集群达成共识后返回        │
-│   ServiceEvent)           │ │                               │
-│                           │ │                               │
-│ → Distro 去中心化同步    │ │ → JRaft Leader 强一致性      │
-└───────────────────────────┘ └───────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-6</span><span class="tt">ClientOperationService AP/CP 路由分发机制（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientOperationService (接口，service/ClientOperationSer</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance(Service, Instance, clientId)</li><li>deregisterInstance(Service, Instance, clientId)</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PersistentClientOperation</span><span class="s">ServiceImpl (CP/JRaft)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">service/impl/Persistent...</div><ul class="dgm-kv"><li><span class="fld">java</span><span class="typ">: 85</span></li></ul><ul class="dgm-kv"><li>service.isEphemeral()</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ MUST be false</div><ul class="dgm-kv"><li>RaftLeader.register</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Instance(service,</div><div class="dgm-note" style="border:none;background:none;padding:0;">instance)</div><div class="dgm-note" style="border:none;background:none;padding:0;">JRaft 日志复制到 Follower</div><div class="dgm-note" style="border:none;background:none;padding:0;">集群达成共识后返回</div><div class="dgm-note" style="border:none;background:none;padding:0;">Leader 强一致性</div></div></div></div>
 
 **【源码走读】**
 
@@ -989,31 +796,7 @@ Nacos AP 模式（最终一致性）通过 `EphemeralClientOperationServiceImpl`
 
 **【核心类关系图】**
 
-```
-/* 图 2-7：AP Distro 协议去中心化同步流程（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│  EphemeralClientOperationServiceImpl                         │
-│  · registerInstance()（service/impl/Ephemeral...Impl.java:56-77）  │
-│    → client.addServiceInstance(singleton, instanceInfo)    │
-│    → NotifyCenter.publishEvent(ClientRegisterServiceEvent) │
-└────────────────────────┬───────────────────────────────────────┘
-                         │
-┌────────────────────────▼───────────────────────────────────────┐
-│         DistroClientDataProcessor (distro/v2/DistroClientDataProcessor.java:58)│
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ isInvalidClient(client)（:129-133）→ 校验            │  │
-│  │ return null == client || !client.isEphemeral()        │  │
-│  │     || !clientManager.isResponsibleClient(client);    │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                             │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ DistroClientTransportAgent（:49）→ 异步 Replicate    │  │
-│  │  · syncData(data, targetServer, callback)（:89）     │  │
-│  │  · syncVerifyData(verifyData, targetServer, callback)  │  │
-│  │  · 异步回调 onResponse() → 同步成功/失败处理        │  │
-│  └──────────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-7</span><span class="tt">AP Distro 协议去中心化同步流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EphemeralClientOperationServiceImpl</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance()（service/impl/Ephemeral...Impl.java:56-77）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ client.addServiceInstance(singleton, instanceInfo)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NotifyCenter.publishEvent(ClientRegisterServiceEvent)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientDataProcessor (distro/v2/DistroClientDataPr</span><span class="s">isInvalidClient(client)（:129-133）→ 校验</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">return null == client || !client.isEphemeral()</div><div class="dgm-note" style="border:none;background:none;padding:0;">|| !clientManager.isResponsibleClient(client);</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroClientTransportAgent（:49）→ 异步 Replicate</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>syncData(data, targetServer, callback)（:89）</li><li>syncVerifyData(verifyData, targetServer, callback)</li><li>异步回调 onResponse() → 同步成功/失败处理</li></ul></div></div></div>
 
 **【源码走读】**
 
@@ -1143,31 +926,7 @@ Distro 协议的核心是责任归属算法——确定每个节点负责的数�
 
 **【核心类关系图】**
 
-```
-/* 图 2-8：Distro 责任归属算法（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│  DistroMapper (naming/core/DistroMapper.java:43)              │
-│                                                             │
-│  healthyList: volatile List<String>                           │
-│  (排序后的健康节点 IP 列表——所有节点维护相同顺序)         │
-│                                                             │
-│  responsible(responsibleTag)（:78） → 归属判断              │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ 1. if (!switchDomain.isDistroEnabled() || standalone) │  │
-│  │    → return true（本节点负责所有数据）                │  │
-│  │ 2. int index = servers.indexOf(localAddress)           │  │
-│  │    int lastIndex = servers.lastIndexOf(localAddress)    │  │
-│  │ 3. int target = distroHash(responsibleTag) % N        │  │
-│  │ 4. return target >= index && target <= lastIndex        │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                             │
-│  distroHash(responsibleTag)（:124-126）                    │
-│  → Math.abs(responsibleTag.hashCode() % Integer.MAX_VALUE) │
-│                                                             │
-│  节点变更处理: onEvent(MembersChangeEvent)（:129-138）     │
-│  → 重新排序 healthyList → 数据归属自动重新计算            │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-8</span><span class="tt">Distro 责任归属算法（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DistroMapper (naming/core/DistroMapper.java:43)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">healthyList</span><span class="typ">: volatile List&lt;String&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(排序后的健康节点 IP 列表——所有节点维护相同顺序)</div><div class="dgm-note" style="border:none;background:none;padding:0;">responsible(responsibleTag)（:78） → 归属判断</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. if (!switchDomain.isDistroEnabled() || standalone)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ return true（本节点负责所有数据）</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. int index = servers.indexOf(localAddress)</div><div class="dgm-note" style="border:none;background:none;padding:0;">int lastIndex = servers.lastIndexOf(localAddress)</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. int target = distroHash(responsibleTag) % N</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. return target &gt;= index &amp;&amp; target &lt;= lastIndex</div></div></div></div>
 
 **【源码走读】**
 
@@ -1300,39 +1059,7 @@ Nacos CP 模式（强一致性）通过 `PersistentClientOperationServiceImpl`�
 
 **【核心类关系图】**
 
-```
-/* 图 2-9：CP JRaft Leader 选举 + 日志复制流程（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│  PersistentClientOperationServiceImpl                         │
-│  (service/impl/PersistentClientOperationServiceImpl.java:85)│
-│  · registerInstance()（:106-165）                           │
-│    → client.addServiceInstance(singleton, instanceInfo)    │
-│    → NotifyCenter.publishEvent(ClientRegisterServiceEvent) │
-└──────────────────────────┬─────────────────────────────────────┘
-                           │
-┌──────────────────────────▼─────────────────────────────────────┐
-│              JRaft Raft Group (core/)                       │
-│                                                             │
-│  ┌──────────┐   Leader Election    ┌──────────┐           │
-│  │ Leader   │ ◄───────────────► │Follower │           │
-│  │ (Node A) │   Heartbeat/投票    │ (Node B) │           │
-│  └────┬─────┘                    └────┬─────┘           │
-│       │                              │                    │
-│  ┌────▼──────────────────────────────▼─────────────┐   │
-│  │              Raft Log Replication                    │   │
-│  │  [term=5, index=100] registerInstance(...)        │   │
-│  │  [term=5, index=101] registerInstance(...)        │   │
-│  │  [term=6, index=102] registerInstance(...)        │   │
-│  └─────────────────────────────────────────────────────┘   │
-│                                                             │
-│  写入流程:                                                  │
-│  1. Leader 接收 registerInstance() 请求                    │
-│  2. Leader 将请求写入本地 Raft 日志                       │
-│  3. Leader 发送 AppendEntries RPC 到所有 Follower         │
-│  4. 多数派 (N/2+1) Follower 确认写入 → 达成共识        │
-│  5. Leader 提交日志条目（committed）→ 返回客户端成功    │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-9</span><span class="tt">CP JRaft Leader 选举 + 日志复制流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PersistentClientOperationServiceImpl</span><span class="s">(service/impl/PersistentClientOperationServiceImpl.java:85)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance()（:106-165）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ client.addServiceInstance(singleton, instanceInfo)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NotifyCenter.publishEvent(ClientRegisterServiceEvent)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaft Raft Group (core/)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Raft Log Replication</span><span class="s">[term=5, index=100] registerInstance(...)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">[term=5, index=101] registerInstance(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">[term=6, index=102] registerInstance(...)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">lower</span><span class="s">ode B)</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **【源码走读】**
 
@@ -1431,40 +1158,7 @@ CP 模式通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/
 
 **【核心类关系图】**
 
-```
-/* 图 2-10：服务发现流程（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│  Client GET /v2/ns/instance/list?serviceName=xxx&namespaceId=yyy│
-└─────────────────────────────┬──────────────────────────────────┘
-                              │
-┌─────────────────────────────▼──────────────────────────────────┐
-│  InstanceController (naming/controllers/InstanceController.java)│
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 1. parseParams(): namespaceId, serviceName, clusters, │   │
-│  │    healthyOnly (default: true)                        │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 2. ServiceManager.getInstance()                        │   │
-│  │    .getSingleton(service) → ServiceSingleton         │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 3. for (Cluster cluster : singleton.getClusters()) {  │   │
-│  │      for (Instance instance : cluster.allIPs()) {     │   │
-│  │        if (healthyOnly && !instance.isHealthy())      │   │
-│  │          continue;  // 跳过不健康实例                 │   │
-│  │        if (!instance.isEnabled()) continue;            │   │
-│  │        result.add(instance);                           │   │
-│  │      }                                                │   │
-│  │    }                                                  │   │
-│  └─────────────────────────────────────────────────────────┘   │
-│  ┌─────────────────────────────────────────────────────────┐   │
-│  │ 4. JSON 响应构建 → {"hosts": [...], "dom": "...", │   │
-│  │    "cacheMillis": 10000, "lastRefTime": xxx,        │   │
-│  │    "checksum": "md5", "allIPs": false,               │   │
-│  │    "reachProtect": false}                             │   │
-│  └─────────────────────────────────────────────────────────┘   │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-10</span><span class="tt">服务发现流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client GET /v2/ns/instance/list?serviceName=xxx&amp;namespaceId=yy</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceController (naming/controllers/InstanceController.java</span><span class="s">1. parseParams(): namespaceId, serviceName, clusters,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">healthyOnly (default: true)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">2. ServiceManager.getInstance()</span><span class="s">.getSingleton(service) → ServiceSingleton</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3. for (Cluster cluster : singleton.getClusters()) {</span><span class="s">for (Instance instance : cluster.allIPs()) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (healthyOnly &amp;&amp; !instance.isHealthy())</div><div class="dgm-note" style="border:none;background:none;padding:0;">continue;  // 跳过不健康实例</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (!instance.isEnabled()) continue;</div><div class="dgm-note" style="border:none;background:none;padding:0;">result.add(instance);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">4. JSON 响应构建 → {"hosts": [...], "dom": "...",</span><span class="s">"cacheMillis": 10000, "lastRefTime": xxx,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">"checksum": "md5", "allIPs": false,</div><div class="dgm-note" style="border:none;background:none;padding:0;">"reachProtect": false}</div></div></div></div>
 
 **【源码走读】**
 
@@ -1589,33 +1283,7 @@ Nacos 2.5.3 的服务变更推送引擎核心为 `PushExecutorDelegate`（naming
 
 **【核心类关系图】**
 
-```
-/* 图 2-11：PushExecutor 双通道推送架构（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│               PushExecutorDelegate                          │
-│  (naming/push/v2/executor/PushExecutorDelegate.java:34)   │
-│  · doPush(clientId, subscriber, data)                       │
-│  · doPushWithCallback(clientId, subscriber, data, callback)  │
-└────────────────────────┬───────────────────────────────────────┘
-                         │
-          ┌──────────────┴──────────────┐
-          │                             │
-┌─────────▼──────────────────┐ ┌──────▼───────────────────────┐
-│ PushExecutorRpcImpl        │ │ PushExecutorUdpImpl          │
-│ (push/v2/executor/       │ │ (push/v2/executor/          │
-│  PushExecutorRpcImpl.java │ │  PushExecutorUdpImpl.java   │
-│  :35)                    │ │  :35)                        │
-│                           │ │                               │
-│ · RpcPushService.push     │ │ · UDP Socket.send()          │
-│   WithoutAck(clientId,    │ │   (不可靠传输——无确认)     │
-│   NotifySubscriber       │ │                               │
-│   Request)                │ │ · 推送延迟: 秒级             │
-│                           │ │   (@Deprecated——待淘汰)     │
-│ · HTTP/2 多路复用        │ │                               │
-│   单TCP连接承载多Stream  │ │                               │
-│ · 推送延迟: 毫秒级       │ │                               │
-└───────────────────────────┘ └───────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-11</span><span class="tt">PushExecutor 双通道推送架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorDelegate</span><span class="s">(naming/push/v2/executor/PushExecutorDelegate.java:34)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doPush(clientId, subscriber, data)</li><li>doPushWithCallback(clientId, subscriber, data, callback)</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorUdpImpl</span><span class="s">push/v2/executor/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PushExecutorUdpImpl.java</div><div class="dgm-note" style="border:none;background:none;padding:0;">:35)</div><ul class="dgm-kv"><li>UDP Socket.send()</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(不可靠传输——无确认)</div><ul class="dgm-kv"><li>推送延迟: 秒级</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(@Deprecated——待淘汰)</div></div></div></div>
 
 **【源码走读】**
 
@@ -1757,44 +1425,7 @@ UDP 兼容推送已在 Nacos 2.5.3 中标记为 `@Deprecated`——计划在 Nac
 
 **【核心类关系图】**
 
-```
-/* 图 2-12：客户端订阅全链路三层架构（基于 Nacos 2.5.3 源码） */
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                          Client App                                       │
-│  ┌────────────────────────────────────────────────────────────────────────┐ │
-│  │ NacosNamingService.subscribe(serviceName, listener)                 │ │
-│  └────────────────────────────┬───────────────────────────────────────────┘ │
-│                               │                                         │
-│  ┌────────────────────────────▼───────────────────────────────────────────┐ │
-│  │ Layer 1: 接口层 — NamingGrpcClientProxy                          │ │
-│  │  · subscribe() (NamingGrpcClientProxy.java:383-385)                │ │
-│  │  · doSubscribe() (NamingGrpcClientProxy.java:399-404)              │ │
-│  │                                                       │             │ │
-│  │  ┌────────────────────────────────────────────────────┐  │             │ │
-│  │  │ gRPC Bi-directional Stream                     │  │             │ │
-│  │  │ · SubscribeServiceRequest → Server              │  │             │ │
-│  │  │ · NotifySubscriberData ← Server               │  │             │ │
-│  │  └────────────────────────────────────────────────────┘  │             │ │
-│  └────────────────────────┬───────────────────────────────────────────────┘ │
-│                               │                                         │
-│  ┌────────────────────────▼───────────────────────────────────────────┐ │
-│  │ Layer 2: 缓存层 — ServiceInfoHolder                           │ │
-│  │  · ConcurrentHashMap<String, ServiceInfo> serviceInfoMap          │ │
-│  │  · processServiceInfo() (ServiceInfoHolder.java:117-145)        │ │
-│  │    → 命中: 直接返回缓存（> 95% 命中率）                       │ │
-│  │    → 未命中: 查服务端 → 更新缓存 → 触发InstancesChangeEvent │ │
-│  │  · pushEmptyProtection: true（默认）                            │ │
-│  │    → 服务端返回空列表时拒绝更新缓存，保留旧数据              │ │
-│  └────────────────────────┬───────────────────────────────────────────────┘ │
-│                               │                                         │
-│  ┌────────────────────────▼───────────────────────────────────────────┐ │
-│  │ Layer 3: 容灾层 — FailoverReactor + DiskCache                 │ │
-│  │  · 本地磁盘缓存: ${user.home}/nacos/naming/${namespace}/       │ │
-│  │  · 全服不可用 → 从 DiskCache 加载最后一次成功快照             │ │
-│  │  · isFailoverSwitch(): 所有服务端健康检查全部失败 → true     │ │
-│  └──────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-12</span><span class="tt">客户端订阅全链路三层架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client App</span><span class="s">NacosNamingService.subscribe(serviceName, listener)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 1: 接口层 — NamingGrpcClientProxy</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>subscribe() (NamingGrpcClientProxy.java:383-385)</li><li>doSubscribe() (NamingGrpcClientProxy.java:399-404)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Bi-directional Stream</div><ul class="dgm-kv"><li>SubscribeServiceRequest → Server</li><li>NotifySubscriberData ← Server</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 2: 缓存层 — ServiceInfoHolder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ConcurrentHashMap&lt;String, ServiceInfo&gt; serviceInfoMap</li><li>processServiceInfo() (ServiceInfoHolder.java:117-145)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 命中: 直接返回缓存（&gt; 95% 命中率）</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 未命中: 查服务端 → 更新缓存 → 触发InstancesChangeEvent</div><ul class="dgm-kv"><li>pushEmptyProtection: true（默认）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 服务端返回空列表时拒绝更新缓存，保留旧数据</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 3: 容灾层 — FailoverReactor + DiskCache</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>本地磁盘缓存: ${user.home}/nacos/naming/${namespace}/</li><li>全服不可用 → 从 DiskCache 加载最后一次成功快照</li><li>isFailoverSwitch(): 所有服务端健康检查全部失败 → true</li></ul></div></div></div>
 
 **【源码走读】**
 
@@ -1947,52 +1578,7 @@ Nacos 2.5.3 的健康检查架构通过**策略链**（`HealthCheckProcessorV2De
 
 **【核心类关系图】**
 
-```
-/* 图 2-13：健康检查双层架构：策略链 + 拦截器链 + NIO TCP 检测（基于 Nacos 2.5.3 源码） */
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                        健康检查双层架构                                     │
-│                                                                          │
-│  ┌────────────────── 策略链（Protocol Strategy Chain）──────────────────┐    │
-│  │ HealthCheckProcessorV2Delegate.addProcessor() (Delegate.java:54-    │    │
-│  │   @Autowired → Spring自动注入 HealthCheckProcessorV2 Bean集合       │    │
-│  │                                                                    │    │
-│  │  process(task, service, metadata) {                                │    │
-│  │    String type = metadata.getHealthyCheckType(); // 读取集群元数据 │    │
-│  │    HealthCheckProcessorV2 processor = processorMap.get(type);       │    │
-│  │    // type==TCP → TcpHealthCheckProcessor                        │    │
-│  │    // type==HTTP → HttpHealthCheckProcessor                       │    │
-│  │    // type==MYSQL → MysqlHealthCheckProcessor                      │    │
-│  │    // type==NONE → NoneHealthCheckProcessor (默认，不检测)         │    │
-│  │    processor.process(task, service, metadata);                      │    │
-│  │  }                                                                 │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  ┌────────────────── 拦截器链（BeatCheck Interceptor Chain）──────────┐    │
-│  │ InstanceBeatCheckTaskInterceptorChain.getInstance()                  │    │
-│  │  · doInterceptor(InstanceBeatCheckTask)                            │    │
-│  │    1. ServiceEnableBeatCheckInterceptor  → 服务是否启用            │    │
-│  │    2. InstanceEnableBeatCheckInterceptor → 实例是否启用            │    │
-│  │    3. InstanceBeatCheckResponsibleInterceptor → 是否当前节点负责   │    │
-│  │    4. UnhealthyInstanceChecker → 心跳超时标记 unhealthy            │    │
-│  │    5. ExpiredInstanceChecker → 过期实例自动注销                  │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-│                                                                          │
-│  ┌────────── 具体处理器（Concrete Processors）────────────────────────┐   │
-│  │ TcpHealthCheckProcessor   HttpHealthCheckProcessor   MysqlHealth-  │   │
-│  │ (TcpHealthCheckProcessor.java:74) (HttpHealthCheckProcessor.java)   │   │
-│  │                                                                    │    │
-│  │ NIO Selector + SocketChannel  HttpURLConnection HTTP GET    JDBC   │    │
-│  │ · CONNECT_TIMEOUT=500ms  · timeout: 5000ms       · timeout:3000ms │    │
-│  │ · NIO_THREAD_COUNT =     · retry: 3次            · retry: 3次    │    │
-│  │   CPU核数 × 0.5         · HTTP状态码200→healthy  · SELECT1→healthy │    │
-│  │ · PostProcessor +         · 非200→重试→unhealthy  · 连接失败→     │    │
-│  │   TimeOutTask              · Connection refused→                      │    │
-│  │ · NIO beat 处理:         │ · 连接关闭→unhealthy                    │    │
-│  │   finishCheck(success,    │                  unhealthy               │    │
-│  │     rt)                  │                                         │    │
-│  └──────────────────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-13</span><span class="tt">健康检查双层架构：策略链 + 拦截器链 + NIO TCP 检测（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">健康检查双层架构</span><span class="s">策略链（Protocol Strategy Chain）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2Delegate.addProcessor() (Delegate.java:54-</div><div class="dgm-note" style="border:none;background:none;padding:0;">@Autowired → Spring自动注入 HealthCheckProcessorV2 Bean集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">process(task, service, metadata) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">String type = metadata.getHealthyCheckType(); // 读取集群元数据</div><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2 processor = processorMap.get(type);</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==TCP → TcpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==HTTP → HttpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==MYSQL → MysqlHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==NONE → NoneHealthCheckProcessor (默认，不检测)</div><div class="dgm-note" style="border:none;background:none;padding:0;">processor.process(task, service, metadata);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceBeatCheckTaskInterceptorChain.getInstance()</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doInterceptor(InstanceBeatCheckTask)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">1. ServiceEnableBeatCheckInterceptor  → 服务是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. InstanceEnableBeatCheckInterceptor → 实例是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. InstanceBeatCheckResponsibleInterceptor → 是否当前节点负责</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. UnhealthyInstanceChecker → 心跳超时标记 unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. ExpiredInstanceChecker → 过期实例自动注销</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpHealthCheckProcessor   HttpHealthCheckProcessor   MysqlHe</span><span class="s">(TcpHealthCheckProcessor.java:74) (HttpHealthCheckProcessor.</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NIO Selector + SocketChannel  HttpURLConnection HTTP GET</div><ul class="dgm-kv"><li>CONNECT_TIMEOUT=500ms  · timeout: 5000ms       · timeout:3</li><li>NIO_THREAD_COUNT =     · retry: 3次            · retry: 3次</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CPU核数 × 0.5         · HTTP状态码200→healthy  · SELECT1→health</div><ul class="dgm-kv"><li>PostProcessor +         · 非200→重试→unhealthy  · 连接失败→</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">TimeOutTask              · Connection refused→</div><ul class="dgm-kv"><li>NIO beat 处理:           · 连接关闭→unhealthy</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">finishCheck(success,                       unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">rt)</div></div></div></div>
 
 **【源码走读】**
 
@@ -2189,32 +1775,7 @@ Nacos 2.5.3 的健康检查架构采用双层设计：策略链（`HealthCheckPr
 
 **【核心类关系图】**
 
-```
-/* 图 2-14：ClientBeatCheckTaskV2 心跳超时检测 + 过期实例自动清理（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│              ClientBeatCheckTaskV2 (Scheduled Task)          │
-│  · run() → 每 5 秒执行一次                                    │
-│                                                               │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │ Step 1: 遍历所有 Client（仅 ephemeral=true）            │    │
-│  │   for (Client client : ClientManager.allClients()（naming/core/v2/client/manager/ClientManager.java:34-45）) {  │    │
-│  │     if (!client.isEphemeral()) continue;             │    │
-│  └────────────────────────────────────────────────────────┘    │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │ Step 2: 检查心跳超时（默认 15 秒）                    │    │
-│  │   long lastBeat = client.getLastUpdatedTime();        │    │
-│  │   if (currentTime - lastBeat > 15000) {              │    │
-│  │     client.setHealthy(false);                          │    │
-│  │   }                                                   │    │
-│  └────────────────────────────────────────────────────────┘    │
-│  ┌────────────────────────────────────────────────────────┐    │
-│  │ Step 3: 过期实例自动清理（默认 30 秒）              │    │
-│  │   if (currentTime - lastBeat > 30000) {              │    │
-│  │     clientManager.deregisterClient(clientId);         │    │
-│  │   }                                                   │    │
-│  └────────────────────────────────────────────────────────┘    │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-14</span><span class="tt">ClientBeatCheckTaskV2 心跳超时检测 + 过期实例自动清理（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientBeatCheckTaskV2 (Scheduled Task)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>run() → 每 5 秒执行一次</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Step 1: 遍历所有 Client（仅 ephemeral=true）</div><div class="dgm-note" style="border:none;background:none;padding:0;">for (Client client : ClientManager.allClients()（naming/cor</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (!client.isEphemeral()) continue;</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: 检查心跳超时（默认 15 秒）</span><span class="s">long lastBeat = client.getLastUpdatedTime();</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (currentTime - lastBeat &gt; 15000) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">client.setHealthy(false);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 过期实例自动清理（默认 30 秒）</span><span class="s">if (currentTime - lastBeat &gt; 30000) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">clientManager.deregisterClient(clientId);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div></div>
 
 **【源码走读】**
 
@@ -2308,43 +1869,7 @@ public void run() {
 
 **【核心类关系图】**
 
-```
-/* 图 2-15：TcpSuperSenseProcessor TCP Socket 连接检测流程（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│              TcpSuperSenseProcessor                        │
-│                                                           │
-│  process(instance, healthChecker)                          │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Step 1: 创建 TCP Socket                            │  │
-│  │   Socket socket = new Socket();                    │  │
-│  │   socket.connect(                                  │  │
-│  │     new InetSocketAddress(instance.getIp(),        │  │
-│  │                          instance.getPort()),        │  │
-│  │     timeout: 2000ms);                             │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Step 2: 连接成功 → healthy=true                   │  │
-│  │   if (socket.isConnected()) {                     │  │
-│  │     instance.setHealthy(true);                    │  │
-│  │   }                                               │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Step 3: 连接失败 → 重试 3 次                     │  │
-│  │   catch (IOException e) {                          │  │
-│  │     retryCount++;                                 │  │
-│  │     if (retryCount < 3) {                        │  │
-│  │       Thread.sleep(2000);  // 间隔 2 秒          │  │
-│  │       continue;  // 重试                         │  │
-│  │     }                                             │  │
-│  │     instance.setHealthy(false);                   │  │
-│  │   }                                               │  │
-│  └──────────────────────────────────────────────────────┘  │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ Step 4: 关闭 Socket                               │  │
-│  │   socket.close();                                 │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-15</span><span class="tt">TcpSuperSenseProcessor TCP Socket 连接检测流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpSuperSenseProcessor</span><span class="s">process(instance, healthChecker)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Step 1: 创建 TCP Socket</div><div class="dgm-note" style="border:none;background:none;padding:0;">Socket socket = new Socket();</div><div class="dgm-note" style="border:none;background:none;padding:0;">socket.connect(</div><div class="dgm-note" style="border:none;background:none;padding:0;">new InetSocketAddress(instance.getIp(),</div><div class="dgm-note" style="border:none;background:none;padding:0;">instance.getPort()),</div><ul class="dgm-kv"><li><span class="fld">timeout</span><span class="typ">: 2000ms);</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: 连接成功 → healthy=true</span><span class="s">if (socket.isConnected()) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">instance.setHealthy(true);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 连接失败 → 重试 3 次</span><span class="s">catch (IOException e) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">retryCount++;</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (retryCount &lt; 3) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">Thread.sleep(2000);  // 间隔 2 秒</div><div class="dgm-note" style="border:none;background:none;padding:0;">continue;  // 重试</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">instance.setHealthy(false);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 4: 关闭 Socket</span><span class="s">socket.close();</span></div><div class="dgm-box-b"></div></div></div>
 
 **【源码走读】**
 
@@ -2437,33 +1962,7 @@ public void process(Instance instance, HealthChecker healthChecker) {
 
 **【核心类关系图】**
 
-```
-/* 图 2-16：ProtectManager 防雪崩保护机制（基于 Nacos 2.5.3 源码） */
-┌────────────────────────────────────────────────────────────────┐
-│                    ProtectManager                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │ 健康比例阈值: 0.5 (默认 50%)                       │  │
-│  │                                                     │  │
-│  │ if (healthyInstanceCount / totalInstanceCount < 0.5)│  │
-│  │     → 启用保护模式                                │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │             保护模式行为                            │  │
-│  │  · 不再标记任何实例为 unhealthy                   │  │
-│  │  · 返回缓存快照中最后一次健康实例列表              │  │
-│  │  · 拒绝新的实例注销请求                           │  │
-│  │  · 等待健康比例恢复到 > 0.5 后自动退出保护模式    │  │
-│  └──────────────────────────────────────────────────────┘  │
-│                                                           │
-│  ┌──────────────────────────────────────────────────────┐  │
-│  │            缓存快照 (Snapshot)                       │  │
-│  │  · serviceSnapshotMap: Map<String, List<Instance>>   │  │
-│  │  · 每次健康检查后更新快照                          │  │
-│  │  · 保护模式下返回快照数据                          │  │
-│  └──────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-16</span><span class="tt">ProtectManager 防雪崩保护机制（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ProtectManager</span><span class="s">健康比例阈值: 0.5 (默认 50%)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (healthyInstanceCount / totalInstanceCount &lt; 0.5)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 启用保护模式</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">保护模式行为</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>不再标记任何实例为 unhealthy</li><li>返回缓存快照中最后一次健康实例列表</li><li>拒绝新的实例注销请求</li><li>等待健康比例恢复到 &gt; 0.5 后自动退出保护模式</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">缓存快照 (Snapshot)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>serviceSnapshotMap: Map&lt;String, List&lt;Instance&gt;&gt;</li><li>每次健康检查后更新快照</li><li>保护模式下返回快照数据</li></ul></div></div></div>
 
 **【源码走读】**
 

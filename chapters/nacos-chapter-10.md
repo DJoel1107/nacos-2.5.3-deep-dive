@@ -24,76 +24,13 @@ Nacos 2.5.3 架构上通过解耦**内核服务**（Naming/Config）与**一致�
 
 三种部署模式的架构对比：
 
-```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                          Nacos 部署模式全景架构                              │
-├────────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────────────────┐  ┌──────────────────────┐  ┌──────────────────┐│
-│  │  单机模式 (Standalone)  │  │ 集群模式 (Cluster)  │  │  K8s 模式       ││
-│  ├──────────────────────────┤  ├──────────────────────┤  ├──────────────────┤│
-│  │                          │  │                      │  │                  ││
-│  │  ┌─────────────────┐    │  │  ┌────┐ ┌────┐ ┌──┐│  │  ┌────────────┐ ││
-│  │  │  Nacos Server   │    │  │  │Node│ │Node│ │..││  │  │ K8s Cluster │ ││
-│  │  │  (Config+Naming)│    │  │  │ 1  │ │ 2  │ │N ││  │  │            │ ││
-│  │  ├─────────────────┤    │  │  ├────┤ ├────┤ ├──┤│  │  │┌──────────┐│ ││
-│  │  │  Derby (嵌入式) │    │  │  │JRaft│ │JRaft│ │JR││  │  ││StatefulSet││ ││
-│  │  ├─────────────────┤    │  │  ├────┤ ├────┤ ├──┤│  │  ││(Pod/     ││ ││
-│  │  │  HTTP 8848     │    │  │  │Distr│ │Distr│ │Di││  │  ││Headless  ││ ││
-│  │  │  gRPC 9848     │    │  │  ├────┤ ├────┤ ├──┤│  │  ││Service)  ││ ││
-│  │  └─────────────────┘    │  │  │gRPC │ │gRPC │ │gR││  │  │└──────────┘│ ││
-│  │                          │  │  └────┘ └────┘ └──┘│  │  │            │ ││
-│  │  适用场景:             │  │                      │  │  │┌──────────┐│ ││
-│  │  • 本地开发           │  │  ┌──────────────────┐│  │  ││  MySQL   ││ ││
-│  │  • CI/CD 测试         │  │  │  MySQL (外部DB)  ││  │  ││ (外部)   ││ ││
-│  │  • 演示环境           │  │  └──────────────────┘│  │  │└──────────┘│ ││
-│  │                          │  │                      │  │  │            │ ││
-│  │  限制:                 │  │  适用场景:          │  │  │┌──────────┐│ ││
-│  │  • 无高可用           │  │  • 生产环境         │  │  ││  Nginx   ││ ││
-│  │  • 数据不可恢复       │  │  • 关键业务系统     │  │  ││ (Ingress)││ ││
-│  │  • Derby 不可跨机      │  │  • 大规模微服务     │  │  │└──────────┘│ ││
-│  └──────────────────────────┘  └──────────────────────┘  │  │            │ ││
-│                                                          │  │ 适用场景: │ ││
-│                                                          │  │ • 云原生   │ ││
-│                                                          │  │ • 自动伸缩 │ ││
-│                                                          │  │ • GitOps   │ ││
-│                                                          │  └────────────┘ ││
-└────────────────────────────────────────────────────────────────────────────────┘
-
-                       图 10-1：Nacos 三种部署模式全景架构对比
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 部署模式全景架构</span><span class="s">适用场景:</span></div><div class="dgm-panel-body"><ul class="dgm-kv"><li>云原生</li><li>自动伸缩</li><li>GitOps</li></ul><div class="dgm-box"><div class="dgm-box-h"><span class="t">(Cluster)        K8s</span><span class="s">MySQL (外部DB)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">场景:</div><div class="dgm-note" style="border:none;background:none;padding:0;">境                   Ng</div><div class="dgm-note" style="border:none;background:none;padding:0;">统              (Ingres</div><div class="dgm-note" style="border:none;background:none;padding:0;">模微服务</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">..</span><span class="s">N</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">R</div><div class="dgm-note" style="border:none;background:none;padding:0;">D</div></div></div></div></div></div></div></div>
 
 ### 部署模式选择决策矩阵
 
 选择部署模式时需要综合考虑以下维度：
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                        部署模式选择决策树                                          │
-├──────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│                         ┌─────────────────┐                                       │
-│                         │ 是否需要高可用？ │                                       │
-│                         └────────┬────────┘                                       │
-│                                  │                                              │
-│                    ┌─────────────┴─────────────┐                               │
-│                    │                           │                               │
-│               ┌────▼────┐              ┌─────▼─────┐                         │
-│               │ 单机模式  │              │ 是否需要    │                         │
-│               │ Standalone │              │ K8s 原生？ │                         │
-│               └───────────┘              └──────┬──────┘                        │
-│                                              │                                │
-│                                ┌─────────────┴─────────────┐                   │
-│                                │                           │                     │
-│                          ┌─────▼──────┐           ┌────────▼─────────┐         │
-│                          │  集群模式    │           │    K8s 模式        │         │
-│                          │  Cluster     │           │  StatefulSet       │         │
-│                          └─────────────┘           └────────────────────┘         │
-│                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-
-                               图 10-2：部署模式选择决策树
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">部署模式选择决策树</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">是否需要高可用？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">否需要</span><span class="s">K8s 原生？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">K8s 模式</span><span class="s">StatefulSet</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 三种模式核心对比矩阵
 
@@ -175,56 +112,7 @@ Derby 是一个纯 Java 嵌入式关系数据库，Apache Derby 项目在 Nacos 
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    Nacos 单机模式启动流程                                     │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐    │
-│  │                    启动脚本 startup.sh(bat)                           │    │
-│  │  MODE="standalone" → java -Dnacos.standalone=true               │    │
-│  └───────────────────────────┬───────────────────────────────────────────┘    │
-│                              │                                              │
-│                              ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐    │
-│  │                  Nacos.java (Main Class)                             │    │
-│  │  @SpringBootApplication                                            │    │
-│  │  ┌─────────────────────────────────────────────────────────────────┐  │    │
-│  │  │  1. SpringApplication.run()                                  │  │    │
-│  │  │  2. @EnableAutoConfiguration                               │  │    │
-│  │  │  3. 扫描 @NacosPropertySource                             │  │    │
-│  │  └─────────────────────────────────────────────────────────────────┘  │    │
-│  └───────────────────────────┬───────────────────────────────────────────┘    │
-│                              │                                              │
-│                              ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐    │
-│  │           Derby 嵌入式数据库自动初始化                              │    │
-│  │  ┌─────────────────────────────────────────────────────────────┐    │    │
-│  │  │  spring.datasource.platform=derby                         │    │    │
-│  │  │  → LocalDerbyDataSource → $NACOS_HOME/data/derby/        │    │    │
-│  │  │  → schema.sql 创建 12 张表                               │    │    │
-│  │  └─────────────────────────────────────────────────────────────┘    │    │
-│  └───────────────────────────┬───────────────────────────────────────────┘    │
-│                              │                                              │
-│                              ▼                                              │
-│  ┌───────────────────────────────────────────────────────────────────────┐    │
-│  │                  Nacos 服务端口绑定                                  │    │
-│  │  ┌───────────────────────┐  ┌───────────────────────────────────────┐  │    │
-│  │  │  HTTP: 8848         │  │  gRPC: 9848                        │  │    │
-│  │  │  (API + 控制台)     │  │  (SDK 内部通信)                    │  │    │
-│  │  └───────────────────────┘  └───────────────────────────────────────┘  │    │
-│  └───────────────────────────────────────────────────────────────────────┘    │
-│                                                                              │
-│  跳过:                                                                       │
-│  ✗ JRaft 集群选举初始化                                                   │
-│  ✗ gRPC 集群内部通道                                                    │
-│  ✗ Distro 数据同步                                                       │
-│  ✗ MySQL 外部数据源                                                       │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────────────────────┘
-
-                                  图 10-3：Nacos 单机模式启动流程
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 单机模式启动流程</span><span class="s">启动脚本 startup.sh(bat)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">MODE="standalone" → java -Dnacos.standalone=true</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos.java (Main Class)</span><span class="s">@SpringBootApplication</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. SpringApplication.run()</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. @EnableAutoConfiguration</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 扫描 @NacosPropertySource</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库自动初始化</span><span class="s">spring.datasource.platform=derby</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ LocalDerbyDataSource → $NACOS_HOME/data/derby/</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ schema.sql 创建 12 张表</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 服务端口绑定</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">gRPC</span><span class="typ">: 9848</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">K 内部通信)</div></div></div></div></div></div>
 
 ### 部署步骤详解
 
@@ -450,79 +338,11 @@ nacos.console.ui.enabled=true
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                      Nacos 3 节点集群部署架构                                        │
-├──────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│                           ┌──────────────────────────┐                            │
-│                           │      Nginx / HAProxy     │                            │
-│                           │  HTTP 8848 反向代理     │                            │
-│                           │  gRPC 9848 TCP Stream    │                            │
-│                           │  VIP: 192.168.1.100     │                            │
-│                           └───────────┬──────────────┘                            │
-│                                       │                                          │
-│              ┌────────────────────────┼────────────────────────┐                    │
-│              │                        │                        │                    │
-│     ┌────────▼────────┐   ┌───────▼────────┐   ┌────────▼────────┐           │
-│     │  Nacos Node 1    │   │  Nacos Node 2   │   │  Nacos Node 3    │          │
-│     │  192.168.1.101   │   │  192.168.1.102  │   │  192.168.1.103   │         │
-│     ├─────────────────┤   ├─────────────────┤   ├─────────────────┤          │
-│     │ HTTP :8848      │   │ HTTP :8848      │   │ HTTP :8848      │          │
-│     │ gRPC :9848      │   │ gRPC :9848      │   │ gRPC :9848      │          │
-│     │ Raft :7848      │   │ Raft :7848      │   │ Raft :7848      │          │
-│     ├─────────────────┤   ├─────────────────┤   ├─────────────────┤          │
-│     │   JRaft 选举     │   │   JRaft 选举     │   │   JRaft 选举     │          │
-│     │   ◄──────────►  │   │   ◄──────────►  │   │   ◄──────────►  │          │
-│     │   Raft Log 复制  │   │   Raft Log 复制  │   │   Raft Log 复制  │          │
-│     ├─────────────────┤   ├─────────────────┤   ├─────────────────┤          │
-│     │ Distro 异步同步  │   │ Distro 异步同步  │   │ Distro 异步同步  │          │
-│     └────────┬────────┘   └───────┬────────┘   └────────┬────────┘           │
-│              │                        │                        │                    │
-│              └────────────────────────┼────────────────────────┘                    │
-│                                       │                                          │
-│                           ┌───────────▼──────────────┐                            │
-│                           │       MySQL 数据库         │                            │
-│                           │  nacos_config 数据库      │                            │
-│                           │  12 张持久化表           │                            │
-│                           │  192.168.1.200:3306      │                            │
-│                           └──────────────────────────┘                            │
-│                                                                                  │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-
-                            图 10-4：Nacos 3 节点集群部署架构图
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 3 节点集群部署架构</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx / HAProxy</span><span class="s">HTTP 8848 反向代理</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC 9848 TCP Stream</div><ul class="dgm-kv"><li><span class="fld">VIP</span><span class="typ">: 192.168.1.100</span></li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ode 1           Nacos Node 2          Nacos Node</span><span class="s">.1.101          192.168.1.102         192.168.1.1</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">48            HTTP :8848            HTTP :8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">48            gRPC :9848            gRPC :9848</div><div class="dgm-note" style="border:none;background:none;padding:0;">48            Raft :7848            Raft :7848</div><div class="dgm-note" style="border:none;background:none;padding:0;">选举             JRaft 选举             JRaft 选举</div><div class="dgm-note" style="border:none;background:none;padding:0;">►          ◄►          ◄</div><div class="dgm-note" style="border:none;background:none;padding:0;">og 复制          Raft Log 复制          Raft Log 复制</div><div class="dgm-note" style="border:none;background:none;padding:0;">步同步        Distro 异步同步        Distro 异步同步</div></div></div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL 数据库</span><span class="s">nacos_config 数据库</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">12 张持久化表</div><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.1.200:3306</div></div></div></div></div></div>
 
 ### 集群内 JRaft 通信拓扑
 
-```
-┌───────────────────────────────────────────────────────────────────────────────────┐
-│                          JRaft 集群拓扑（3 节点）                               │
-├───────────────────────────────────────────────────────────────────────────────────┤
-│                                                                               │
-│                         ┌─────────────────┐                                    │
-│                         │  Node 1 (Leader) │                                    │
-│                         │  192.168.1.101  │                                    │
-│                         └────────┬────────┘                                    │
-│                                 │                                            │
-│                     Raft Log Replication (同步)                               │
-│                    ┌────────────┴────────────┐                               │
-│                    │                         │                               │
-│          ┌─────────▼─────────┐  ┌─────────▼─────────┐                      │
-│          │  Node 2 (Follower) │  │  Node 3 (Follower) │                      │
-│          │  192.168.1.102    │  │  192.168.1.103    │                      │
-│          └───────────────────┘  └───────────────────┘                      │
-│                                                                               │
-│  角色分配规则:                                                                │
-│  • Leader 选举：term 最大者胜出                                              │
-│  • Leader 负责接收所有写请求，Follower 同步日志                              │
-│  • Raft 心跳间隔：500ms（可配置）                                          │
-│  • 选举超时：2s-4s 随机（避免多次选举冲突）                                │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────────┘
-
-                        图 10-5：JRaft 集群拓扑（3 节点 Leader-Follower 关系）
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">JRaft 集群拓扑（3 节点）</span><span class="s">Raft Log Replication (同步)</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">角色分配规则:</div><ul class="dgm-kv"><li>Leader 选举：term 最大者胜出</li><li>Leader 负责接收所有写请求，Follower 同步日志</li><li>Raft 心跳间隔：500ms（可配置）</li><li>选举超时：2s-4s 随机（避免多次选举冲突）</li></ul><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1 (Leader)</span><span class="s">192.168.1.101</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 3 (Follower</span><span class="s">192.168.1.103</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 部署 4 步骤详解
 
@@ -883,57 +703,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes?withLeader=tr
 
 ### JRaft Leader 选举流程时序
 
-```
-┌────────┐        ┌────────┐        ┌────────┐
-│ Node 1 │        │ Node 2 │        │ Node 3 │
-└───┬────┘        └───┬────┘        └───┬────┘
-    │                  │                  │
-    │  启动 JRaft       │                  │
-    │  term=0           │                  │
-    │                  │                  │
-    │  等待选举超时    │                  │
-    │  (2s~4s 随机)    │                  │
-    │                  │                  │
-    │  Follower        │  Follower        │  Follower
-    │                  │                  │
-    │  超时→Candidate │                  │
-    │  term=1          │                  │
-    │                  │                  │
-    │  发送 RequestVote RPC               │
-    │  (term=1,        │                  │
-    │   lastLogIndex,   │                  │
-    │   lastLogTerm)    │                  │
-    │                  │                  │
-    ├─────────────────►│                  │
-    │                  │  收到 RequestVote│
-    │                  │  检查 term > own │
-    │                  │  term=1 > 0 ✓   │
-    │                  │  日志最新 ✓     │
-    │                  │  投票给 Node 1  │
-    │                  │                  │
-    │◄─────────────────┤                  │
-    │  Vote Granted    │                  │
-    │                  │                  │
-    │  ───────────────────────────────────►│
-    │  RequestVote RPC                   │
-    │                  │  收到 RequestVote│
-    │                  │  term=1 > 0 ✓   │
-    │                  │  投票给 Node 1  │
-    │◄───────────────────────────────────┤
-    │  Vote Granted                       │
-    │                  │                  │
-    │  获得 2/3 票 (含自己)              │
-    │  → 成为 Leader    │                  │
-    │                  │                  │
-    │  发送 Heartbeat   │                  │
-    │  (AppendEntries RPC with no log)   │
-    │                  │                  │
-    ├─────────────────►│                  │
-    ├──────────────────────────────────────►│
-    │                  │                  │
-    │  Leader          │  Follower        │  Follower
-    │                  │                  │
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 3</span></div><div class="dgm-box-b"></div></div></div>
 
 图 10-6：JRaft Leader 选举时序图（3 节点）
 
@@ -1024,50 +794,7 @@ Nacos 2.5.3 使用双端口架构——HTTP 8848（API/控制台）和 gRPC 9848
 
 ### 核心架构关系图
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                  Nginx 负载均衡双通道代理架构                                │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  客户端 (微服务 A)       客户端 (微服务 B)       客户端 (微服务 C)        │
-│       │                       │                       │                    │
-│       └───────────────────────┼───────────────────────┘                    │
-│                               │                                         │
-│                     ┌─────────▼─────────┐                               │
-│                     │   Nginx (VIP:16448) │                              │
-│                     │                     │                               │
-│         ┌───────────┴───────────┐     │                               │
-│         │                       │     │                               │
-│    ┌────▼────┐          ┌─────▼─────▼──┐                            │
-│    │ HTTP 反向│          │ TCP Stream    │                            │
-│    │ 代理 L7 │          │ 代理 L4      │                            │
-│    │ :8848    │          │ :9848         │                            │
-│    └────┬────┘          └────┬──────────┘                            │
-│         │                    │                                         │
-│    ┌────▼────────────────────▼────┐                                   │
-│    │        Nacos 集群            │                                   │
-│    │  ┌───────┐ ┌───────┐ ┌──────┐│                                  │
-│    │  │Node 1 │ │Node 2 │ │Node 3││                                  │
-│    │  │:8848  │ │:8848  │ │:8848 ││                                  │
-│    │  │:9848  │ │:9848  │ │:9848 ││                                  │
-│    │  └───────┘ └───────┘ └──────┘│                                  │
-│    └────────────────────────────────┘                                   │
-│                                                                          │
-│   HTTP 层 (L7):                                                          │
-│   • 路由: /nacos/v1/*, /nacos/v2/* → upstream nacos_http               │
-│   • 负载算法: least_conn                                                 │
-│   • 健康检查: passive (fail_timeout=10s max_fails=3)                   │
-│   • 长连接: keepalive 64 (降低 TCP 握手开销)                           │
-│                                                                          │
-│   gRPC 层 (L4):                                                          │
-│   • 路由: TCP:9848 → upstream nacos_grpc                                │
-│   • 代理模式: stream (透明 TCP 代理，不解包)                            │
-│   • 负载算法: least_conn                                                 │
-│   • 健康检查: proxy_pass + fail_timeout=10s                             │
-│                                                                          │
-│                    图 10-7：Nginx HTTP + gRPC 双通道代理架构              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx 负载均衡双通道代理架构</span><span class="s">客户端 (微服务 A)       客户端 (微服务 B)       客户端 (微服务 C)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx (VIP:16448)</span><span class="s">HTTP 层 (L7):</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>路由: /nacos/v1/*, /nacos/v2/* → upstream nacos_http</li><li>负载算法: least_conn</li><li>健康检查: passive (fail_timeout=10s max_fails=3)</li><li>长连接: keepalive 64 (降低 TCP 握手开销)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC 层 (L4):</div><ul class="dgm-kv"><li>路由: TCP:9848 → upstream nacos_grpc</li><li>代理模式: stream (透明 TCP 代理，不解包)</li><li>负载算法: least_conn</li><li>健康检查: proxy_pass + fail_timeout=10s</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-7：Nginx HTTP + gRPC 双通道代理架构</div></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">HTTP 反向</span><span class="s">代理 L7</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">:8848</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">N</span><span class="s">Node 1</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">:9848</div></div></div></div></div></div></div></div>
 
 **关键设计要点**：
 
@@ -1523,50 +1250,7 @@ Nacos 2.5.3 在 `application.properties` 中通过 `nacos.core.member.weight` �
 
 ### 核心架构关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────────────┐
-│                  Nacos 5 节点集群：3 Raft Voter + 2 Learner 架构            │
-├────────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│                        ┌─────────────────────────┐                         │
-│                        │      Nginx (VIP)       │                         │
-│                        │  HTTP :8848 / gRPC :9848│                         │
-│                        └───────────┬─────────────┘                         │
-│                                    │                                      │
-│          ┌───────────┬───────────┼───────────┬───────────┐             │
-│          │           │           │           │           │             │
-│     ┌────▼───┐ ┌───▼────┐ ┌──▼────┐ ┌───▼────┐ ┌──▼─────┐        │
-│     │ Node 1 │ │ Node 2 │ │ Node 3│ │ Node 4 │ │ Node 5 │        │
-│     │ Voter  │ │ Voter  │ │ Voter │ │Learner │ │Learner │        │
-│     │Leader  │ │Follower│ │Follower│ │Follower│ │Follower│        │
-│     └───┬────┘ └───┬────┘ └──┬────┘ └───┬────┘ └───┬─────┘        │
-│         │           │         │           │           │                │
-│         │     JRaft Log Replication (all 5 nodes)                   │
-│         │◄────────┼────────┼──────────┼───────────┤                │
-│         │           │         │           │           │                │
-│    ┌────▼──────────▼─────────▼───────────▼───────────▼────┐       │
-│    │                    MySQL 数据库                            │       │
-│    │  • 元数据持久化（config_info / users / roles / etc）│       │
-│    │  • 所有节点共享同一个 MySQL 实例                     │       │
-│    └───────────────────────────────────────────────────────────┘       │
-│                                                                          │
-│   Raft Quorum: 3/5 = ⌊5/2⌋+1 = 3 → 需要至少 2 个 Voter 在线       │
-│   (Learner 不参与 quorum 计数)                                        │
-│                                                                          │
-│   读写分离策略：                                                        │
-│   • Voter 节点：处理读写请求（写转发至 Leader）                       │
-│   • Learner 节点：仅处理本地读请求（服务发现查询 / 配置查询）        │
-│   • gRPC 负载均衡：Least Connection → 自然分流                        │
-│                                                                          │
-│   容错矩阵：                                                              │
-│   • 2 Learner 宕机：集群正常（3/3 Voter online）                       │
-│   • 1 Voter + 1 Learner 宕机：集群正常（2/3 Voter online ≥ quorum）  │
-│   • 2 Voter 宕机：集群不可用（1/3 Voter < quorum）                  │
-│   • 1 Voter (Leader) 宕机：触发 Leader 选举，新 Leader 产生          │
-│                                                                          │
-│                  图 10-8：5 节点集群 3 Voter + 2 Learner 架构             │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 5 节点集群：3 Raft Voter + 2 Learner 架构</span><span class="s">Raft Quorum: 3/5 = ⌊5/2⌋+1 = 3 → 需要至少 2 个 Voter 在线</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">(Learner 不参与 quorum 计数)</div><div class="dgm-note" style="border:none;background:none;padding:0;">读写分离策略：</div><ul class="dgm-kv"><li>Voter 节点：处理读写请求（写转发至 Leader）</li><li>Learner 节点：仅处理本地读请求（服务发现查询 / 配置查询）</li><li>gRPC 负载均衡：Least Connection → 自然分流</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">容错矩阵：</div><ul class="dgm-kv"><li>2 Learner 宕机：集群正常（3/3 Voter online）</li><li>1 Voter + 1 Learner 宕机：集群正常（2/3 Voter online ≥ quorum）</li><li>2 Voter 宕机：集群不可用（1/3 Voter &lt; quorum）</li><li>1 Voter (Leader) 宕机：触发 Leader 选举，新 Leader 产生</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-8：5 节点集群 3 Voter + 2 Learner 架构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx (VIP)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">HTTP</span><span class="typ">: 8848 / gRPC :9848</span></li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1</span><span class="s">Voter</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">◄</div></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li>元数据持久</li><li>所有节点共</li></ul></div></div></div></div></div></div></div>
 
 ### Learner 节点角色与工作机制
 
@@ -1877,52 +1561,7 @@ Nacos 2.5.3 在 K8s 上推荐使用 `StatefulSet` + `Headless Service` + `PVC` +
 
 ### 核心架构关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────────────────┐
-│                Nacos on Kubernetes (StatefulSet) 架构                            │
-├────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                │
-│                          ┌─────────────────────────┐                             │
-│                          │   K8s Service (ClusterIP) │                             │
-│                          │   nacos-service:8848     │                             │
-│                          └───────────┬─────────────┘                             │
-│                                      │                                        │
-│        ┌─────────────────────────────┼─────────────────────────────┐          │
-│        │                             │                             │          │
-│   ┌────▼────┐                ┌────▼────┐                ┌────▼────┐         │
-│   │ nacos-0 │                │ nacos-1 │                │ nacos-2 │         │
-│   │ Pod     │                │ Pod     │                │ Pod     │         │
-│   │ :8848   │◄──────────────│ :8848   │◄──────────────│ :8848   │         │
-│   │ :9848   │  JRaft RPC    │ :9848   │  JRaft RPC    │ :9848   │         │
-│   └────┬────┘                └────┬────┘                └────┬────┘         │
-│        │ PVC                     │ PVC                     │ PVC              │
-│   ┌────▼────┐                ┌────▼────┐                ┌────▼────┐         │
-│   │   PV    │                │   PV    │                │   PV    │         │
-│   │ (10Gi)  │                │ (10Gi)  │                │ (10Gi)  │         │
-│   └─────────┘                └─────────┘                └─────────┘         │
-│                                                                                │
-│   ┌─────────────────────────────────────────────────────────────────────────┐    │
-│   │                     K8s 资源关系                                       │    │
-│   │                                                                     │    │
-│   │  StatefulSet (nacos)                                                │    │
-│   │    ├── Pod nacos-0    ← Headless Service DNS:                     │    │
-│   │    ├── Pod nacos-1        nacos-{0..N-1}.nacos-headless.default    │    │
-│   │    └── Pod nacos-2    ← PodAntiAffinity: 每个 Node 最多 1 个 Pod │    │
-│   │                                                                     │    │
-│   │  Headless Service (nacos-headless)                                 │    │
-│   │    └── ClusterIP: None (Headless)                                  │    │
-│   │                                                                     │    │
-│   │  ClusterIP Service (nacos-service)                                  │    │
-│   │    └── ClusterIP: 10.x.x.x (Internal LB)                           │    │
-│   │                                                                     │    │
-│   │  ConfigMap (nacos-config)                                           │    │
-│   │    ├── application.properties                                      │    │
-│   │    └── cluster.conf                                                │    │
-│   └─────────────────────────────────────────────────────────────────────────┘    │
-│                                                                                │
-│                      图 10-9：K8s StatefulSet 部署架构                         │
-└────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos on Kubernetes (StatefulSet) 架构</span><span class="s">图 10-9：K8s StatefulSet 部署架构</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">K8s Service (ClusterIP</span><span class="s">nacos-service:8848</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">nacos-0</span><span class="s">Pod</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">:9848</div><div class="dgm-note" style="border:none;background:none;padding:0;">PVC</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PV</span><span class="s">(10Gi)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Statefu</div><div class="dgm-note" style="border:none;background:none;padding:0;">P</div><div class="dgm-note" style="border:none;background:none;padding:0;">P</div><div class="dgm-note" style="border:none;background:none;padding:0;">P</div><div class="dgm-note" style="border:none;background:none;padding:0;">Headles</div><div class="dgm-note" style="border:none;background:none;padding:0;">C</div><div class="dgm-note" style="border:none;background:none;padding:0;">Cluster</div><div class="dgm-note" style="border:none;background:none;padding:0;">C</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConfigM</div><div class="dgm-note" style="border:none;background:none;padding:0;">a</div><div class="dgm-note" style="border:none;background:none;padding:0;">c</div></div></div></div></div></div></div></div>
 
 **关键设计要点**：
 
@@ -2381,34 +2020,7 @@ kubectl -n nacos rollout status statefulset nacos
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│              K8s 运维命令全景 5 大场景                                   │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐              │
-│  │ 1.部署更新  │  │ 2.监控排障  │  │ 3.扩缩容    │              │
-│  │             │  │             │  │             │              │
-│  │ apply  创建 │  │ get 查看    │  │ scale 调整  │              │
-│  │ rollout 更新│  │ describe 详 │  │ edit 修改   │              │
-│  │ undo   回滚│  │ logs  日志  │  │ patch 补丁  │              │
-│  │ delete 删除│  │ top  资源   │  │ autoscale   │              │
-│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘              │
-│         │                │                │                         │
-│  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐              │
-│  │ 4.端口转发  │  │ 5.资源清理  │  │ 对象类型     │              │
-│  │             │  │             │  │             │              │
-│  │port-forward │  │ delete 删除 │  │ pods / svc  │              │
-│  │本地→Pod端口│  │ -f   按文件│  │ sts / pvc   │              │
-│  │调试       │  │ --force强制│  │ configmap   │              │
-│  └─────────────┘  └─────────────┘  └─────────────┘              │
-│                                                                      │
-│  核心对象层级：StatefulSet → Pod → Container → Nacos              │
-│  管理顺序：Namespace → ConfigMap → Service → StatefulSet            │
-│                                                                      │
-│         图 10-13：K8s 运维命令全景架构                               │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">K8s 运维命令全景 5 大场景</span><span class="s">核心对象层级：StatefulSet → Pod → Container → Nacos</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">管理顺序：Namespace → ConfigMap → Service → StatefulSet</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-13：K8s 运维命令全景架构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">le 调整</span><span class="s">it 修改</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">h 补丁</div><div class="dgm-note" style="border:none;background:none;padding:0;">scale</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ods / svc</span><span class="s">c</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">map</div></div></div></div></div></div>
 
 ### 命令速查矩阵
 
@@ -2660,62 +2272,7 @@ Nacos 2.5.3 本身不支持原生的多数据中心数据同步机制（不同�
 
 ### 核心架构关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────────┐
-│                   Nacos 多数据中心双活架构                                        │
-├──────────────────────────────────────────────────────────────────────────────────────┤
-│                                                                                  │
-│                          ┌──────────────────────┐                                  │
-│                          │   GeoDNS (智能解析)  │                                  │
-│                          │                      │                                  │
-│                          │  • 就近解析          │                                  │
-│                          │  • 健康检查          │                                  │
-│                          │  • 故障切换          │                                  │
-│                          └──────────┬───────────┘                                  │
-│                                     │                                           │
-│              ┌──────────────────────┼──────────────────────┐                      │
-│              │                      │                      │                      │
-│     ┌────────▼────────┐  ┌──────▼──────┐  ┌─────────▼────────┐              │
-│     │  客户端（华东） │  │ 客户端（华南）│  │  客户端（华北）  │              │
-│     │  app- East │  │  app-south │  │   app-north   │              │
-│     │  namespace:    │  │  namespace:   │  │   namespace:    │              │
-│     │  east-online  │  │  south-online│  │   north-online │              │
-│     └────────┬────────┘  └──────┬──────┘  └─────────┬────────┘              │
-│              │                  │                     │                        │
-│     ┌────────▼────────┐  ┌──────▼──────┐  ┌─────────▼────────┐              │
-│     │ 华东 DC (主)    │  │ 华南 DC (从) │  │  华北 DC (从)    │              │
-│     │                 │  │             │  │                  │              │
-│     │ ┌─────────────┐ │  │┌──────────┐│  │┌────────────────┐ │              │
-│     │ │ Nacos 集群  │ │  ││Nacos 集群││  ││ Nacos 集群     │ │              │
-│     │ │ 3 节点      │ │  ││3 节点    ││  ││ 3 节点        │ │              │
-│     │ │ namespace:  │ │  ││namespace: ││  ││ namespace:     │ │              │
-│     │ │ east-*     │ │  ││south-*   ││  ││ north-*        │ │              │
-│     │ └──────┬──────┘ │  │└────┬─────┘│  │└───────┬────────┘ │              │
-│     │        │        │  │     │      │  │        │          │              │
-│     │ ┌──────▼──────┐ │  │┌────▼─────┐│  │┌───────▼────────┐ │              │
-│     │ │  MySQL 主库  │ │  ││MySQL 从库││  ││  MySQL 从库    │ │              │
-│     │ │  (读写)     │ │  ││ (只读)   ││  ││  (只读)       │ │              │
-│     │ └──────┬──────┘ │  │└──────────┘│  │└────────────────┘ │              │
-│     │        │        │  │             │  │                  │              │
-│     │        │ 异步复制 │             │  │                  │              │
-│     │        ├────────┼─────────────┼──┘                  │              │
-│     │        │        │  Binlog 同步│                         │              │
-│     │        │        │◄────────────┼────────────────────────┤              │
-│     │        │        │             │                         │              │
-│     └────────┴────────┘  └─────────────┘  └──────────────────┘              │
-│                                                                                  │
-│   命名空间隔离策略：                                                            │
-│   • east-online: 华东微服务注册 (Nacos 华东集群)                               │
-│   • south-online: 华南微服务注册 (Nacos 华南集群)                             │
-│   • north-online: 华北微服务注册 (Nacos 华北集群)                             │
-│                                                                                  │
-│   GeoDNS 解析策略：                                                             │
-│   • nacos.example.com → 根据客户端源 IP → 就近解析到最近 DC 的 Nginx VIP       │
-│   • 健康检查失败 → 自动切换到备用 DC                                            │
-│                                                                                  │
-│          图 10-10：多数据中心双活架构（GeoDNS + MySQL 异步复制）                │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 多数据中心双活架构</span><span class="s">异步复制</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">Binlog 同步</div><div class="dgm-note" style="border:none;background:none;padding:0;">◄</div><div class="dgm-note" style="border:none;background:none;padding:0;">命名空间隔离策略：</div><ul class="dgm-kv"><li>east-online: 华东微服务注册 (Nacos 华东集群)</li><li>south-online: 华南微服务注册 (Nacos 华南集群)</li><li>north-online: 华北微服务注册 (Nacos 华北集群)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">GeoDNS 解析策略：</div><ul class="dgm-kv"><li>nacos.example.com → 根据客户端源 IP → 就近解析到最近 DC 的 Nginx VIP</li><li>健康检查失败 → 自动切换到备用 DC</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-10：多数据中心双活架构（GeoDNS + MySQL 异步复制）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GeoDNS (智能解析)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>就近解析</li><li>健康检查</li><li>故障切换</li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">-north</span><span class="s">namespace:</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">north-online</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DC (从)</span><span class="s">os 集群</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">点</div><div class="dgm-note" style="border:none;background:none;padding:0;">namespace:</div><div class="dgm-note" style="border:none;background:none;padding:0;">north-*</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ySQL 从库</span><span class="s">读)</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### GeoDNS 智能流量调度
 
@@ -2762,20 +2319,7 @@ Nacos 的所有元数据（配置、服务注册信息）持久化在 MySQL 中�
 
 #### 主从拓扑
 
-```
-┌──────────────┐
-│ MySQL Master  │ (华东 DC - 唯一写入点)
-│              │
-│ Binlog ▶────┼──────────────┬──────────────────┐
-└──────────────┘              │                  │
-                               │                  │
-                     ┌─────────▼────────┐  ┌──────▼──────────┐
-                     │ MySQL Slave 1    │  │ MySQL Slave 2    │
-                     │ (华南 DC - 只读) │  │ (华北 DC - 只读) │
-                     └──────────────────┘  └─────────────────┘
-
-                     图 10-11：MySQL 一主两从异步复制拓扑
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL Master</span><span class="s">Binlog ▶</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL Slave 2</span><span class="s">DC - 只读)</span></div><div class="dgm-box-b"></div></div></div>
 
 **关键设计决策**：
 
@@ -3002,37 +2546,7 @@ MySQL 高可用标准方案是主从复制 + 读写分离：
 
 ### 核心架构关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│              MySQL 主从复制 + 读写分离架构                              │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                        │
-│   ┌──────────────────┐                                                 │
-│   │   Nacos 集群     │                                                 │
-│   │   (3 节点)       │                                                 │
-│   └────────┬─────────┘                                                 │
-│            │                                                              │
-│   ┌────────▼──────────────────────────────────────────┐                  │
-│   │        MySQL 读写分离中间件 (ShardingSphere-proxy │                  │
-│   │        或 ProxySQL)                              │                  │
-│   │                                                   │                  │
-│   │   • 读写分离规则：SELECT → Slave / INSERT/UPDATE │                  │
-│   │     /DELETE → Master                            │                  │
-│   │   • 故障转移：Master 宕机 → Slave 提升为新 Master  │                  │
-│   │   • 连接池：复用 MySQL 连接，减少连接开销          │                  │
-│   │   • 负载均衡：多 Slave 间负载均衡                  │                  │
-│   └──┬──────────────┬──────────────┘                               │
-│      │              │                                                   │
-│ ┌────▼──────┐ ┌───▼──────────┐                                     │
-│ │MySQL Master│ │ MySQL Slave   │                                     │
-│ │ (读写)     │ │ (只读)        │                                     │
-│ └────┬──────┘ └──────────────┘                                     │
-│      │  Binlog 异步/半同步复制                                        │
-│      └───────────────────────┘                                        │
-│                                                                        │
-│          图 10-12：MySQL 读写分离中间件架构                             │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">MySQL 主从复制 + 读写分离架构</span><span class="s">Binlog 异步/半同步复制</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-12：MySQL 读写分离中间件架构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 集群</span><span class="s">(3 节点)</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL 读写分离中间件 (ShardingSphere-proxy</span><span class="s">或 ProxySQL)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>读写分离规则：SELECT → Slave / INSERT/UPDATE</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">/DELETE → Master</div><ul class="dgm-kv"><li>故障转移：Master 宕机 → Slave 提升为新 Master</li><li>连接池：复用 MySQL 连接，减少连接开销</li><li>负载均衡：多 Slave 间负载均衡</li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL Slave</span><span class="s">(只读)</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### ShardingSphere-proxy 方案
 
@@ -3291,41 +2805,7 @@ Nacos 2.5.3 集群在生产环境中处理大量网络连接——每个微服�
 
 ### 核心架构关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│              Nacos OS 内核参数优化全景 (sysctl.conf)                     │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                    Nacos Server JVM Process                          │  │
-│  │  ┌─────────┐ ┌──────────┐ ┌──────────┐ ┌──────────────────────┐ │  │
-│  │  │ gRPC    │ │ HTTP     │ │ JRaft    │ │ MySQL HikariCP       │ │  │
-│  │  │ 9848    │ │ 8848     │ │ 7848     │ │ 连接池              │ │  │
-│  │  └────┬────┘ └────┬─────┘ └────┬─────┘ └──────────┬───────────┘ │  │
-│  └───────┼──────────┼──────────────┼──────────────────┼─────────────┘  │
-│          │          │              │                  │                   │
-│  ┌───────▼──────────▼──────────────▼──────────────────▼───────────┐  │
-│  │                     Linux Kernel 参数层                             │  │
-│  │                                                                   │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │  │
-│  │  │ fs.file-max  │  │ net.core.*   │  │ net.ipv4.tcp_*       │   │  │
-│  │  │ 文件描述符  │  │ Socket 缓冲区│  │ TCP KeepAlive/       │   │  │
-│  │  │ 全局上限    │  │ rmem/wmem   │  │ TIME_WAIT/Backlog    │   │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────────────┘   │  │
-│  │                                                                   │  │
-│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │  │
-│  │  │ vm.swappiness│  │ vm.overcommit│  │ ip_local_port_range  │   │  │
-│  │  │ Swap 倾向   │  │ 内存过量使用│  │ 临时端口范围        │   │  │
-│  │  └──────────────┘  └──────────────┘  └──────────────────────┘   │  │
-│  └───────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  数据流方向：                                                             │
-│  Client → TCP Socket → Kernel Buffer (rmem/wmem) → Nacos JVM          │
-│  Client ← TCP Socket ← Kernel Buffer (rmem/wmem) ← Nacos JVM          │
-│                                                                          │
-│              图 10-14：OS 内核参数优化全景架构                            │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos OS 内核参数优化全景 (sysctl.conf)</span><span class="s">Nacos Server JVM Process</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL HikariCP</span><span class="s">连接池</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Linux Kernel 参数层</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">net.ipv4.tcp_*</span><span class="s">Alive/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">WAIT/Backlog</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ip_local_port_range</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 完整 sysctl.conf 优化配置
 
@@ -3593,49 +3073,7 @@ Nacos 启动脚本（`startup.sh`）通常以非 root 用户（如 `nacos`）运
 
 ### 核心架构关系图
 
-```
-┌────────────────────────────────────────────────────────────────────────────┐
-│               文件描述符限制层级架构 (limits.conf)                        │
-├────────────────────────────────────────────────────────────────────────────┤
-│                                                                          │
-│  ┌──────────────────────────────────────────────────────────────────────┐  │
-│  │                  系统全局上限 (sysctl.conf)                         │  │
-│  │  fs.file-max = 655350  →  系统内核能打开的文件描述符总数        │  │
-│  │  fs.nr_open = 1048576  →  单个进程 fd 硬上限                    │  │
-│  └──────────────────────────────┬───────────────────────────────────────┘  │
-│                                 │                                        │
-│  ┌──────────────────────────────▼───────────────────────────────────────┐  │
-│  │              用户进程级限制 (limits.conf)                           │  │
-│  │                                                                     │  │
-│  │  ┌─────────────────────────────────────────────────────────────┐      │  │
-│  │  │ nacos 用户                                              │      │  │
-│  │  │  soft nofile = 65535  ← 软限制（用户可自行调高）     │      │  │
-│  │  │  hard nofile = 65535  ← 硬限制（仅 root 可调高）      │      │  │
-│  │  │  soft nproc  = 65535  ← 最大进程/线程数               │      │  │
-│  │  │  hard nproc  = 65535  ← 硬上限                        │      │  │
-│  │  └─────────────────────────────────────────────────────────────┘      │  │
-│  └──────────────────────────────┬───────────────────────────────────────┘  │
-│                                 │                                        │
-│  ┌──────────────────────────────▼───────────────────────────────────────┐  │
-│  │              Nacos JVM 进程 (PID=xxxx)                              │  │
-│  │                                                                     │  │
-│  │  /proc/<pid>/limits  ← 进程运行时实际限制                         │  │
-│  │                                                                     │  │
-│  │  实际 fd 消耗来源：                                                │  │
-│  │  ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌──────────┐            │  │
-│  │  │ gRPC 连接│ │ HTTP 连接│ │ MySQL 连接│ │ 日志文件 │            │  │
-│  │  │ (N×客户端)│ │ (~500)   │ │ (~20)    │ │ (~10)    │            │  │
-│  │  └──────────┘ └──────────┘ └──────────┘ └──────────┘            │  │
-│  │                                                                     │  │
-│  │  1000 客户端 × 3 节点 = 334 gRPC/fd + 500 HTTP + 20 MySQL       │  │
-│  │  + 50 其他 ≈ 904 fd → 65535 提供 > 70× 余量                    │  │
-│  └──────────────────────────────────────────────────────────────────────┘  │
-│                                                                          │
-│  约束关系：nofile (65535) ≤ fs.file-max (655350)                     │
-│                                                                          │
-│            图 10-15：文件描述符限制层级架构                              │
-└────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">文件描述符限制层级架构 (limits.conf)</span><span class="s">系统全局上限 (sysctl.conf)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">fs.file-max = 655350  →  系统内核能打开的文件描述符总数</div><div class="dgm-note" style="border:none;background:none;padding:0;">fs.nr_open = 1048576  →  单个进程 fd 硬上限</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">用户进程级限制 (limits.conf)</span><span class="s">nacos 用户</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">soft nofile = 65535  ← 软限制（用户可自行调高）</div><div class="dgm-note" style="border:none;background:none;padding:0;">hard nofile = 65535  ← 硬限制（仅 root 可调高）</div><div class="dgm-note" style="border:none;background:none;padding:0;">soft nproc  = 65535  ← 最大进程/线程数</div><div class="dgm-note" style="border:none;background:none;padding:0;">hard nproc  = 65535  ← 硬上限</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos JVM 进程 (PID=xxxx)</span><span class="s">/proc/&lt;pid&gt;/limits  ← 进程运行时实际限制</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">实际 fd 消耗来源：</div><div class="dgm-note" style="border:none;background:none;padding:0;">1000 客户端 × 3 节点 = 334 gRPC/fd + 500 HTTP + 20 MySQL</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ 50 其他 ≈ 904 fd → 65535 提供 &gt; 70× 余量</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">~10)</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### limits.conf 完整配置
 

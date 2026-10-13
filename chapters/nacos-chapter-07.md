@@ -20,78 +20,7 @@ Nacos 2.5.3 的认证体系基于 **插件化认证架构**——核心定义在
 
 #### 7.1.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    Nacos 2.5.3 认证体系完整架构                                │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │  客户端 (client/) — 发起登录、携带Token请求API                         │ │
-│  │  ┌─────────────────┐   ┌─────────────────┐   ┌─────────────────────────┐  │ │
-│  │  │ SecurityProxy   │   │ NacosClientAuth │   │ RamClientAuthService    │  │ │
-│  │  │ (client/       │   │ ServiceImpl     │   │ (client/auth/ram/)      │  │ │
-│  │  │ security/      │   │ (client/auth/   │   │                          │  │ │
-│  │  │ SecurityProxy  │   │ impl/NacosCli- │   │ 阿里云AK/SK认证        │  │ │
-│  │  │ .java:40-126) │   │ entAuthService │   │ sign(accessKey,        │  │ │
-│  │  │               │   │ Impl.java:     │   │ secretKey) → String     │  │ │
-│  │  │ login(prop)   │   │ 30-140)       │   │                          │  │ │
-│  │  │ getIdentity() │   │ login()        │   │                          │  │ │
-│  │  └───────┬───────┘   └───────┬─────────┘   └───────────┬─────────────┘  │ │
-│  └──────────┼──────────────────────┼──────────────────────┼──────────────────┘ │
-│             │ HTTP POST           │ HTTP POST          │ HTTP POST           │
-│             │ /v1/auth/login     │ /v1/auth/login    │ /v1/auth/login     │
-│  ┌──────────▼──────────────────────▼──────────────────────▼──────────────────┐ │
-│  │  服务端 — 认证处理链 (auth/ + plugin/auth/)                            │ │
-│  │                                                                        │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │ ① AuthController.login() → 接收 username/password                 │  │ │
-│  │  └────────────────────────────┬─────────────────────────────────────────┘  │ │
-│  │                             │                                           │ │
-│  │  ┌────────────────────────────▼─────────────────────────────────────────┐  │ │
-│  │  │ ② AuthPluginManager.findAuthServiceSpiImpl(type)                 │  │ │
-│  │  │    (plugin/auth/spi/server/AuthPluginManager.java:68-82)         │  │ │
-│  │  │    通过 SPI 加载 AuthPluginService 实现                         │  │ │
-│  │  └────────────────────────────┬─────────────────────────────────────────┘  │ │
-│  │                             │                                           │ │
-│  │  ┌────────────────────────────▼─────────────────────────────────────────┐  │ │
-│  │  │ ③ AuthPluginService (plugin/auth/spi/server/)                     │  │ │
-│  │  │    ├─ identityNames(): Collection<String>         (定义身份字段)  │  │ │
-│  │  │    ├─ enableAuth(action, type): boolean          (是否启用认证)  │  │ │
-│  │  │    ├─ validateIdentity(IdentityContext, Resource) (身份校验)     │  │ │
-│  │  │    ├─ validateAuthority(IdentityContext, Permission) (权限鉴权)  │  │ │
-│  │  │    ├─ getAuthServiceName(): String             (认证服务名称)    │  │ │
-│  │  │    ├─ isLoginEnabled(): boolean                 (是否启用登录)    │  │ │
-│  │  │    └─ isAdminRequest(): boolean                 (是否需要管理员)    │  │ │
-│  │  └────────────────────────────┬─────────────────────────────────────────┘  │ │
-│  │                             │                                           │ │
-│  │  ┌────────────────────────────▼─────────────────────────────────────────┐  │ │
-│  │  │ ④ AbstractProtocolAuthService (auth/)                             │  │ │
-│  │  │    (auth/AbstractProtocolAuthService.java:50-148)                │  │ │
-│  │  │    ├─ enableAuth(Secured): boolean           (启用认证判断)    │  │ │
-│  │  │    ├─ validateIdentity(IdentityContext, Resource): boolean         │  │ │
-│  │  │    ├─ validateAuthority(IdentityContext, Permission): boolean      │  │ │
-│  │  │    ├─ checkServerIdentity(R, Secured): ServerIdentityResult      │  │ │
-│  │  │    ├─ parseServerIdentity(R): ServerIdentity  (抽象—子类实现)  │  │ │
-│  │  │    ├─ parseSpecifiedResource(Secured): Resource                   │  │ │
-│  │  │    └─ useSpecifiedParserToParse(Secured, R): Resource           │  │ │
-│  │  └────────────────────────────────────────────────────────────────────────┘  │ │
-│  │         │                                    │                           │ │
-│  │         ▼                                    ▼                           │ │
-│  │  ┌──────────────────────┐    ┌──────────────────────────────┐            │ │
-│  │  │ GrpcProtocolAuth    │    │ HttpProtocolAuthService      │            │ │
-│  │  │ Service             │    │ (auth/HttpProtocolAuth       │            │ │
-│  │  │ (auth/GrpcProtocol │    │ Service.java)               │            │ │
-│  │  │ AuthService.java)  │    │                              │            │ │
-│  │  │                    │    │ parseResource() → Http         │            │ │
-│  │  │ parseResource()    │    │   ResourceParser             │            │ │
-│  │  │  → GrpcResource   │    │ parseIdentity() → Http       │            │ │
-│  │  │    Parser         │    │   IdentityContextBuilder     │            │ │
-│  │  │ parseIdentity()    │    │                              │            │ │
-│  │  │  → GrpcIdentity   │    │                              │            │ │
-│  │  │    ContextBuilder  │    │                              │            │ │
-│  │  └──────────────────────┘    └──────────────────────────────┘            │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 认证体系完整架构</span><span class="s">客户端 (client/) — 发起登录、携带Token请求API</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">RamClientAuthService</span><span class="s">(client/auth/ram/)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">里云AK/SK认证</div><div class="dgm-note" style="border:none;background:none;padding:0;">gn(accessKey,</div><div class="dgm-note" style="border:none;background:none;padding:0;">cretKey) → String</div></div></div></div></div><div class="dgm-note">HTTP POST             HTTP POST            HTTP POST                            /v1/auth/login       /v1/auth/login      /v1/auth/login</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">服务端 — 认证处理链 (auth/ + plugin/auth/)</span><span class="s">① AuthController.login() → 接收 username/password</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② AuthPluginManager.findAuthServiceSpiImpl(type)</span><span class="s">(plugin/auth/spi/server/AuthPluginManager.java:68-82)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">通过 SPI 加载 AuthPluginService 实现</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">③ AuthPluginService (plugin/auth/spi/server/)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">identityNames()</span><span class="typ">: Collection&lt;String&gt;         (定义身份字段)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">enableAuth(action, type): boolean          (是否启用认证)</div><div class="dgm-note" style="border:none;background:none;padding:0;">validateIdentity(IdentityContext, Resource) (身份校验)</div><div class="dgm-note" style="border:none;background:none;padding:0;">validateAuthority(IdentityContext, Permission) (权限鉴权)</div><ul class="dgm-kv"><li><span class="fld">getAuthServiceName()</span><span class="typ">: String             (认证服务名称)</span></li></ul><ul class="dgm-kv"><li><span class="fld">isLoginEnabled()</span><span class="typ">: boolean                 (是否启用登录)</span></li></ul><ul class="dgm-kv"><li><span class="fld">isAdminRequest()</span><span class="typ">: boolean                 (是否需要管理员)</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">④ AbstractProtocolAuthService (auth/)</span><span class="s">(auth/AbstractProtocolAuthService.java:50-148)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">enableAuth(Secured): boolean           (启用认证判断)</div><div class="dgm-note" style="border:none;background:none;padding:0;">validateIdentity(IdentityContext, Resource): boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">validateAuthority(IdentityContext, Permission): boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">checkServerIdentity(R, Secured): ServerIdentityResult</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseServerIdentity(R): ServerIdentity  (抽象—子类实现)</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseSpecifiedResource(Secured): Resource</div><div class="dgm-note" style="border:none;background:none;padding:0;">useSpecifiedParserToParse(Secured, R): Resource</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">GrpcProtocolAuth</span><span class="s">Service</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(auth/GrpcProtocol</div><div class="dgm-note" style="border:none;background:none;padding:0;">AuthService.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseResource()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ GrpcResource</div><div class="dgm-note" style="border:none;background:none;padding:0;">Parser</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseIdentity()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ GrpcIdentity</div><div class="dgm-note" style="border:none;background:none;padding:0;">ContextBuilder</div></div></div></div>
 
 #### 7.1.3 源码走读
 
@@ -381,46 +310,7 @@ Nacos 2.5.3 预设 3 种角色——通过 `AuthPluginService.isAdmin()` 方法�
 
 #### 7.2.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    Nacos 2.5.3 RBAC 权限模型                           │
-│                                                                    │
-│  ┌──────────────────────────────────────────────────────────────┐    │
-│  │              AuthPluginService.validateAuthority()             │    │
-│  │  (plugin/auth/spi/server/AuthPluginService.java:78-84)    │    │
-│  └────────────────────────┬─────────────────────────────────────┘    │
-│                           │                                         │
-│              ┌────────────┼────────────┐                           │
-│              ▼            ▼            ▼                           │
-│  ┌──────────────┐ ┌──────────────┐ ┌──────────────┐            │
-│  │ ROLE_ADMIN  │ │ ROLE_OPERATOR│ │ ROLE_VIEWER │            │
-│  │              │ │              │ │              │            │
-│  │ 所有权限    │ │ 读写配置/   │ │ 只读所有    │            │
-│  │ rw *:*:*    │ │ 服务        │ │ 资源        │            │
-│  │              │ │ rw config/*  │ │ r *:*:*     │            │
-│  │ isAdmin()    │ │ rw naming/* │ │              │            │
-│  │ → true      │ │              │ │              │            │
-│  └──────────────┘ └──────────────┘ └──────────────┘            │
-│                                                                    │
-│  ┌──────────────────────────────────────────────────────────────┐    │
-│  │ Permission 对象 (plugin/auth/api/Permission.java)          │    │
-│  │ ┌────────────────────────────────────────────────────────────┐ │    │
-│  │ │ resource: String   — 资源标识 (Ant-style路径匹配)      │ │    │
-│  │ │ action: String     — 操作类型 ("r"=读 / "w"=写)      │ │    │
-│  │ └────────────────────────────────────────────────────────────┘ │    │
-│  └──────────────────────────────────────────────────────────────┘    │
-│                                                                    │
-│  ┌──────────────────────────────────────────────────────────────┐    │
-│  │ 资源匹配规则 (Ant-style)                                   │    │
-│  │ ┌────────────────────────────────────────────────────────────┐ │    │
-│  │ │ *:*:*              — 匹配所有资源 (管理员)              │ │    │
-│  │ │ namespace:*:*       — 匹配该命名空间下所有资源          │ │    │
-│  │ │ namespace:group:*   — 匹配该分组下所有配置              │ │    │
-│  │ │ namespace:group:id  — 精确匹配特定配置                   │ │    │
-│  │ └────────────────────────────────────────────────────────────┘ │    │
-│  └──────────────────────────────────────────────────────────────┘    │
-└──────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 RBAC 权限模型</span><span class="s">AuthPluginService.validateAuthority()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/auth/spi/server/AuthPluginService.java:78-84)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ROLE_ADMIN</span><span class="s">所有权限        读</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">rw *:*:*</div><div class="dgm-note" style="border:none;background:none;padding:0;">isAdmin()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ true</div><div class="dgm-note" style="border:none;background:none;padding:0;">Permission 对象</div><ul class="dgm-kv"><li><span class="fld">resource</span><span class="typ">: S</span></li></ul><ul class="dgm-kv"><li><span class="fld">action</span><span class="typ">: Str</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">资源匹配规则 (Ant-style)</span><span class="s">*:*:*              — 匹配所有资源 (管理员)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">namespace</span><span class="typ">: *:*       — 匹配该命名空间下所有资源</span></li></ul><ul class="dgm-kv"><li><span class="fld">namespace</span><span class="typ">: group:*   — 匹配该分组下所有配置</span></li></ul><ul class="dgm-kv"><li><span class="fld">namespace</span><span class="typ">: group:id  — 精确匹配特定配置</span></li></ul></div></div></div>
 
 #### 7.2.3 源码走读
 
@@ -551,52 +441,7 @@ Nacos 2.5.3 的认证过滤器链通过 `AbstractProtocolAuthService<R>` 抽象�
 
 #### 7.3.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 2.5.3 AuthFilterChain 完整架构                          │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │             AbstractProtocolAuthService<R>                              │ │
-│  │  (auth/AbstractProtocolAuthService.java:50-148)                       │ │
-│  │                                                                        │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │ authenticate(Request, Secured) → 4个阶段                        │  │ │
-│  │  │  ① checkServerIdentity(request, secured)   → ServerIdentityResult│  │ │
-│  │  │  ② enableAuth(secured)                     → boolean             │  │ │
-│  │  │  ③ validateIdentity(identityContext, resource) → boolean         │  │ │
-│  │  │  ④ validateAuthority(identityContext, permission) → boolean      │  │ │
-│  │  └──────────────────────────────────────────────────────────────────────┘  │ │
-│  │         │                                    │                           │ │
-│  │         ▼                                    ▼                           │ │
-│  │  ┌──────────────────────┐    ┌──────────────────────────────┐            │ │
-│  │  │ GrpcProtocolAuth    │    │ HttpProtocolAuthService      │            │ │
-│  │  │ Service             │    │                              │            │ │
-│  │  │ ① checkServerId() │    │ ① checkServerId()           │            │ │
-│  │  │    → GrpcIdentity  │    │    → HttpIdentity           │            │ │
-│  │  │ ② parseResource()  │    │ ② parseResource()           │            │ │
-│  │  │    → ConfigGrpc   │    │    → ConfigHttp             │            │ │
-│  │  │      ResourceParser │    │      ResourceParser         │            │ │
-│  │  │    → NamingGrpc   │    │    → NamingHttp             │            │ │
-│  │  │      ResourceParser │    │      ResourceParser         │            │ │
-│  │  │ ③ parseIdentity()  │    │ ③ parseIdentity()           │            │ │
-│  │  │    → GrpcIdentity  │    │    → HttpIdentity           │            │ │
-│  │  │      ContextBuilder │    │      ContextBuilder         │            │ │
-│  │  └──────────────────────┘    └──────────────────────────────┘            │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │  认证 SPI 层                                                            │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌─────────────────┐   │ │
-│  │  │ AuthPluginManager   │  │ AuthPluginService    │  │ ServerIdentity   │   │ │
-│  │  │ (Singleton)        │  │ (SPI接口)           │  │ Checker         │   │ │
-│  │  │                    │  │                      │  │                 │   │ │
-│  │  │ findAuthService    │  │ enableAuth()        │  │ check()         │   │ │
-│  │  │ SpiImpl(type)     │  │ validateIdentity()  │  │ init()          │   │ │
-│  │  │                    │  │ validateAuthority() │  │                 │   │ │
-│  │  └──────────────────────┘  └──────────────────────┘  └─────────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 AuthFilterChain 完整架构</span><span class="s">AbstractProtocolAuthService&lt;R&gt;</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(auth/AbstractProtocolAuthService.java:50-148)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">authenticate(Request, Secured) → 4个阶段</span><span class="s">① checkServerIdentity(request, secured)   → ServerIdentityResult</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">② enableAuth(secured)                     → boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">③ validateIdentity(identityContext, resource) → boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">④ validateAuthority(identityContext, permission) → boolean</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HttpProtocolAuthService</span><span class="s">checkServerId()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ HttpIdentity</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseResource()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ ConfigHttp</div><div class="dgm-note" style="border:none;background:none;padding:0;">ResourceParser</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NamingHttp</div><div class="dgm-note" style="border:none;background:none;padding:0;">ResourceParser</div><div class="dgm-note" style="border:none;background:none;padding:0;">parseIdentity()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ HttpIdentity</div><div class="dgm-note" style="border:none;background:none;padding:0;">ContextBuilder</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">认证 SPI 层</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServerIdentity</span><span class="s">ker</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">eck()</div><div class="dgm-note" style="border:none;background:none;padding:0;">t()</div></div></div></div></div></div>
 
 #### 7.3.3 源码走读
 
@@ -749,58 +594,7 @@ Console 模块 12 个 Controller 类按功能域分为 6 大类共 18 个 API �
 
 #### 7.4.3 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                 Nacos 2.5.3 Console 控制台后端 API 调用链路                   │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Console前端 (React SPA)                                                 │ │
-│  │ ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │ │ 用户管理页面     │  │ 角色管理页面     │  │ 权限管理页面 │   │ │
-│  │ │ createUser()      │  │ addRole()         │  │ grantPerm()   │   │ │
-│  │ │ deleteUser()      │  │ deleteRole()      │  │ revokePerm()  │   │ │
-│  │ └────────┬─────────┘  └──────────┬───────────┘  └──────┬───────┘   │ │
-│  └──────────┼────────────────────────┼──────────────────────┼────────────┘ │
-│             │                        │                      │                │
-│    POST/PUT/DELETE            POST/DELETE           POST/DELETE           │
-│    /v1/auth/users         /v1/auth/roles      /v1/auth/permissions       │
-│             │                        │                      │                │
-│  ┌──────────▼────────────────────────▼──────────────────────▼────────────┐ │
-│  │ Console后端 (console/controller/)                                        │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │ │ UserController     │  │ RoleController      │  │ Permission    │   │ │
-│  │ │                    │  │                    │  │ Controller   │   │ │
-│  │ │ createUser()       │  │ addRole()          │  │ grant()      │   │ │
-│  │ │ deleteUser()       │  │ deleteRole()       │  │ revoke()     │   │ │
-│  │ │ updateUser()       │  │ getRoles()         │  │ getPerms()   │   │ │
-│  │ │ getUsers()        │  │                    │  │              │   │ │
-│  │ └────────┬─────────┘  └──────────┬───────────┘  └──────┬───────┘   │ │
-│  │         │                       │                      │               │ │
-│  │         └───────────────────────┼──────────────────────┘               │ │
-│  │                              ▼                                      │ │
-│  │  ┌────────────────────────────────────────────────────────────────────┐ │ │
-│  │ │ HttpProtocolAuthService（认证过滤器链）                        │ │ │
-│  │ │ ┌──────────────────────────────────────────────────────────────────┐ │ │ │
-│  │ │ │ authManager → validateToken() → authorizePermission()        │ │ │ │
-│  │ │ │ 1. 提取Authorization Header → 解析JWT → 验证签名           │ │ │ │
-│  │ │ │ 2. 提取username → 查询用户角色 → 获取权限列表            │ │ │ │
-│  │ │ │ 3. Ant-style资源路径匹配 → action权限比对                 │ │ │ │
-│  │ │ │ 4. 通过→继续路由 / 拒绝→返回HTTP 403                     │ │ │ │
-│  │ │ └──────────────────────────────────────────────────────────────────┘ │ │ │
-│  │ └────────────────────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                      │
-│                                      ▼                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ MySQL数据库                                                             │ │
-│  │ ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │ │ users表            │  │ roles表            │  │ permissions表│   │ │
-│  │ │ username: nacos    │  │ role: ROLE_ADMIN  │  │ resource:*:*│   │ │
-│  │ │ password: $2a$10… │  │ username:nacos    │  │ action:rw   │   │ │
-│  │ └──────────────────────┘  └──────────────────────┘  └──────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 Console 控制台后端 API 调用链路</span><span class="s">Console前端 (React SPA)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">用户管理页面          角色管理页面          权限管理页面</div><div class="dgm-note" style="border:none;background:none;padding:0;">createUser()           addRole()              grantPerm()</div><div class="dgm-note" style="border:none;background:none;padding:0;">deleteUser()           deleteRole()           revokePerm()</div></div></div><div class="dgm-note">POST/PUT/DELETE            POST/DELETE           POST/DELETE                 /v1/auth/users         /v1/auth/roles      /v1/auth/permissions</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Console后端 (console/controller/)</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">UserController</span><span class="s">createUser()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">deleteUser()</div><div class="dgm-note" style="border:none;background:none;padding:0;">updateUser()</div><div class="dgm-note" style="border:none;background:none;padding:0;">getUsers()</div><div class="dgm-note" style="border:none;background:none;padding:0;">HttpProtocolAuthServic</div><div class="dgm-note" style="border:none;background:none;padding:0;">authManager → valida</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. 提取Authorization H</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 提取username → 查询用户</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. Ant-style资源路径匹配 →</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. 通过→继续路由 / 拒绝→返回HT</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL数据库</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ssions表</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">urce</span><span class="typ">: *:*</span></li></ul><ul class="dgm-kv"><li><span class="fld">n</span><span class="typ">: rw</span></li></ul></div></div></div></div></div>
 
 #### 7.4.4 源码走读——UserController 用户管理 CRUD
 
@@ -1030,48 +824,7 @@ Nacos 2.5.3 用户登录 API——`POST /v1/auth/login`——定义在 `UserCont
 
 #### 7.5.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                    Nacos 2.5.3 登录认证全链路                                  │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ 用户浏览器/控制台                                                       │ │
-│  │ POST /v1/auth/login                                                     │ │
-│  │ Body: {"username":"nacos","password":"***"}                          │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                      │
-│                                      ▼                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ UserController.login()                                                 │ │
-│  │ ┌──────────────────────────────────────────────────────────────────────────┐ │ │
-│  │ │ 1. authManager.login(username, password)                            │ │ │
-│  │ │    → NacosAuthPluginService.identityAuthenticate()                 │ │ │
-│  │ │    → BCryptPasswordEncoder.matches(password, storedHash)           │ │ │
-│  │ │    → 认证成功: 返回 User 对象                                      │ │ │
-│  │ │                                                                    │ │ │
-│  │ │ 2. JwtTokenUtils.generateToken(user):                              │ │ │
-│  │ │    Header: {"alg":"HS256","typ":"JWT"}                          │ │ │
-│  │ │    Payload: {"sub":"nacos","exp":1629966600,"iat":…}          │ │ │
-│  │ │    Signature: HMAC-SHA256(Header.Payload, secretKey)              │ │ │
-│  │ │    → accessToken = Header.Payload.Signature                       │ │ │
-│  │ └──────────────────────────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                      │
-│               HTTP Response 200 {"accessToken":"eyJhbG…","tokenTtl":18000}  │
-│                                      │                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ 后续 API 请求—携带 Authorization Header                                   │ │
-│  │ Authorization: Bearer eyJhbG…9...                            │ │
-│  │                                      │                                   │ │
-│  │ HttpProtocolAuthService:                                                │ │
-│  │ 1. 提取 Authorization Header                                            │ │
-│  │ 2. 解析 JWT—验证 HMAC-SHA256 签名                                  │ │
-│  │ 3. 验证 exp—是否过期                                                 │ │
-│  │ 4. 提取 sub—username                                                │ │
-│  │ 5. 查询用户角色+权限—RBAC 鉴权                                    │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 登录认证全链路</span><span class="s">用户浏览器/控制台</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">POST /v1/auth/login</div><ul class="dgm-kv"><li><span class="fld">Body</span><span class="typ">: {"username":"nacos","password":"***"}</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UserController.login()</span><span class="s">1. authManager.login(username, password)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ NacosAuthPluginService.identityAuthenticate()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ BCryptPasswordEncoder.matches(password, storedHash)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 认证成功: 返回 User 对象</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. JwtTokenUtils.generateToken(user):</div><ul class="dgm-kv"><li><span class="fld">Header</span><span class="typ">: {"alg":"HS256","typ":"JWT"}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Payload</span><span class="typ">: {"sub":"nacos","exp":1629966600,"iat":…}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Signature</span><span class="typ">: HMAC-SHA256(Header.Payload, secretKey)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ accessToken = Header.Payload.Signature</div></div></div><div class="dgm-note">HTTP Response 200 {"accessToken":"eyJhbG…","tokenTtl":18000}</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">后续 API 请求—携带 Authorization Header</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Authorization</span><span class="typ">: Bearer eyJhbG…9...</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">HttpProtocolAuthService:</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. 提取 Authorization Header</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 解析 JWT—验证 HMAC-SHA256 签名</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 验证 exp—是否过期</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. 提取 sub—username</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. 查询用户角色+权限—RBAC 鉴权</div></div></div></div>
 
 #### 7.5.3 源码走读
 
@@ -1305,51 +1058,7 @@ Nacos 2.5.3 命名空间（Namespace）——用于实现多环境隔离（开�
 
 #### 7.6.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                   Nacos 2.5.3 命名空间 CRUD 全链路                           │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Console前端 (React SPA)—命名空间管理页面                             │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│           │ GET/POST/PUT/DELETE /v1/console/namespaces                      │
-│           ▼                                                                  │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Console后端—NamespaceController                                       │ │
-│  │ ┌──────────────────────────────────────────────────────────────────────────┐ │ │
-│  │ │ GET    /v1/console/namespaces → getNamespaces()                   │ │ │
-│  │ │ POST   /v1/console/namespaces → createNamespace()                  │ │ │
-│  │ │ PUT    /v1/console/namespaces → editNamespace()                    │ │ │
-│  │ │ DELETE /v1/console/namespaces → deleteNamespace()                  │ │ │
-│  │ └──────────────────────────────────────────────────────────────────────────┘ │ │
-│  │         │                                                               │ │
-│  │         ▼                                                               │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────────┐ │ │
-│  │ │ 命名空间实体—Namespace                                              │ │ │
-│  │ │ ┌────────────────────────────────────────────────────────────────────┐ │ │ │
-│  │ │ │ namespaceId: String (UUID v4)—36字符                           │ │ │ │
-│  │ │ │ namespaceName: String—如 "生产环境"                           │ │ │ │
-│  │ │ │ namespaceDesc: String—如 "生产环境配置"                       │ │ │ │
-│  │ │ │ quota: int—命名空间配额（默认200）                          │ │ │ │
-│  │ │ │ configCount: int—当前配置数量                               │ │ │ │
-│  │ │ │ type: int—0=全局 1=私有 2=自定义                           │ │ │ │
-│  │ │ └────────────────────────────────────────────────────────────────────┘ │ │ │
-│  │ └──────────────────────────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                      │
-│                                      ▼                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ MySQL—tenant_info 表                                                     │ │
-│  │ ┌──────────────┬──────────────┬──────────────┬──────────────────┐        │ │
-│  │ │ tenant_id    │ tenant_name  │ tenant_desc  │ quota            │        │ │
-│  │ ├──────────────┼──────────────┼──────────────┼──────────────────┤        │ │
-│  │ │ c3d8a5f2... │ 生产环境    │ 生产环境配置│ 200              │        │ │
-│  │ │ d4e9b6g3... │ 测试环境    │ 测试环境配置│ 200              │        │ │
-│  │ │ e5fac7h4... │ 开发环境    │ 开发环境配置│ 200              │        │ │
-│  │ └──────────────┴──────────────┴──────────────┴──────────────────┘        │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 命名空间 CRUD 全链路</span><span class="s">Console前端 (React SPA)—命名空间管理页面</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Console后端—NamespaceController</span><span class="s">GET    /v1/console/namespaces → getNamespaces()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">POST   /v1/console/namespaces → createNamespace()</div><div class="dgm-note" style="border:none;background:none;padding:0;">PUT    /v1/console/namespaces → editNamespace()</div><div class="dgm-note" style="border:none;background:none;padding:0;">DELETE /v1/console/namespaces → deleteNamespace()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">命名空间实体—Namespace</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">namespaceId</span><span class="typ">: String (UUID v4)—36字符</span></li></ul><ul class="dgm-kv"><li><span class="fld">namespaceName</span><span class="typ">: String—如 "生产环境"</span></li></ul><ul class="dgm-kv"><li><span class="fld">namespaceDesc</span><span class="typ">: String—如 "生产环境配置"</span></li></ul><ul class="dgm-kv"><li><span class="fld">quota</span><span class="typ">: int—命名空间配额（默认200）</span></li></ul><ul class="dgm-kv"><li><span class="fld">configCount</span><span class="typ">: int—当前配置数量</span></li></ul><ul class="dgm-kv"><li><span class="fld">type</span><span class="typ">: int—0=全局 1=私有 2=自定义</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MySQL—tenant_info 表</span><span class="s">tenant_id      tenant_name    tenant_desc    quota</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">c3d8a5f2...   生产环境      生产环境配置  200</div><div class="dgm-note" style="border:none;background:none;padding:0;">d4e9b6g3...   测试环境      测试环境配置  200</div><div class="dgm-note" style="border:none;background:none;padding:0;">e5fac7h4...   开发环境      开发环境配置  200</div></div></div></div>
 
 #### 7.6.3 源码走读
 
@@ -1546,35 +1255,17 @@ Nacos 2.5.3 系统健康检查 API 通过 `HealthController`（`console/src/main
 
 #### 7.7.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                   Nacos 2.5.3 健康检查三层架构                                │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Kubernetes kubelet                                                        │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │  │ Liveness Probe     │  │ Readiness Probe    │  │ Prometheus    │   │ │
-│  │  │ GET /health       │  │ GET /health/       │  │ GET /metrics  │   │ │
-│  │  │ interval: 10s      │  │ readiness          │  │ scrape: 30s   │   │ │
-│  │  │ failureThreshold:3 │  │ initialDelay:30s  │  │               │   │ │
-│  │  └────────┬─────────┘  └──────────┬───────────┘  └──────┬───────┘   │ │
-│  └──────────┼────────────────────────┼──────────────────────┼────────────┘ │
-│             │                        │                      │                │
-│  ┌──────────▼────────────────────────▼──────────────────────▼────────────┐ │
-│  │ Nacos Server (Java)                                                    │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │  │ HealthController   │  │ HealthControllerV2  │  │ Metrics      │   │ │
-│  │  │                    │  │                      │  │ Exporter     │   │ │
-│  │  │ /v1/console/      │  │ /v1/console/health │  │              │   │ │
-│  │  │ health            │  │ /readiness          │  │ Prometheus   │   │ │
-│  │  │                    │  │                      │  │ Format       │   │ │
-│  │  │ return "OK"       │  │ checkConfig()       │  │              │   │ │
-│  │  │                    │  │ checkNaming()       │  │ JVM metrics  │   │ │
-│  │  │ 进程级别存活     │  │ checkDatabase()     │  │ gRPC metrics │   │ │
-│  │  └──────────────────────┘  └──────────────────────┘  └──────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">7.7.3</span><span class="tt">Liveness vs Readiness 探针对比</span></div><table><thead><tr><th>维度</th><th>Liveness Probe</th><th>Readiness Probe</th></tr></thead><tbody>
+<tr><td>检测目标</td><td>进程存活</td><td>模块就绪</td></tr>
+<tr><td>返回 200</td><td>进程存活</td><td>所有模块就绪</td></tr>
+<tr><td>返回 503</td><td>N/A</td><td>任一模块未就绪</td></tr>
+<tr><td>失败动作</td><td>杀死 Pod 重启</td><td>从 Service Endpoint 摘除 Pod</td></tr>
+<tr><td>恢复动作</td><td>新 Pod 启动</td><td>重新加入 Service Endpoint</td></tr>
+<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 503</td></tr>
+<tr><td>误杀风险</td><td>低——仅检测进程</td><td>低——仅摘除流量不重启</td></tr>
+<tr><td>检测频率</td><td>每 10 秒</td><td>每 10 秒</td></tr>
+<tr><td>initialDelay</td><td>30 秒</td><td>60 秒——给模块充分启动时间</td></tr>
+</tbody></table></div>
 
 #### 7.7.3 源码走读
 
@@ -1688,23 +1379,17 @@ public class HealthControllerV2 {
 
 3. **与 Liveness Probe 分离关注点**：
 
-```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                  Liveness vs Readiness 对比                             │
-├──────────────┬────────────────────┬─────────────────────────────────┤
-│ 维度         │ Liveness Probe     │ Readiness Probe                 │
-├──────────────┼────────────────────┼─────────────────────────────────┤
-│ 检测目标     │ 进程存活          │ 模块就绪                       │
-│ 返回200      │ 进程存活          │ 所有模块就绪                  │
-│ 返回503      │ N/A               │ 任一模块未就绪                │
-│ 失败动作     │ 杀死Pod重启       │ 从Service Endpoint摘除Pod     │
-│ 恢复动作     │ 新Pod启动        │ 重新加入Service Endpoint       │
-│ MySQL不可达   │ 进程仍存活→200  │ 数据库未就绪→503              │
-│ 误杀风险     │ 低—仅检测进程   │ 低—仅摘除流量不重启           │
-│ 检测频率     │ 每10秒           │ 每10秒                         │
-│ initialDelay  │ 30秒             │ 60秒—给模块充分启动时间       │
-└──────────────┴────────────────────┴─────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-cap"><span class="no">7.7.3</span><span class="tt">Liveness vs Readiness 探针对比</span></div><table><thead><tr><th>维度</th><th>Liveness Probe</th><th>Readiness Probe</th></tr></thead><tbody>
+<tr><td>检测目标</td><td>进程存活</td><td>模块就绪</td></tr>
+<tr><td>返回 200</td><td>进程存活</td><td>所有模块就绪</td></tr>
+<tr><td>返回 503</td><td>N/A</td><td>任一模块未就绪</td></tr>
+<tr><td>失败动作</td><td>杀死 Pod 重启</td><td>从 Service Endpoint 摘除 Pod</td></tr>
+<tr><td>恢复动作</td><td>新 Pod 启动</td><td>重新加入 Service Endpoint</td></tr>
+<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 503</td></tr>
+<tr><td>误杀风险</td><td>低——仅检测进程</td><td>低——仅摘除流量不重启</td></tr>
+<tr><td>检测频率</td><td>每 10 秒</td><td>每 10 秒</td></tr>
+<tr><td>initialDelay</td><td>30 秒</td><td>60 秒——给模块充分启动时间</td></tr>
+</tbody></table></div>
 
 **关键场景**——MySQL 短暂不可达（网络抖动 2 秒）：
 - Liveness Probe——进程存活 → 返回 `200 OK`——Pod 不重启——无影响。
@@ -1923,42 +1608,7 @@ Istio 集成解决的核心问题：
 
 #### 7.8.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                    Nacos 2.5.3 → Istio 集成架构                               │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Nacos Server (Java)                                                    │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │  │ NacosMcpService    │  │ ServiceEntryMcp     │  │ NacosService │   │ │
-│  │  │ (istio/mcp/)      │  │ Generator           │  │ InfoResource │   │ │
-│  │  │                    │  │ (istio/mcp/)       │  │ Watcher     │   │ │
-│  │  │ MCP Server        │  │                    │  │             │   │ │
-│  │  │ listen(:port)     │  │ NacosServiceInfo   │  │ subscribe() │   │ │
-│  │  │ → gRPC双向流    │  │ → ServiceEntry    │  │             │   │ │
-│  │  └────────┬─────────┘  └──────────┬───────────┘  └──────┬───────┘   │ │
-│  └──────────┼────────────────────────┼──────────────────────┼────────────┘ │
-│             │                        │                      │                │
-│  ┌──────────▼────────────────────────▼──────────────────────▼────────────┐ │
-│  │ Istio Pilot                                                             │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │ MCP Client → gRPC双向流连接 NacosMcpService                   │  │ │
-│  │  │ 接收 ServiceEntry delta 增量更新                                 │  │ │
-│  │  └──────────────────────────────────────────────────────────────────────┘  │ │
-│  │         │                                                                │ │
-│  │         ▼                                                                │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │  │ Istio Service Mesh 配置更新                                       │  │ │
-│  │  │ ┌──────────────────────┐  ┌──────────────────────────────────────┐    │ │
-│  │  │ │ ServiceEntry        │  │ Envoy Sidecar                     │    │ │
-│  │  │ │ hosts: [svc.nacos]│  │ 更新负载均衡配置                  │    │ │
-│  │  │ │ endpoints:         │  │ → 服务流量自动路由到新实例     │    │ │
-│  │  │ │   - 10.0.1:8080  │  │                                    │    │ │
-│  │  │ │   - 10.0.2:8080  │  │                                    │    │ │
-│  │  └──────────────────────┘  └──────────────────────────────────────┘    │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 → Istio 集成架构</span><span class="s">Nacos Server (Java)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NacosMcpService         ServiceEntryMcp          NacosService</div><div class="dgm-note" style="border:none;background:none;padding:0;">(istio/mcp/)           Generator                InfoResource</div><div class="dgm-note" style="border:none;background:none;padding:0;">(istio/mcp/)            Watcher</div><div class="dgm-note" style="border:none;background:none;padding:0;">MCP Server</div><div class="dgm-note" style="border:none;background:none;padding:0;">listen(:port)          NacosServiceInfo        subscribe()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ gRPC双向流         → ServiceEntry</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Istio Pilot</span><span class="s">MCP Client → gRPC双向流连接 NacosMcpService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">接收 ServiceEntry delta 增量更新</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Istio Service Mesh 配置更新</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Envoy Sidecar</span><span class="s">负载均衡配置</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">服务流量自动路由到新实例</div></div></div></div></div></div>
 
 #### 7.8.3 源码走读
 
@@ -2372,55 +2022,7 @@ CMDB 模块解决的核心问题：
 3. **标签数据持久化（Label Persistence）**：CMDB 标签数据存储在 Nacos 内嵌数据库中——通过 `CmdbService.load()` 方法——从数据库加载所有标签数据到内存缓存——减少数据库查询——提升标签匹配性能——内存缓存定时刷新——保证标签数据的最终一致性——避免每次服务发现都查询数据库——降低数据库压力——提升服务发现响应速度。
 #### 7.9.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                   Nacos 2.5.3 CMDB 标签数据管理——全流程                       │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ 外部CMDB系统（物理机/虚拟机/容器）                                    │ │
-│  │ ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │ │ 物理机1            │  │ 物理机2            │  │ 虚拟机1      │   │ │
-│  │ │ ip:10.0.1.100     │  │ ip:10.0.2.100    │  │ ip:10.0.3.100 │   │ │
-│  │ │ region:cn-hangzhou │  │ region:cn-beijing  │  │ region:cn-hz  │   │ │
-│  │ │ rack:A01           │  │ rack:B03           │  │ zone:az1      │   │ │
-│  │ │ env:prod           │  │ env:prod           │  │ env:staging   │   │ │
-│  │ └──────────────────────┘  └──────────────────────┘  └──────────────┘   │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-│                                      │                                      │
-│           定时同步标签数据（每10分钟）                                     │
-│                                      │                                      │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ Nacos CMDB模块（cmdb/）                                                │ │
-│  │  ┌──────────────────────────────────────────────────────────────────┐ │ │
-│  │ │ CmdbService                                                      │ │ │
-│  │ │ ┌────────────────────────────────────────────────────────────────┐ │ │ │
-│  │ │ │ CmdbReader—query(String query): List<CmdbData>            │ │ │ │
-│  │ │ │ CmdbWriter—write(String instanceId, Map labels)            │ │ │ │
-│  │ │ │ CmdbQueryExprParser.parse(                                │ │ │ │
-│  │ │ │   "env=prod AND region=cn-hangzhou")                      │ │ │ │
-│  │ │ │ → AST抽象语法树 → 遍历ConcurrentHashMap                  │ │ │ │
-│  │ │ │ → 返回匹配标签的实例列表                                │ │ │ │
-│  │ │ └────────────────────────────────────────────────────────────────┘ │ │ │
-│  │ │         │                    │                                    │ │ │
-│  │ │         ▼                    ▼                                    │ │ │
-│  │ │ ┌──────────────────┐  ┌────────────────────────────────────┐      │ │ │
-│  │ │ │ CmdbReader      │  │ CmdbWriter                        │      │ │ │
-│  │ │ │ query()         │  │ write()                          │      │ │ │
-│  │ │ └──────┬─────────┘  └────────────────────────────────────┘      │ │ │
-│  │ └────────┼──────────────────────────────────────────────────────┘ │ │
-│  │         │                                                          │ │
-│  │         ▼                                                          │ │
-│  │  ┌──────────────────────────────────────────────────────────────────┐ │ │
-│  │  │ CmdbProvider—ConcurrentHashMap内存存储                      │ │ │
-│  │  │ key: instanceId → value: labels Map                         │ │ │
-│  │  │ "10.0.1:8080" → {"env":"prod","region":"cn-hz",        │ │ │
-│  │  │                     "rack":"A01","zone":"az1"}             │ │ │
-│  │  │ "10.0.2:8080" → {"env":"prod","region":"cn-bj",        │ │ │
-│  │  │                     "rack":"B03","zone":"az2"}             │ │ │
-│  │  └──────────────────────────────────────────────────────────────────┘ │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 CMDB 标签数据管理——全流程</span><span class="s">外部CMDB系统（物理机/虚拟机/容器）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">0.3.100</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ion</span><span class="typ">: cn-hz</span></li></ul><ul class="dgm-kv"><li><span class="fld">e</span><span class="typ">: az1</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">:staging</div></div></div></div></div><div class="dgm-note">定时同步标签数据（每10分钟）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos CMDB模块（cmdb/）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbService</span><span class="s">CmdbReader—query(String query): List&lt;CmdbData&gt;</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbWriter—write(String instanceId, Map labels)</div><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbQueryExprParser.parse(</div><div class="dgm-note" style="border:none;background:none;padding:0;">"env=prod AND region=cn-hangzhou")</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ AST抽象语法树 → 遍历ConcurrentHashMap</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 返回匹配标签的实例列表</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbWriter</span><span class="s">write()</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbProvider—ConcurrentHashMap内存存储</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">key</span><span class="typ">: instanceId → value: labels Map</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.1:8080" → {"env":"prod","region":"cn-hz",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"A01","zone":"az1"}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.2:8080" → {"env":"prod","region":"cn-bj",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"B03","zone":"az2"}</div></div></div></div>
 
 #### 7.9.3 源码走读
 
@@ -2599,45 +2201,7 @@ Nacos 2.5.3 通过 `address/` 模块（8 个 Java 文件）实现 AddressServer 
 
 #### 7.10.2 核心类关系图
 
-```
-┌──────────────────────────────────────────────────────────────────────────────────┐
-│                Nacos 2.5.3 AddressServer 独立部署架构                          │
-│                                                                              │
-│  ┌────────────────────────────────────────────────────────────────────────────┐ │
-│  │ AddressServer (独立Spring Boot应用—address/AddressServer.java)        │ │
-│  │  ┌──────────────────────┐  ┌──────────────────────┐  ┌──────────────┐   │ │
-│  │ │ ServerList         │  │ AddressServer       │  │ Nacos Server │   │ │
-│  │ │ Controller         │  │ Manager             │  │ 集群节点    │   │ │
-│  │ │                    │  │                    │  │              │   │ │
-│  │ │ GET /nacos/       │  │ generateResponse() │  │ 10.0.1:8848 │   │ │
-│  │ │ serverlist         │  │ → JSON:           │  │ (健康)      │   │ │
-│  │ │                    │  │ {"serverList":     │  │              │   │ │
-│  │ │ 返回可用Nacos    │  │  ["10.0.1:8848", │  │ 10.0.2:8848 │   │ │
-│  │ │ Server地址列表    │  │   "10.0.2:8848"]}│  │ (健康)      │   │ │
-│  │ └────────┬─────────┘  └──────────────────────┘  └──────┬───────┘   │ │
-│  └──────────┼────────────────────────────────────────────────┼────────────┘ │
-│             │                                                │              │
-│             │  健康检查: GET /nacos/v1/console/health      │              │
-│             │────────────────────────────────────────────────→ │              │
-│             │  ← 200 OK / 非200                             │              │
-│             │                                                │              │
-│  ┌──────────▼────────────────────────────────────────────────────────────┐ │
-│  │ Nacos 客户端 (client/)                                                │ │
-│  │  ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │ │ ConfigServerListManager (client/config/impl/)                     │  │ │
-│  │ │                                                                    │  │ │
-│  │ │ 每30秒 GET /nacos/serverlist → 解析JSON serverList               │  │ │
-│  │ │ → 更新本地ServerList → 自动剔除不可用Server                      │  │ │
-│  │ │ → 自动纳入新增Server → 零停机动态切换                            │  │ │
-│  │ └──────────────────────────────────────────────────────────────────────┘  │ │
-│  │                                                                       │ │
-│  │ NamingServerListManager (client/naming/)                               │ │
-│  │ ┌──────────────────────────────────────────────────────────────────────┐  │ │
-│  │ │ 同样流程—服务发现SDK的ServerList管理                             │  │ │
-│  │ └──────────────────────────────────────────────────────────────────────┘  │ │
-│  └────────────────────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────────────────────┘
-```
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 AddressServer 独立部署架构</span><span class="s">AddressServer (独立Spring Boot应用—address/AddressServer.java)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ServerList              AddressServer            Nacos Server</div><div class="dgm-note" style="border:none;background:none;padding:0;">Controller              Manager                  集群节点</div><div class="dgm-note" style="border:none;background:none;padding:0;">GET /nacos/            generateResponse()      10.0.1:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">serverlist              → JSON:                (健康)</div><div class="dgm-note" style="border:none;background:none;padding:0;">{"serverList":</div><div class="dgm-note" style="border:none;background:none;padding:0;">返回可用Nacos          ["10.0.1:8848",      10.0.2:8848</div><div class="dgm-note" style="border:none;background:none;padding:0;">Server地址列表           "10.0.2:8848"]}     (健康)</div></div></div><div class="dgm-note">健康检查: GET /nacos/v1/console/health                                     →                                  ← 200 OK / 非200</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 客户端 (client/)</span><span class="s">ConfigServerListManager (client/config/impl/)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">每30秒 GET /nacos/serverlist → 解析JSON serverList</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 更新本地ServerList → 自动剔除不可用Server</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 自动纳入新增Server → 零停机动态切换</div></div></div><div class="dgm-note">NamingServerListManager (client/naming/)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">同样流程—服务发现SDK的ServerList管理</span></div><div class="dgm-box-b"></div></div></div>
 
 #### 7.10.3 源码走读
 
