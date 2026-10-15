@@ -83,10 +83,10 @@ Nacos 2.5.3 在 `plugin/` 模块中定义了 7 种核心插件 SPI 接口：
 |---------|---------|--------|---------|---------|
 | **认证插件** | `AuthPluginService` | `plugin/auth/` | `validateIdentity()`、`validateAuthority()`、`isLoginEnabled()` | `NacosAuthPluginService`（`plugin-default-impl/`） |
 | **数据源插件** | `Mapper` 接口族 | `plugin/datasource/` | `insert()`、`update()`、`delete()`、`select()` | MySQL Mapper 或 Derby Mapper |
-| **加密插件** | `EncryptionPluginService` | `plugin/encryption/` | `encrypt()`、`decrypt()`、`generateSecretKey()` | 无默认内核实现——仅提供接口契约 |
+| **加密插件** | `EncryptionPluginService` | `plugin/encryption/` | `encrypt()`、`decrypt()`、`generateSecretKey()` | 无独立默认加密插件实现（`EncryptionHandler` 内置 AES 处理逻辑） |
 | **链路追踪插件** | `NacosTraceSubscriber` | `plugin/trace/` | `onEvent()` | 无默认实现——用户自定义 |
-| **环境插件** | `CustomEnvironmentPluginService` | `plugin/environment/` | `customizeEnvironment()` | 无默认实现 |
-| **控制插件** | `ControlManagerBuilder` | `plugin/control/` | `build()` | `DefaultTpsControlManager` + `DefaultConnectionControlManager` |
+| **环境插件** | `CustomEnvironmentPluginService` | `plugin/environment/` | `customValue()`、`propertyKey()`、`order()`、`pluginName()` | 无默认实现 |
+| **控制插件** | `ControlManagerBuilder` | `plugin/control/` | `getName()`、`buildConnectionControlManager()`、`buildTpsControlManager()` | `NacosTpsControlManager` + `NacosConnectionControlManager` |
 | **配置变更插件** | `ConfigChangePluginService` | `plugin/config/` | `execute()` | 无默认实现 |
 
 **4. SPI 配置文件机制**
@@ -102,7 +102,8 @@ plugin-default-impl/nacos-default-auth-plugin/src/main/resources/
 文件内容为实现类的全限定名（一行一个实现类）：
 
 ```
-com.alibaba.nacos.plugin.auth.service.impl.NacosAuthPluginService
+com.alibaba.nacos.plugin.auth.impl.NacosAuthPluginService
+com.alibaba.nacos.plugin.auth.impl.LdapAuthPluginService
 ```
 
 Java SPI 机制在运行时通过 `ServiceLoader.load(AuthPluginService.class)` 扫描所有 classpath 下的 `META-INF/services/com.alibaba.nacos.plugin.auth.spi.server.AuthPluginService` 文件——读取其中声明的实现类全限定名——通过反射实例化——返回给调用方。Nacos 扩展了标准 `ServiceLoader`——增加了缓存层（`ConcurrentHashMap`）——避免了重复扫描——提升了性能。
@@ -285,38 +286,33 @@ Java 8 `default` 方法——默认返回 `false`——表示不启用登录页�
 
 **IdentityContext 身份上下文详解**
 
-`IdentityContext`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/identity/IdentityContext.java`）是认证流程中的 **身份信息载体**——在 `AuthFilter` 中从 HTTP 请求提取身份参数后——封装为 `IdentityContext`——传递给 `AuthPluginService.validateIdentity()`——插件从中获取用户名/密码/Token 等身份信息。
+`IdentityContext`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/api/IdentityContext.java`）是认证流程中的 **身份信息载体**——在 `AuthFilter` 中从 HTTP 请求提取身份参数后——封装为 `IdentityContext`——传递给 `AuthPluginService.validateIdentity()`——插件从中获取用户名/密码/Token 等身份信息。
 
 ```java
 // IdentityContext 核心结构
 public class IdentityContext {
     // 存储身份参数——key=参数名, value=参数值
-    private final Map<String, Object> paramMap = new HashMap<>();
+    private final Map<String, Object> param = new HashMap<>();
 
     // 设置身份参数
     public void setParameter(String name, Object value) {
-        paramMap.put(name, value);
+        param.put(name, value);
     }
 
-    // 获取身份参数
+    // 获取身份参数（支持默认值重载）
     public Object getParameter(String name) {
-        return paramMap.get(name);
-    }
-
-    // 获取所有参数名——用于 identityNames() 校验
-    public Set<String> getParameterNames() {
-        return paramMap.keySet();
+        return param.get(name);
     }
 }
 ```
 
 **Resource 资源对象详解**
 
-`Resource`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/resource/Resource.java`）定义了请求资源的身份信息——包含 `namespaceId`（命名空间）、`group`（分组）、`resourceName`（资源名称——如 `CONSOLE_RESOURCE_NAME_PREFIX + "users"`）、`action`（操作类型——READ/WRITE）——在权限校验阶段——`AuthPluginService.validateAuthority()` 根据 `Resource` 信息判断用户是否有权限操作该资源。
+`Resource`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/api/Resource.java`）定义了请求资源的身份信息——包含 `namespaceId`（命名空间）、`group`（分组）、`resourceName`（资源名称——如 `CONSOLE_RESOURCE_NAME_PREFIX + "users"`）、`action`（操作类型——READ/WRITE）——在权限校验阶段——`AuthPluginService.validateAuthority()` 根据 `Resource` 信息判断用户是否有权限操作该资源。
 
 **ActionTypes 操作类型枚举**
 
-`ActionTypes`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/enums/ActionTypes.java`）定义了两种操作类型：
+`ActionTypes`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/constant/ActionTypes.java`）定义了两种操作类型：
 - `READ`——读操作（GET 请求）——查询配置、查看服务列表
 - `WRITE`——写操作（POST/PUT/DELETE 请求）——发布配置、注册服务、修改权限
 
@@ -337,13 +333,13 @@ public class IdentityContext {
 
 #### 8.3.1 设计背景
 
-`NacosAuthPluginService`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/NacosAuthPluginService.java:45-161`）是 Nacos 2.5.3 的 **默认认证插件实现**——实现了 `AuthPluginService` 接口——提供完整的身份认证 + 权限鉴权能力。其核心设计围绕三个关键组件：
+`NacosAuthPluginService`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/NacosAuthPluginService.java:44-132`）是 Nacos 2.5.3 的 **默认认证插件实现**——实现了 `AuthPluginService` 接口——提供完整的身份认证 + 权限鉴权能力。其核心设计围绕三个关键组件：
 
 1. **BCrypt 密码加密**：通过 `PasswordEncoderUtil`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/utils/PasswordEncoderUtil.java`）使用 BCrypt 哈希算法——自动生成随机盐值——抵抗彩虹表攻击——密码不以明文存储——即使数据库泄露——攻击者也无法还原原始密码。
 
 2. **JWT Token 管理**：通过 `JwtTokenManager`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/token/impl/JwtTokenManager.java`）生成和验证 JWT Token——使用 HMAC-SHA256 签名算法——Token 包含用户名、过期时间、签发时间——客户端在 HTTP Header 中携带 `Authorization: Bearer <token>`——服务端验证签名和有效期。
 
-3. **可插拔认证后端**：通过 `IAuthenticationManager` 接口（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/authenticate/IAuthenticationManager.java`）抽象认证后端——默认实现 `DefaultAuthenticationManager` 使用内嵌数据库（Derby/MySQL）存储用户凭据——`LdapAuthenticationManager` 支持 LDAP 目录认证——通过 Spring `@ConditionalOnExpression` 条件注解——根据配置自动选择认证后端。
+3. **可插拔认证后端**：通过 `IAuthenticationManager` 接口（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/authenticate/IAuthenticationManager.java`）抽象认证后端——默认实现 `DefaultAuthenticationManager` 使用内嵌数据库（Derby/MySQL）存储用户凭据——`LdapAuthenticationManager` 支持 LDAP 目录认证——通过条件装配（`LdapAuthConfig` + `ConditionOnLdapAuth`）——根据配置自动选择认证后端。
 
 #### 8.3.2 核心类关系图
 
@@ -355,7 +351,7 @@ public class IdentityContext {
 
 ```java
 // NacosAuthPluginService.validateIdentity()（plugin-default-impl/nacos-default-auth-plugin/
-// src/main/java/com/alibaba/nacos/plugin/auth/impl/NacosAuthPluginService.java:84-102）
+// src/main/java/com/alibaba/nacos/plugin/auth/impl/NacosAuthPluginService.java:72-87）
 @Override
 public boolean validateIdentity(IdentityContext identityContext, Resource resource) throws AccessException {
     checkNacosAuthManager();
@@ -382,8 +378,10 @@ public boolean validateIdentity(IdentityContext identityContext, Resource resour
 ```java
 // PasswordEncoderUtil.encode()（plugin-default-impl/nacos-default-auth-plugin/
 // src/main/java/com/alibaba/nacos/plugin/auth/impl/utils/PasswordEncoderUtil.java）
+// encode() 委托 SafeBcryptPasswordEncoder（BCryptPasswordEncoder 子类）完成哈希——
+// 默认 10 轮强度，密码超过 72 字符直接拒绝（而非截断）
 public static String encode(String rawPassword) {
-    return BCrypt.hashpw(rawPassword, BCrypt.gensalt());
+    return passwordEncoder.encode(rawPassword);
 }
 ```
 
@@ -428,11 +426,11 @@ JWT Token 结构：Header（算法 HS256）+ Payload（sub=用户名、iat=签�
 
 **模式一：策略模式（Strategy Pattern）**
 
-`IAuthenticationManager` 接口定义了认证策略——`DefaultAuthenticationManager`（内嵌数据库认证）和 `LdapAuthenticationManager`（LDAP 认证）是两种具体策略——通过 Spring `@ConditionalOnExpression` 条件注解——根据 `nacos.core.auth.system.type` 配置——运行时选择认证策略。
+`IAuthenticationManager` 接口定义了认证策略——`DefaultAuthenticationManager`（内嵌数据库认证）和 `LdapAuthenticationManager`（LDAP 认证）是两种具体策略——通过条件装配（`LdapAuthConfig` + `ConditionOnLdapAuth`）——根据 `nacos.core.auth.system.type` 配置——运行时选择认证策略。
 
 **模式二：装饰器模式（Decorator Pattern）**
 
-`TokenManagerDelegate`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/token/TokenManagerDelegate.java`）包装了 `JwtTokenManager`——增加了缓存层——避免重复解析 JWT Token——在不修改 `JwtTokenManager` 原有逻辑的情况下——透明地增加了缓存功能——符合开闭原则。
+`TokenManagerDelegate`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/token/TokenManagerDelegate.java`）按缓存开关（`nacos.core.auth.plugin.nacos.token.cache.enable`，默认 `false`）在 `JwtTokenManager` 与 `CachedJwtTokenManager` 之间委托——默认关闭缓存——避免重复解析 JWT Token——在不修改原有实现逻辑的情况下增加缓存能力——符合开闭原则。
 
 **模式三：工厂模式（Factory Pattern）**
 
@@ -441,80 +439,37 @@ JWT Token 结构：Header（算法 HS256）+ Payload（sub=用户名、iat=签�
 
 **DefaultAuthenticationManager——内嵌数据库认证后端详解**
 
-`DefaultAuthenticationManager`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/authenticate/DefaultAuthenticationManager.java`）是 Nacos 2.5.3 默认的认证后端——基于内嵌数据库（Derby/MySQL）——验证用户凭据并加载用户详情和角色列表。
+`DefaultAuthenticationManager`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/authenticate/DefaultAuthenticationManager.java`）是 Nacos 2.5.3 默认的认证后端——基于内嵌数据库（Derby/MySQL）——`authenticate()` 只做凭据校验并签发含用户名的 Token——角色/权限在 `authorize()` 阶段经 `NacosRoleServiceImpl` 按需校验。
 
 ```java
-// DefaultAuthenticationManager.authenticate(userName, password) 核心逻辑
+// AbstractAuthenticationManager.authenticate(userName, password) 核心逻辑（简化）
 @Override
 public NacosUser authenticate(String username, String password) throws AccessException {
-    // ① 从数据库查询用户
-    User user = userDetailsService.loadUserByUsername(username);
-    if (user == null) {
-        throw new AccessException("User '" + username + "' not found");
-    }
+    // ① 从数据库查询用户（UserDetails）
+    UserDetails user = userDetailsService.loadUserByUsername(username);
     // ② BCrypt 密码验证
     if (!PasswordEncoderUtil.matches(password, user.getPassword())) {
         throw new AccessException("Invalid password for user '" + username + "'");
     }
-    // ③ 加载用户角色列表
-    List<RoleInfo> roles = roleService.getRoles(username);
-    // ④ 加载角色对应的权限列表
-    List<PermissionInfo> permissions = permissionService.getPermissions(roles);
-    // ⑤ 构建 NacosUser 对象——包含用户详情+角色+权限
-    NacosUser nacosUser = new NacosUser();
-    nacosUser.setUserName(username);
-    nacosUser.setRoles(roles);
-    nacosUser.setPermissions(permissions);
-    return nacosUser;
+    // ③ 凭据校验通过——签发含用户名的 Token——不加载角色/权限
+    return new NacosUser(username, jwtTokenManager.createToken(username));
 }
 ```
 
-**JwtTokenManager——JWT Token 黑名单机制**
+**JwtTokenManager——Token 失效机制说明**
 
-`JwtTokenManager` 支持 Token 黑名单——当用户修改密码或管理员禁用用户时——将该用户所有已签发的 Token 加入黑名单——存储在内存 `ConcurrentHashMap<String, Long>` 中——Token 验证时——先检查是否在黑名单中——若命中则拒绝——即使 Token 签名和有效期均有效——实现 Token 主动失效——增强账户安全性。
-
-```java
-// JwtTokenManager 黑名单机制（简化）
-public class JwtTokenManager {
-    // Token 黑名单——key=Token ID(jti), value=失效时间戳
-    private final Map<String, Long> blacklist = new ConcurrentHashMap<>();
-
-    public void addToBlacklist(String token) {
-        Claims claims = parseClaims(token);
-        String jti = claims.getId();               // Token ID
-        long exp = claims.getExpiration().getTime();
-        blacklist.put(jti, exp);
-        // 定期清理过期黑名单条目
-        blacklist.entrySet().removeIf(e -> e.getValue() < System.currentTimeMillis());
-    }
-
-    public boolean isBlacklisted(String token) {
-        Claims claims = parseClaims(token);
-        String jti = claims.getId();
-        return blacklist.containsKey(jti);
-    }
-}
-```
+`JwtTokenManager` **没有实现 Token 黑名单机制**——源码中不存在 `addToBlacklist`/`isBlacklisted`/`jti` 相关逻辑——Token 失效完全依赖过期时间（`token.expire.seconds`）——即用户修改密码后——旧 Token 在过期前仍然有效——这一点与 JWT 无状态设计的固有限制一致——需配合较短的有效期 + HTTPS 缓解泄露风险。
 
 **LdapAuthenticationManager——LDAP 认证后端切换机制**
 
-通过 Spring `@ConditionalOnExpression` 条件注解——根据 `nacos.core.auth.system.type=ldap` 配置——自动切换到 `LdapAuthenticationManager`——无需修改任何代码：
+LDAP 后端由 `LdapAuthConfig` 条件装配（`@Conditional(ConditionOnLdapAuth)`——基于 `nacos.core.auth.system.type=ldap` 配置）——`LdapAuthenticationManager` 本身无类级注解——认证流程为先本地验证——失败时回退到 `LdapTemplate.authenticate` LDAP 绑定认证——LDAP 用户以 `LDAP_` 前缀落库——无 LDAP 组到 Nacos 角色的映射：
 
 ```java
-// LdapAuthenticationManager 条件装配
-@ConditionalOnExpression("'${nacos.core.auth.system.type}'.equals('ldap')")
-@Component
-public class LdapAuthenticationManager implements IAuthenticationManager {
-    @Override
-    public NacosUser authenticate(String username, String password) throws AccessException {
-        // LDAP 绑定认证
-        DirContext ctx = new InitialDirContext(getLdapEnvironment(username, password));
-        // 查询 LDAP 用户属性和组信息
-        Attributes attrs = ctx.getAttributes("cn=" + username);
-        // 映射 LDAP 组到 Nacos 角色
-        List<RoleInfo> roles = mapLdapGroupsToRoles(attrs);
-        return buildNacosUser(username, roles);
-    }
+// LdapAuthConfig 条件装配（简化）
+@Bean
+@Conditional(ConditionOnLdapAuth.class)
+public IAuthenticationManager ldapAuthenticationManager(...) {
+    return new LdapAuthenticationManager(...);   // 内部先本地验证，再 LdapTemplate.authenticate 回退
 }
 ```
 
@@ -535,7 +490,7 @@ Nacos 2.5.3 的 RBAC 权限模型作为认证插件体系的核心组成部分�
 
 1. **插件化权限后端**：RBAC 数据可通过内嵌数据库（Derby/MySQL）或外部数据库存储——通过 `ExternalUserPersistServiceImpl` / `EmbeddedUserPersistServiceImpl`——根据配置自动选择存储后端——符合插件化架构——用户可替换存储实现而不影响权限逻辑。
 
-2. **权限注解驱动**：`@Secured` 注解（`auth/src/main/java/com/alibaba/nacos/auth/annotation/Secured.java`）——通过 Spring AOP 切面在 Controller 方法执行前拦截——校验当前用户是否拥有该资源操作权限——实现声明式权限校验——Controller 代码无需嵌入权限校验逻辑——符合 AOP 横切关注点分离原则。
+2. **权限注解驱动**：`@Secured` 注解（`auth/src/main/java/com/alibaba/nacos/auth/annotation/Secured.java`）——由 `AuthFilter`（`javax.servlet Filter`）在请求入口解析——校验当前用户是否拥有该资源操作权限——实现声明式权限校验——Controller 代码无需嵌入权限校验逻辑——符合横切关注点分离原则。
 
 3. **三层角色模型**：`ROLE_ADMIN`（全局管理员——拥有所有权限）、`ROLE_OPERATOR`（运维人员——读写权限）、`ROLE_VIEWER`（只读用户——仅查看权限）——系统保留角色不可删除——保证权限体系完整性——支持自定义角色 + Ant-style 资源路径匹配——灵活满足不同业务权限需求。
 
@@ -573,12 +528,12 @@ public interface UserPersistService {
     void createUser(String username, String password);
     void deleteUser(String username);
     void updateUserPassword(String username, String password);
-    User findByUsername(String username);
+    User findUserByUsername(String username);
     Page<User> getUsers(int pageNo, int pageSize, String username);
 }
 ```
 
-通过 Spring `@ConditionalOnMissingBean` 条件注解——默认使用 `EmbeddedUserPersistServiceImpl`（内嵌数据库）——如果用户提供了 `ExternalUserPersistServiceImpl` Bean——则自动切换到外部数据库存储——符合插件化架构——存储后端可替换——无需修改权限逻辑代码。
+两类实现通过 `@Conditional(ConditionOnEmbeddedStorage.class)` / `@Conditional(ConditionOnExternalStorage.class)` 条件注解——按数据源平台（内嵌 Derby / 外部 MySQL）二选一装配——`EmbeddedUserPersistServiceImpl`（内嵌数据库）或 `ExternalUserPersistServiceImpl`（外部数据库）——符合插件化架构——存储后端可替换——无需修改权限逻辑代码。
 
 #### 8.4.4 Trade-off 分析
 
@@ -591,15 +546,15 @@ public interface UserPersistService {
 
 **Trade-off 2：声明式权限校验（@Secured）vs 命令式权限校验**
 
-- **选择**：`@Secured` 注解 + Spring AOP
-- **优势**：(1) Controller 代码简洁——权限校验逻辑与业务逻辑分离——符合 AOP 横切关注点分离原则；(2) 新增 API 只需添加 `@Secured` 注解——无需在每个方法内编写权限校验代码
+- **选择**：`@Secured` 注解——由 `AuthFilter`（`javax.servlet Filter`）在请求入口解析执行
+- **优势**：(1) Controller 代码简洁——权限校验逻辑与业务逻辑分离——符合横切关注点分离原则；(2) 新增 API 只需添加 `@Secured` 注解——无需在每个方法内编写权限校验代码
 - **代价**：(1) AOP 代理增加运行时开销——但开销极小——可忽略；(2) 注解参数需硬编码资源字符串——不如配置文件灵活——但 Nacos 资源路径相对固定——硬编码可接受 пуним
 
 #### 8.4.5 设计模式分析
 
 **模式：策略模式（Strategy Pattern）**
 
-`UserPersistService` 接口作为存储策略——`EmbeddedUserPersistServiceImpl`（内嵌数据库）和 `ExternalUserPersistServiceImpl`（外部数据库）是两种具体策略——通过 Spring `@ConditionalOnMissingBean` 条件注解——运行时根据 Bean 是否存在选择存储策略——符合插件化架构——存储后端可替换。
+`UserPersistService` 接口作为存储策略——`EmbeddedUserPersistServiceImpl`（内嵌数据库）和 `ExternalUserPersistServiceImpl`（外部数据库）是两种具体策略——通过 `@Conditional(ConditionOnEmbeddedStorage/ConditionOnExternalStorage)` 条件注解——运行时按数据源平台二选一装配——符合插件化架构——存储后端可替换。
 
 #### 8.4.6 小结
 
@@ -615,7 +570,7 @@ Nacos 2.5.3 的认证过滤器链实现在 `plugin-default-impl/nacos-default-au
 
 从插件体系视角——认证过滤器链的关键设计决策：
 
-1. **独立 Filter 链 vs Spring Security 默认 Filter Chain**：Nacos 实现独立的认证 Filter 链——不依赖 Spring Security 全套框架——降低框架耦合——Nacos 可脱离 Spring Boot 运行——支持非 Spring 环境部署——Filter 链简洁——只包含认证必需的 Filter——避免 Spring Security 默认 Filter Chain 的冗余 Filter——减少请求处理延迟。
+1. **独立 Filter 链 vs Spring Security 默认 Filter Chain**：Nacos 的认证链基于 Servlet Filter + Spring Security 组件（`JwtAuthenticationTokenFilter` 继承 `OncePerRequestFilter`、`CustomAuthenticationProvider` 实现 `AuthenticationProvider`）——默认认证实现深度依赖 Spring Security——Filter 链只包含认证必需的组件——避免 Spring Security 默认 Filter Chain 的冗余 Filter——减少请求处理延迟。
 
 2. **可插拔 Filter**：每个 Filter 独立职责——`JwtAuthenticationTokenFilter` 负责 JWT Token 解析 + 验证——`CustomAuthenticationProvider` 负责用户凭据验证——新增认证步骤只需插入新的 Filter——无需修改已有 Filter——符合单一职责原则（Single Responsibility Principle）。
 
@@ -633,22 +588,18 @@ Nacos 2.5.3 的认证过滤器链实现在 `plugin-default-impl/nacos-default-au
 @Override
 protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response,
         FilterChain filterChain) throws ServletException, IOException {
-    String token = resolveToken(request);                              // ① 提取Token
-    if (StringUtils.isNotBlank(token)) {
-        try {
-            Authentication authentication = authenticationManager.authenticate(
-                new NacosJwtToken(token));                              // ② 验证Token
-            SecurityContextHolder.getContext().setAuthentication(authentication); // ③ 设置认证上下文
-        } catch (Exception e) {
-            response.sendError(HttpStatus.UNAUTHORIZED.value(), "Token verification failed");
-            return;
-        }
+    String jwt = resolveToken(request);                                // ① 提取Token（Bearer 头或 accessToken 参数）
+    if (StringUtils.isNotBlank(jwt)) {
+        // ② 经 TokenManagerDelegate 解析 JWT——得到 Authentication
+        Authentication authentication = tokenManager.getAuthentication(jwt);
+        // ③ 写入 Spring Security 上下文
+        SecurityContextHolder.getContext().setAuthentication(authentication);
     }
     filterChain.doFilter(request, response);                            // ④ 传递给下一个Filter
 }
 ```
 
-关键设计点：(1) Token 验证失败——直接返回 HTTP 401——请求不再传递给后续 Filter——减少无效请求的处理开销；(2) `SecurityContextHolder` 设置认证上下文——后续 Filter 和 Controller 可直接获取当前用户信息——无需重复解析 Token。
+关键设计点：(1) Filter 解析 Bearer 头/`accessToken` 参数后——经 `TokenManagerDelegate.getAuthentication()` 设置 `SecurityContext`——JWT 解析失败时 `AccessException` 被包装为 `RuntimeException` 向上抛出——并非直接返回 HTTP 401；(2) `SecurityContextHolder` 设置认证上下文——后续 Filter 和 Controller 可直接获取当前用户信息——无需重复解析 Token。
 
 **2. 插件化 Filter 注册**
 
@@ -659,7 +610,7 @@ Nacos 通过 `@ConditionalOnMissingBean` 条件注解——默认注册 `JwtAuth
 **Trade-off：独立 Filter 链 vs Spring Security Filter Chain**
 
 - **选择**：独立 Filter 链
-- **优势**：(1) 不依赖 Spring Security 全套框架——降低框架耦合——Nacos 可脱离 Spring Boot 运行；(2) Filter 链简洁——只包含认证必需的 Filter——减少请求处理延迟；(3) 自定义认证逻辑——BCrypt 密码验证 + JWT Token 管理——完全可控
+- **优势**：(1) 认证链基于 Servlet Filter + Spring Security 组件（`OncePerRequestFilter`/`AuthenticationProvider`）——只包含认证必需的组件——避免冗余 Filter；(2) Filter 链简洁——只包含认证必需的 Filter——减少请求处理延迟；(3) 自定义认证逻辑——BCrypt 密码验证 + JWT Token 管理——完全可控
 - **代价**：(1) 需自行实现认证 Filter 链——开发工作量大——但 Nacos 已实现完整——用户无需额外开发；(2) 缺少 Spring Security 生态支持——如 CSRF 防护——但 Nacos 作为 API Server——无 Session——CSRF 风险低
 - **适用场景**：Nacos 作为微服务基础设施——轻量化优先——独立 Filter 链避免引入重量级 Spring Security 框架
 
@@ -671,38 +622,14 @@ Nacos 通过 `@ConditionalOnMissingBean` 条件注解——默认注册 `JwtAuth
 
 **模式二：策略模式（Strategy Pattern）**
 
-`IAuthenticationManager` 接口作为认证策略——`DefaultAuthenticationManager`（内嵌数据库认证）和 `LdapAuthenticationManager`（LDAP 绑定认证）——通过 Spring `@ConditionalOnExpression` 条件注解——运行时根据配置选择认证策略——认证后端可替换。
+`IAuthenticationManager` 接口作为认证策略——`DefaultAuthenticationManager`（内嵌数据库认证）和 `LdapAuthenticationManager`（LDAP 绑定认证）——通过条件装配（`LdapAuthConfig` + `ConditionOnLdapAuth`）——运行时根据配置选择认证策略——认证后端可替换。
 
 
-**CustomAuthenticationProvider 认证提供者详解**
+**CustomAuthenticationProvider——遗留认证提供者**
 
-`CustomAuthenticationProvider`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/CustomAuthenticationProvider.java`）是 Nacos 2.5.3 认证过滤器链的核心认证提供者——实现 Spring Security 的 `AuthenticationProvider` 接口——负责验证用户凭据并加载用户详情和角色列表。
+`CustomAuthenticationProvider`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/CustomAuthenticationProvider.java`）是一个 **遗留的 `@Deprecated` 组件**——虽然实现了 Spring Security 的 `AuthenticationProvider` 接口——但其实现已退化：密码不匹配时返回 null 凭据 Token、匹配时返回 null——既不做 BCrypt 校验也无角色映射——**并非当前认证链的核心**。现行认证链路为 `JwtAuthenticationTokenFilter` + `IAuthenticationManager`（`DefaultAuthenticationManager`/`LdapAuthenticationManager`）。
 
-```java
-// CustomAuthenticationProvider.authenticate() 核心逻辑
-@Override
-public Authentication authenticate(Authentication authentication) throws AuthenticationException {
-    String username = authentication.getName();
-    String password = authentication.getCredentials().toString();
-
-    // ① BCrypt 密码验证
-    User user = userDetailsService.loadUserByUsername(username);
-    if (user == null || !PasswordEncoderUtil.matches(password, user.getPassword())) {
-        throw new BadCredentialsException("Invalid username or password");
-    }
-
-    // ② 加载用户角色列表
-    List<GrantedAuthority> authorities = roleService.getRoles(username)
-        .stream()
-        .map(role -> new SimpleGrantedAuthority(role.getRole()))
-        .collect(Collectors.toList());
-
-    // ③ 返回已认证的 Authentication Token
-    return new UsernamePasswordAuthenticationToken(username, password, authorities);
-}
-```
-
-**Filter 链顺序控制**：Nacos 通过 `@Order` 注解控制 Filter 执行顺序——`JwtAuthenticationTokenFilter`（`@Order(1)`）先解析 JWT Token——`CustomAuthenticationProvider`（`@Order(2)`）后验证用户凭据——Filter 链中任一 Filter 返回 HTTP 401——终止链——后续 Filter 不再执行——减少无效请求的处理开销。
+**Filter 链顺序控制**：Filter 执行顺序由 Spring Security 配置类决定——`JwtAuthenticationTokenFilter` 与 `CustomAuthenticationProvider` 源码中均未使用 `@Order` 注解。
 
 **插件化 Filter 替换机制**：通过 Spring `@ConditionalOnMissingBean` 条件注解——如果用户在 Spring 容器中注册了自定义 `AuthenticationProvider` Bean——Nacos 默认的 `CustomAuthenticationProvider` 不会被创建——实现认证后端的完全替换——无需修改 Nacos 内核代码——符合开闭原则。
 
@@ -717,48 +644,27 @@ Nacos 2.5.3 AuthFilter 认证过滤器链采用独立 Filter 链架构——不�
 
 #### 8.6.1 设计背景
 
-Nacos 2.5.3 的数据源插件体系定义在 `plugin/datasource/` 模块中（97 个 Java 文件——包括 mapper 接口 + model 类 + constants）——通过 `ExternalDataSourcePluginServiceImpl`（`plugin/datasource/src/main/java/com/alibaba/nacos/plugin/datasource/impl/ExternalDataSourcePluginServiceImpl.java`）和 `EmbeddedDataSourcePluginServiceImpl`——根据配置自动选择 MySQL（外部数据库）或 Derby（内嵌数据库）——通过 HikariCP 连接池管理数据库连接——实现高性能数据库访问。
+Nacos 2.5.3 的数据源插件体系定义在 `plugin/datasource/` 模块中（main 下 43 个 Java 文件——仅提供 Mapper 方言 SPI：`mapper/impl/derby`、`impl/mysql`、`MapperManager` 等）。MySQL/Derby 数据源切换由 persistence 模块的 `DataSourceService` 体系实现（`ExternalDataSourceServiceImpl`/`EmbeddedDataSourceServiceImpl` + `ExternalDataSourceProperties`）——通过 HikariCP 连接池管理数据库连接——实现高性能数据库访问。
 
 从插件体系视角——数据源插件的关键设计决策：
 
-1. **插件化数据源后端**：通过 `ExternalDataSourceProperties`（`plugin/datasource/src/main/java/com/alibaba/nacos/plugin/datasource/ExternalDataSourceProperties.java`）配置外部 MySQL 数据库连接——零代码切换——只需配置 `nacos.datasource.platform=mysql`——自动启用 `ExternalDataSourcePluginServiceImpl`——无需修改 Nacos 内核代码。
+1. **插件化数据源后端**：通过 `ExternalDataSourceProperties`（persistence 模块）绑定 `db.num`/`db.url.N`/`db.user.N`/`db.password.N` 配置外部 MySQL 数据库连接——零代码切换——只需配置 `spring.datasource.platform=mysql`（推荐 `spring.sql.init.platform`）——自动启用外部数据源实现——无需修改 Nacos 内核代码。
 
-2. **HikariCP 连接池**：默认使用 HikariCP 作为数据库连接池——通过 `HikariDataSource` 管理 MySQL 连接——默认配置：`maximumPoolSize=10`、`minimumIdle=5`、`connectionTimeout=30000ms`——可通过 Spring Boot 标准配置项覆盖——满足不同生产环境的性能需求。
+2. **HikariCP 连接池**：默认使用 HikariCP 作为数据库连接池——通过 `HikariDataSource` 管理 MySQL 连接——默认配置由 `DataSourcePoolProperties`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourcePoolProperties.java:36-54`）设定：`maximumPoolSize=20`、`minimumIdle=2`、`connectionTimeout=3000ms`、`idleTimeout=600000ms`、`validationTimeout=10000ms`——可通过 `db.pool.config.*` 配置项（绑定 HikariDataSource 实例）覆盖——满足不同生产环境的性能需求。
 
 #### 8.6.2 源码走读
 
-**ExternalDataSourcePluginServiceImpl——外部 MySQL 数据源初始化**
+**ExternalDataSourceServiceImpl——外部 MySQL 数据源初始化**（persistence 模块 `DataSourceService` 体系）
 
 ```java
-// ExternalDataSourcePluginServiceImpl.init()（plugin/datasource/src/main/java/com/alibaba/
-// nacos/plugin/datasource/impl/ExternalDataSourcePluginServiceImpl.java）
-@Override
-public DataSourcePluginService init() {
-    HikariDataSource ds = new HikariDataSource();
-    ds.setDriverClassName(properties.getDriverClassName());   // com.mysql.cj.jdbc.Driver
-    ds.setJdbcUrl(properties.getJdbcUrl());                  // jdbc:mysql://localhost:3306/nacos
-    ds.setUsername(properties.getUsername());
-    ds.setPassword(properties.getPassword());
-    ds.setMaximumPoolSize(10);                              // 最大连接数
-    ds.setMinimumIdle(5);                                  // 最小空闲连接数
-    return this;
-}
+// ExternalDataSourceServiceImpl.init()（core/src/main/java/com/alibaba/nacos/core/datasource/）
+// 绑定 db.* 配置（db.num/db.url.N/db.user.N/db.password.N）并构建多个 HikariDataSource
+List<HikariDataSource> dataSources = externalDataSourceProperties.build(environment, basicDataSourceService);
 ```
 
-**EmbeddedDataSourcePluginServiceImpl——内嵌 Derby 数据源初始化**
+**EmbeddedStorageDatasourceServiceImpl——内嵌 Derby 数据源**
 
-```java
-// EmbeddedDataSourcePluginServiceImpl.init()（plugin/datasource/src/main/java/com/alibaba/
-// nacos/plugin/datasource/impl/EmbeddedDataSourcePluginServiceImpl.java）
-@Override
-public DataSourcePluginService init() {
-    BasicDataSource ds = new BasicDataSource();
-    ds.setDriverClassName("org.apache.derby.jdbc.EmbeddedDriver");
-    ds.setUrl("jdbc:derby:" + derbyDir + ";create=true");
-    ds.setMaxActive(5);
-    return this;
-}
-```
+内嵌 Derby 数据库——无需额外部署 MySQL——零依赖——开箱即用——适合中小规模部署和学习场景——生产环境切换 MySQL——只需修改配置——无需代码变更。
 
 内嵌 Derby 数据库——无需额外部署 MySQL——零依赖——开箱即用——适合中小规模部署和学习场景——生产环境切换 MySQL——只需修改配置——无需代码变更。
 
@@ -776,35 +682,29 @@ public DataSourcePluginService init() {
 
 **模式：策略模式（Strategy Pattern）**
 
-`DataSourcePluginService` 接口作为数据源策略——`ExternalDataSourcePluginServiceImpl`（外部 MySQL）和 `EmbeddedDataSourcePluginServiceImpl`（内嵌 Derby）是两种具体策略——通过 `nacos.datasource.platform` 配置运行时选择——符合插件化架构——数据源后端可替换——无需修改 Nacos 内核代码。
+`DataSourceService` 接口作为数据源策略——`ExternalDataSourceServiceImpl`（外部 MySQL）和 `EmbeddedStorageDatasourceServiceImpl`（内嵌 Derby）是两种具体策略——通过 `spring.datasource.platform`（推荐 `spring.sql.init.platform`）配置运行时选择——符合插件化架构——数据源后端可替换——无需修改 Nacos 内核代码。
 
 
 **HikariCP 连接池配置详解**
 
-Nacos 2.5.3 默认使用 HikariCP 作为 MySQL 连接池——通过 Spring Boot 标准配置项覆盖默认参数。以下为生产环境推荐配置：
+Nacos 2.5.3 默认使用 HikariCP 作为 MySQL 连接池——但连接池参数**不通过** `spring.datasource.hikari.*` 配置（Nacos 不读取该前缀），而是经 `db.pool.config.*` 前缀绑定 `DataSourcePoolProperties`（`persistence/…/DataSourcePoolProperties.java:36-54`）。以下为按实际默认值标注的生产配置示例：
 
 ```yaml
-# application.properties — HikariCP 连接池配置
-spring.datasource.hikari.minimum-idle=5          # 最小空闲连接数
-spring.datasource.hikari.maximum-pool-size=20    # 最大连接数（生产建议 ≥20）
-spring.datasource.hikari.idle-timeout=300000      # 空闲连接超时 5 分钟
-spring.datasource.hikari.max-lifetime=1200000     # 连接最大存活 20 分钟
-spring.datasource.hikari.connection-timeout=30000  # 连接获取超时 30 秒
-spring.datasource.hikari.connection-test-query=SELECT 1  # 连接有效性测试 SQL
+# application.properties — 连接池配置（绑定 DataSourcePoolProperties）
+db.pool.config.minimumIdle=2              # 最小空闲连接数（默认 2）
+db.pool.config.maximumPoolSize=20         # 最大连接数（默认 20，生产建议 ≥20）
+db.pool.config.idleTimeout=600000         # 空闲连接超时（默认 600000ms = 10 分钟）
+db.pool.config.connectionTimeout=3000     # 连接获取超时（默认 3000ms = 3 秒）
+# 连接有效性测试 SQL 无需显式配置——ExternalDataSourceProperties 在配置空缺时自动设为 SELECT 1
 ```
 
-**ExternalDataSourceProperties 配置加载流程**（`plugin/datasource/src/main/java/com/alibaba/nacos/plugin/datasource/ExternalDataSourceProperties.java`）：
+**ExternalDataSourceProperties 配置加载流程**（persistence 模块）：
 
 ```java
-// ExternalDataSourceProperties 绑定外部数据源配置
-@ConfigurationProperties(prefix = "spring.datasource")
-public class ExternalDataSourceProperties {
-    private String driverClassName = "com.mysql.cj.jdbc.Driver";
-    private String jdbcUrl;
-    private String username;
-    private String password;
-    // HikariCP 连接池参数——通过 spring.datasource.hikari.* 前缀绑定
-}
+// ExternalDataSourceProperties 位于 persistence 模块——经 Environment 的 Binder 绑定 db.* 配置
+// 绑定键：db.num、db.url.0..N、db.user.0..N、db.password.0..N
+// 无 spring.datasource 前缀的字段式绑定——最终构建多个 HikariDataSource（每个 db.url.N 一个）
+List<HikariDataSource> dataSources = externalDataSourceProperties.build(env, basicDataSourceService);
 ```
 
 **连接池监控指标**：HikariCP 暴露以下关键指标——`HikariPool-1.pool.ActiveConnections`（活跃连接数）、`HikariPool-1.pool.IdleConnections`（空闲连接数）、`HikariPool-1.pool.PendingConnections`（等待连接数）、`HikariPool-1.pool.TotalConnections`（总连接数）——通过 JMX MBean 暴露——可集成 Prometheus + Grafana 监控——当等待连接数持续 > 0 时——说明连接池大小不足——需调大 `maximum-pool-size`。
@@ -812,7 +712,7 @@ public class ExternalDataSourceProperties {
 
 #### 8.6.5 小结
 
-Nacos 2.5.3 数据源插件体系通过 `DataSourcePluginService` 接口——支持 MySQL（外部数据库）和 Derby（内嵌数据库）两种数据源策略——通过 `nacos.datasource.platform` 配置运行时切换——HikariCP 连接池管理 MySQL 连接——默认使用内嵌 Derby——零外部依赖——开箱即用——生产环境一键切换 MySQL——无需代码变更——符合插件化架构——数据源后端可替换。
+Nacos 2.5.3 数据源插件体系通过 `DataSourceService` 体系——支持 MySQL（外部数据库）和 Derby（内嵌数据库）两种数据源策略——通过 `spring.datasource.platform`（推荐 `spring.sql.init.platform`）配置运行时切换——HikariCP 连接池管理 MySQL 连接——默认使用内嵌 Derby——零外部依赖——开箱即用——生产环境一键切换 MySQL——无需代码变更——符合插件化架构——数据源后端可替换。
 
 ---
 
@@ -820,7 +720,7 @@ Nacos 2.5.3 数据源插件体系通过 `DataSourcePluginService` 接口——�
 
 #### 8.7.1 设计背景
 
-Nacos 2.5.3 的配置加密插件体系定义在 `plugin/encryption/` 模块中——仅包含 **SPI 接口契约**——不提供默认内核实现。`EncryptionPluginService`（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/spi/EncryptionPluginService.java`）定义了加密/解密/密钥生成三个核心方法——用户可替换为任意加密算法（AES/GCM、SM4 国密等）。配置数据在存储前加密、读取后解密——保障敏感配置（数据库密码、API 密钥）的存储安全。
+Nacos 2.5.3 的配置加密插件体系定义在 `plugin/encryption/` 模块中——提供 `EncryptionPluginService` SPI 契约与 `EncryptionHandler` 调度器（内置 AES 处理逻辑）——无独立默认加密插件实现。`EncryptionPluginService`（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/spi/EncryptionPluginService.java`）定义了加密/解密/密钥生成三个核心方法——用户可替换为任意加密算法（AES/GCM、SM4 国密等）。配置数据在存储前加密、读取后解密——保障敏感配置（数据库密码、API 密钥）的存储安全。
 
 从插件体系视角——加密插件的关键设计决策：
 
@@ -828,7 +728,7 @@ Nacos 2.5.3 的配置加密插件体系定义在 `plugin/encryption/` 模块中�
 
 2. **SecretKey 生成策略**：`generateSecretKey()` 方法返回 Base64 编码的密钥字符串——支持多种密钥生成策略——随机生成（`SecureRandom`）或从外部 KMS（Key Management Service）获取——密钥不硬编码在配置文件中——通过环境变量或 KMS 注入——符合安全最佳实践。
 
-3. **插件化加密算法**：通过 SPI 机制加载 `EncryptionPluginService` 实现——`EncryptionHandler`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/encryption/EncryptionHandler.java`）在配置存储前调用 `encrypt()`——读取后调用 `decrypt()`——透明加密——上层业务代码无需感知加密细节。
+3. **插件化加密算法**：通过 SPI 机制加载 `EncryptionPluginService` 实现——`EncryptionHandler`（`plugin/encryption` 模块）在配置存储前调用 `encrypt()`——读取后调用 `decrypt()`——透明加密——上层业务代码无需感知加密细节。
 
 #### 8.7.2 核心类关系图
 
@@ -844,19 +744,19 @@ Nacos 2.5.3 的配置加密插件体系定义在 `plugin/encryption/` 模块中�
 public interface EncryptionPluginService {
     /**
      * 加密明文内容
-     * @param content  明文内容
      * @param secretKey Base64编码的密钥
+     * @param content  明文内容
      * @return 密文（Base64编码）
      */
-    String encrypt(String content, String secretKey);
+    String encrypt(String secretKey, String content);
 
     /**
      * 解密密文内容
-     * @param content  密文（Base64编码）
      * @param secretKey Base64编码的密钥
+     * @param content  密文（Base64编码）
      * @return 明文内容
      */
-    String decrypt(String content, String secretKey);
+    String decrypt(String secretKey, String content);
 
     /**
      * 生成密钥
@@ -869,6 +769,16 @@ public interface EncryptionPluginService {
      * @return 算法名称（如"AES/GCM/NoPadding"）
      */
     String algorithmName();
+
+    /**
+     * 加密密钥（密钥二次加密后返回给客户端）
+     */
+    String encryptSecretKey(String secretKey);
+
+    /**
+     * 解密密钥
+     */
+    String decryptSecretKey(String secretKey);
 }
 ```
 
@@ -1024,13 +934,13 @@ Nacos 2.5.3 除了三大核心插件（认证、数据源、加密）——还�
 
 1. **TracePlugin——事件驱动的链路追踪**：`NacosTraceSubscriber`（`plugin/trace/src/main/java/com/alibaba/nacos/plugin/trace/spi/NacosTraceSubscriber.java`）基于 Nacos `NotifyCenter` 事件系统——订阅 Nacos 内部事件（配置变更、服务注册、认证事件等）——转发到外部追踪系统（SkyWalking、Jaeger、Zipkin）——实现分布式链路追踪——不侵入 Nacos 内核逻辑。
 
-2. **EnvironmentPlugin——环境变量定制**：`CustomEnvironmentPluginService`（`plugin/environment/src/main/java/com/alibaba/nacos/plugin/environment/spi/CustomEnvironmentPluginService.java`）——在 Nacos Spring 环境初始化后——`customizeEnvironment()` 方法可注入自定义属性源——支持从外部配置中心（如 Apollo、Consul）加载属性——覆盖 Nacos 默认配置——实现环境差异化部署。
+2. **EnvironmentPlugin——环境变量定制**：`CustomEnvironmentPluginService`（`plugin/environment/src/main/java/com/alibaba/nacos/plugin/environment/spi/CustomEnvironmentPluginService.java`）——在 Nacos Spring 环境初始化后——`customValue()` 方法可注入自定义属性——支持从外部配置中心（如 Apollo、Consul）加载属性——覆盖 Nacos 默认配置——实现环境差异化部署。
 
-3. **ControlManagerPlugin——TPS 限流 + 连接控制**：`ControlManagerBuilder`（`plugin/control/src/main/java/com/alibaba/nacos/plugin/control/spi/ControlManagerBuilder.java`）——构建 `TpsControlManager`（TPS 限流管理器）和 `ConnectionControlManager`（连接数控制管理器）——`DefaultTpsControlManager` 基于令牌桶算法实现 TPS 限流——`DefaultConnectionControlManager` 基于计数器实现最大连接数控制——保护 Nacos Server 免受过载攻击。
+3. **ControlManagerPlugin——TPS 限流 + 连接控制**：`ControlManagerBuilder`（`plugin/control/src/main/java/com/alibaba/nacos/plugin/control/spi/ControlManagerBuilder.java`）——构建 `TpsControlManager`（TPS 限流管理器）和 `ConnectionControlManager`（连接数控制管理器）——`NacosTpsControlManager` 基于令牌桶算法实现 TPS 限流——`NacosConnectionControlManager` 基于计数器实现最大连接数控制——保护 Nacos Server 免受过载攻击。
 
 #### 8.8.2 核心类关系图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">辅助插件体系：Trace + Environment + Control</span><span class="s">implements</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">① TracePlugin — 链路追踪</span><span class="s">&lt;&lt;interface&gt;&gt; NacosTraceSubscriber</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/trace/spi/NacosTraceSubscriber.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onEvent(TraceEvent) → 转发到外部追踪系统</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SkyWalking Subscriber    Jaeger Subs</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② EnvironmentPlugin — 环境定制</span><span class="s">&lt;&lt;interface&gt;&gt; CustomEnvironmentPluginService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/environment/spi/CustomEnvironmentPluginService.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ customizeEnvironment(ConfigurableEnvironment)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ pluginOrder(): int</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">③ ControlManagerPlugin — 流量控制</span><span class="s">&lt;&lt;interface&gt;&gt; ControlManagerBuilder</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/control/spi/ControlManagerBuilder.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ build(): ControlManager</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DefaultTpsControlManager    DefaultC</span><span class="s">(令牌桶算法 TPS 限流)      (计数器最大连接数控制)</span></div><div class="dgm-box-b"></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">辅助插件体系：Trace + Environment + Control</span><span class="s">implements</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">① TracePlugin — 链路追踪</span><span class="s">&lt;&lt;interface&gt;&gt; NacosTraceSubscriber</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/trace/spi/NacosTraceSubscriber.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ onEvent(TraceEvent) → 转发到外部追踪系统</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SkyWalking Subscriber    Jaeger Subs</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">② EnvironmentPlugin — 环境定制</span><span class="s">&lt;&lt;interface&gt;&gt; CustomEnvironmentPluginService</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/environment/spi/CustomEnvironmentPluginService.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ customValue(Map) / propertyKey()</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ order(): int / pluginName(): String</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">③ ControlManagerPlugin — 流量控制</span><span class="s">&lt;&lt;interface&gt;&gt; ControlManagerBuilder</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(plugin/control/spi/ControlManagerBuilder.java)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ build(): ControlManager</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getName(): String</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DefaultTpsControlManager    DefaultC</span><span class="s">(令牌桶算法 TPS 限流)      (计数器最大连接数控制)</span></div><div class="dgm-box-b"></div></div></div>
 
 #### 8.8.3 源码走读
 
@@ -1050,10 +960,20 @@ public interface NacosTraceSubscriber {
      * 订阅者名称
      */
     String getName();
+
+    /**
+     * 声明订阅的事件类型
+     */
+    List<Class<? extends TraceEvent>> subscribeTypes();
+
+    /**
+     * 异步执行器（可选）
+     */
+    Executor executor();
 }
 ```
 
-基于 Nacos `NotifyCenter` 事件系统——`NacosTraceSubscriber` 订阅 Nacos 内部事件——当配置变更（`ConfigDataChangeEvent`）、服务注册（`InstanceRegistryEvent`）、认证成功/失败事件发生时——`NotifyCenter` 发布事件——所有 SPI 注册的 `NacosTraceSubscriber` 实现类收到事件——转发到外部追踪系统——实现分布式链路追踪——零侵入 Nacos 内核代码。
+基于 Nacos `NotifyCenter` 事件系统——`NacosTraceSubscriber` 通过 `subscribeTypes()` 声明订阅的事件类型——`NotifyCenter` 发布对应事件时——所有 SPI 注册的 `NacosTraceSubscriber` 实现类收到事件——转发到外部追踪系统——实现分布式链路追踪——零侵入 Nacos 内核代码。
 
 **2. ControlManagerBuilder——TPS 限流管理器构建器**
 
@@ -1062,9 +982,14 @@ public interface NacosTraceSubscriber {
 // nacos/plugin/control/spi/ControlManagerBuilder.java）
 public interface ControlManagerBuilder {
     /**
-     * 构建 ControlManager
+     * 构建连接数控制管理器
      */
-    ControlManager build();
+    ConnectionControlManager buildConnectionControlManager();
+
+    /**
+     * 构建 TPS 限流管理器
+     */
+    TpsControlManager buildTpsControlManager();
 
     /**
      * 构建器名称
@@ -1073,7 +998,7 @@ public interface ControlManagerBuilder {
 }
 ```
 
-`DefaultTpsControlManager` 基于令牌桶算法实现 TPS 限流——每秒生成固定数量的令牌——每个请求消耗一个令牌——令牌桶容量上限防止突发流量——超过上限的请求返回 HTTP 429（Too Many Requests）——保护 Nacos Server 免受过载攻击。
+`NacosTpsControlManager`（`plugin-default-impl/nacos-default-control-plugin/…/impl/NacosTpsControlManager.java`）是 TPS 限流的默认实现——基于**规则点（TpsControlPoint）+ 规则（TpsControlRule）**机制：Server 各业务入口（如 `ConfigPublish`、`RegisterInstance` 等）通过 `@TpsControl(pointName=...)` 注解声明监控点——`NacosTpsControlManager` 为每个监控点维护 `TpsBarrier`（默认 `LocalSimpleCountBarrier`）——`applyTpsRule()` 动态下发/更新限流规则——`check()` 时经 `TpsBarrier.applyTps()` 按规则的时间窗口（`maxCount`/`maxSecond`）判定放行或拒绝——并有 `TpsMetricsReporter` 定时（900ms）上报各监控点的 pass/denied 计数。
 
 **3. CustomEnvironmentPluginService——环境定制**
 
@@ -1082,28 +1007,38 @@ public interface ControlManagerBuilder {
 // alibaba/nacos/plugin/environment/spi/CustomEnvironmentPluginService.java）
 public interface CustomEnvironmentPluginService {
     /**
-     * 定制 Spring Environment
-     * @param environment Spring ConfigurableEnvironment
+     * 注入自定义属性键值对
+     * @param customValue 自定义属性集合
      */
-    void customizeEnvironment(ConfigurableEnvironment environment);
+    void customValue(Map<String, Object> customValue);
 
     /**
-     * 插件排序顺序（数值越小优先级越高）
+     * 属性键前缀
      */
-    int pluginOrder();
+    String propertyKey();
+
+    /**
+     * 插件排序顺序（数值越大优先级越高）
+     */
+    int order();
+
+    /**
+     * 插件名称
+     */
+    String pluginName();
 }
 ```
 
-在 Nacos Spring 环境初始化后——`customizeEnvironment()` 方法可注入自定义属性源——例如从 Apollo Config Service 加载属性——覆盖 Nacos 默认配置——`pluginOrder()` 控制多个 `CustomEnvironmentPluginService` 的执行顺序——数值越小优先级越高——实现环境差异化部署。
+在 Nacos Spring 环境初始化后——`customValue()` 返回的自定义属性以 `propertyKey()` 前缀注入环境——`order()` 控制多个 `CustomEnvironmentPluginService` 的执行顺序——数值越大优先级越高——实现环境差异化部署。
 
 #### 8.8.4 Trade-off 分析
 
-**Trade-off：令牌桶 vs 漏桶 TPS 限流算法**
+**Trade-off：规则点限流（NacosTpsControlManager 默认实现） vs 令牌桶限流**
 
-- **选择**：令牌桶算法（`DefaultTpsControlManager`）
-- **优势**：(1) 允许一定的突发流量——令牌桶容量可缓冲短时峰值——避免一刀切拒绝正常流量；(2) 实现简单——单计数器 + 定时刷新——无需维护队列——内存开销低
-- **代价**：(1) 突发流量可能超过系统实际承载能力——需合理设置桶容量上限；(2) 不支持流量整形——无法平滑突发流量——需配合下游服务限流
-- **适用场景**：Nacos Server TPS 限流——API 调用频率相对稳定——令牌桶算法在简单性和突发容忍之间取得平衡
+- **选择**：基于规则点的限流——由 `TpsControlRule` 动态下发、`TpsBarrier` 按秒级时间窗口统计与拦截
+- **优势**：(1) 规则可动态热更新（经 `applyTpsRule()`）——无需重启 Server；(2) 与 `@TpsControl` 监控点体系解耦——限流插件可整体 SPI 替换；(3) 实现简单——秒级窗口计数——内存开销低
+- **代价**：(1) 秒级窗口计数对毫秒级突发不如令牌桶平滑；(2) 需运维侧配置监控点规则——默认无规则时仅统计不拦截
+- **适用场景**：Nacos Server TPS 限流——规则点限流在可运维性（热更新规则）与实现简单性之间取得平衡；如需令牌桶语义，可自定义 `ControlManagerBuilder` 注入替换
 
 #### 8.8.5 设计模式分析
 
@@ -1113,71 +1048,100 @@ public interface CustomEnvironmentPluginService {
 
 **模式二：策略模式（Strategy Pattern）**
 
-`ControlManagerBuilder` 接口作为策略构建器——`DefaultTpsControlManagerBuilder`（令牌桶 TPS 限流）和自定义 `ControlManagerBuilder` 是两种具体策略——通过 SPI 机制加载——运行时选择流量控制策略——符合开闭原则。
+`ControlManagerBuilder` 接口作为策略构建器——`NacosControlManagerBuilder`（规则点 TPS 限流/连接数控制）和自定义 `ControlManagerBuilder` 是两种具体策略——通过 SPI 机制加载——运行时选择流量控制策略——符合开闭原则。
 
 
 **TracePlugin 链路追踪事件类型详解**
 
-`NacosTraceSubscriber.onEvent(TraceEvent)` 接收以下核心事件类型：
+`NacosTraceSubscriber.onEvent(TraceEvent)` 接收的 Trace 事件**仅覆盖命名（naming）域**——2.5.3 源码中不存在配置变更与认证事件类型：
 
 | 事件类型 | 触发时机 | TraceEvent 包含信息 |
 |---------|---------|-------------------|
-| `CONFIG_CHANGE` | 配置发布/删除 | dataId、group、tenant、操作类型 |
-| `SERVICE_REGISTER` | 服务实例注册 | serviceName、ip、port、cluster |
-| `SERVICE_DEREGISTER` | 服务实例注销 | serviceName、ip、port |
-| `AUTH_SUCCESS` | 用户认证成功 | username、remoteIp、timestamp |
-| `AUTH_FAILURE` | 用户认证失败 | username、remoteIp、失败原因 |
+| `RegisterInstanceTraceEvent` | 服务实例注册 | serviceName、ip、port、cluster |
+| `DeregisterInstanceTraceEvent` | 服务实例注销 | serviceName、ip、port |
+| `SubscribeServiceTraceEvent` | 服务订阅 | serviceName、订阅方信息 |
+| `PushServiceTraceEvent` | 服务推送 | serviceName、推送结果 |
+| `UpdateServiceTraceEvent` 等 | 服务/健康状态变化 | serviceName、变更内容 |
 
-**ControlManagerPlugin——DefaultTpsControlManager 令牌桶算法详解**
+**ControlManagerPlugin——NacosTpsControlManager 规则点限流详解**
 
-`DefaultTpsControlManager`（`plugin-default-impl/nacos-default-control-plugin/src/main/java/com/alibaba/nacos/plugin/control/impl/DefaultTpsControlManager.java`）基于令牌桶算法实现 TPS 限流：
+`NacosTpsControlManager`（`plugin-default-impl/nacos-default-control-plugin/src/main/java/com/alibaba/nacos/plugin/control/impl/NacosTpsControlManager.java:42-129`）基于**监控点 + 规则 + 屏障（TpsBarrier）**实现 TPS 限流：
 
 ```java
-// 令牌桶 TPS 限流核心逻辑（简化）
-public class DefaultTpsControlManager implements TpsControlManager {
-    private final Map<String, TokenBucket> bucketMap = new ConcurrentHashMap<>();
+// 规则点 TPS 限流核心逻辑（NacosTpsControlManager.java 关键流程）
+public class NacosTpsControlManager extends TpsControlManager {
+    // 监控点名 → TpsBarrier 屏障（LocalSimpleCountBarrier）
+    protected final Map<String, TpsBarrier> points = new ConcurrentHashMap<>(16);
+    // 监控点名 → 限流规则（TpsControlRule，可动态下发）
+    protected final Map<String, TpsControlRule> rules = new ConcurrentHashMap<>(16);
 
-    @Override
-    public TpsCheckResult check(TpsControlPoint controlPoint) {
-        String pointName = controlPoint.getPointName();
-        TokenBucket bucket = bucketMap.computeIfAbsent(pointName,
-            k -> new TokenBucket(maxTps, maxBurst));
-        if (bucket.tryAcquire()) {
-            return TpsCheckResult.pass();       // 获取令牌成功——放行
+    // 注册监控点——Server 启动/业务入口声明 @TpsControl(pointName="ConfigPublish") 时触发
+    public synchronized void registerTpsPoint(String pointName) {
+        if (!points.containsKey(pointName)) {
+            points.put(pointName, tpsBarrierCreator.createTpsBarrier(pointName));
+            if (rules.containsKey(pointName)) {
+                points.get(pointName).applyRule(rules.get(pointName)); // 已有规则立即生效
+            } else {
+                initTpsRule(pointName); // 否则初始化默认（仅统计、不拦截）规则
+            }
         }
-        return TpsCheckResult.reject();          // 令牌不足——拒绝（HTTP 429）
     }
 
-    // 令牌桶——每秒固定速率生成令牌
-    static class TokenBucket {
-        final long ratePerSecond;           // 每秒生成令牌数 = maxTps
-        final long maxTokens;               // 桶容量上限 = maxBurst
-        long availableTokens;                // 当前可用令牌数
-        long lastRefillTime;                 // 上次填充时间
+    // 下发/更新限流规则——支持运行时热更新
+    public synchronized void applyTpsRule(String pointName, TpsControlRule rule) {
+        if (rule == null) { rules.remove(pointName); }
+        else { rules.put(pointName, rule); }
+        if (points.containsKey(pointName)) {
+            points.get(pointName).applyRule(rule); // 屏障按新规则重建时间窗口
+        }
+    }
 
-        synchronized boolean tryAcquire() {
-            refill();                       // 先填充令牌
-            if (availableTokens > 0) {
-                availableTokens--;
-                return true;
+    // 限流检查——业务入口每收到一次请求调用一次
+    public TpsCheckResponse check(TpsCheckRequest tpsRequest) {
+        if (points.containsKey(tpsRequest.getPointName())) {
+            try {
+                // TpsBarrier.applyTps()：按规则的时间窗口（maxCount/maxSecond）
+                // 统计当前窗口内 pass 数量——超过阈值返回拒绝
+                return points.get(tpsRequest.getPointName()).applyTps(tpsRequest);
+            } catch (Throwable throwable) {
+                Loggers.TPS.warn("[{}]apply tps error,...", tpsRequest.getPointName());
             }
-            return false;
         }
-
-        void refill() {
-            long now = System.currentTimeMillis();
-            long elapsed = now - lastRefillTime;
-            long newTokens = elapsed * ratePerSecond / 1000;
-            availableTokens = Math.min(maxTokens, availableTokens + newTokens);
-            lastRefillTime = now;
-        }
+        // 监控点未注册/检查异常——默认放行（CHECK_SKIP）
+        return new TpsCheckResponse(true, TpsResultCode.CHECK_SKIP, "skip");
     }
 }
 ```
 
-**DefaultConnectionControlManager——最大连接数控制**
+另有 `TpsMetricsReporter` 以 900ms 周期定时任务遍历所有监控点——将上一秒各监控点的 passCount/deniedCount 以日志形式上报（`Loggers.TPS.info`）——供运维观察限流效果。
 
-`DefaultConnectionControlManager` 基于计数器实现最大连接数控制——为每个客户端 IP 维护一个原子计数器——新连接到达时递增计数器——连接关闭时递减计数器——超过 `maxConnectionsPerIp` 阈值——拒绝新连接——返回 HTTP 503（Service Unavailable）——防止单个客户端占用过多连接资源。
+**NacosConnectionControlManager——最大连接数控制**
+
+`NacosConnectionControlManager`（`plugin-default-impl/nacos-default-control-plugin/…/impl/NacosConnectionControlManager.java:36-77`）基于**连接总量规则（`ConnectionControlRule.countLimit`）+ 连接指标采集器（`ConnectionMetricsCollector`）**实现最大连接数控制——不做按 IP 细分——逻辑为：`check(ConnectionCheckRequest)` 时从各 `ConnectionMetricsCollector.getTotalCount()` 汇总当前总连接数——与规则的 `countLimit` 比较：
+
+```java
+// NacosConnectionControlManager.java:56-75 (关键流程)
+public ConnectionCheckResponse check(ConnectionCheckRequest connectionCheckRequest) {
+    ConnectionCheckResponse response = new ConnectionCheckResponse();
+    response.setSuccess(true);
+    response.setCode(ConnectionCheckCode.PASS_BY_TOTAL);
+    int totalCountLimit = connectionControlRule.getCountLimit();
+    if (totalCountLimit < 0) {
+        return response; // countLimit < 0——不限流
+    }
+    int totalCount = metricsCollectorList.stream()
+            .collect(Collectors.toMap(ConnectionMetricsCollector::getName,
+                    ConnectionMetricsCollector::getTotalCount))
+            .values().stream().mapToInt(Integer::intValue).sum();
+    if (totalCount >= totalCountLimit) {
+        response.setSuccess(false);
+        response.setCode(ConnectionCheckCode.DENY_BY_TOTAL_OVER); // 超限——拒绝新连接
+    }
+    return response;
+}
+```
+
+规则同样经 `applyConnectionLimitRule()` 动态下发——且默认实现**只更新规则并记录日志，自身不做连接拦截执行**（"no limit implementation"，拦截动作由内核 gRPC 连接建立流程依据 `check()` 返回的 `DENY_BY_TOTAL_OVER` 拒绝新连接，并非返回 HTTP 503）。
 
 **EnvironmentPlugin——Apollo 配置中心集成示例**
 
@@ -1185,22 +1149,27 @@ public class DefaultTpsControlManager implements TpsControlManager {
 // Apollo Environment Plugin 示例
 public class ApolloEnvironmentPlugin implements CustomEnvironmentPluginService {
     @Override
-    public void customizeEnvironment(ConfigurableEnvironment environment) {
-        // 从 Apollo Config Service 加载属性
+    public void customValue(Map<String, Object> customValue) {
+        // 从 Apollo Config Service 加载属性——注入为高优先级属性——覆盖 Nacos 默认配置
         Config config = ConfigService.getAppConfig();
-        Properties props = new Properties();
         for (String key : config.getPropertyNames()) {
-            props.setProperty(key, config.getProperty(key, ""));
+            customValue.put(key, config.getProperty(key, ""));
         }
-        // 注入为最高优先级属性源——覆盖 Nacos 默认配置
-        environment.getPropertySources().addFirst(
-            new PropertiesPropertySource("apolloConfig", props)
-        );
     }
 
     @Override
-    public int pluginOrder() {
-        return 0;  // 最高优先级——最先执行
+    public String propertyKey() {
+        return "apollo";  // 属性键前缀
+    }
+
+    @Override
+    public int order() {
+        return Integer.MAX_VALUE;  // 数值越大优先级越高——最先执行
+    }
+
+    @Override
+    public String pluginName() {
+        return "apolloEnvironmentPlugin";
     }
 }
 ```
@@ -1208,7 +1177,7 @@ public class ApolloEnvironmentPlugin implements CustomEnvironmentPluginService {
 
 #### 8.8.6 小结
 
-Nacos 2.5.3 辅助插件体系通过三种插件类型覆盖运维监控（TracePlugin）、环境定制（EnvironmentPlugin）和流量控制（ControlManagerPlugin）三个辅助维度——基于 Nacos `NotifyCenter` 事件系统实现链路追踪——令牌桶算法实现TPS限流——Spring Environment 定制实现环境差异化部署——形成完整的插件生态——符合微服务基础设施的最佳实践。
+Nacos 2.5.3 辅助插件体系通过三种插件类型覆盖运维监控（TracePlugin）、环境定制（EnvironmentPlugin）和流量控制（ControlManagerPlugin）三个辅助维度——基于 Nacos `NotifyCenter` 事件系统实现链路追踪——基于规则点（TpsControlPoint + TpsControlRule）机制实现TPS限流——Spring Environment 定制实现环境差异化部署——形成完整的插件生态——符合微服务基础设施的最佳实践。
 
 ---
 
@@ -1265,10 +1234,10 @@ Java SPI 机制在运行时扫描该文件——通过反射实例化 `CustomAut
 package com.example.custom.auth;
 
 import com.alibaba.nacos.plugin.auth.spi.server.AuthPluginService;
-import com.alibaba.nacos.plugin.auth.identity.IdentityContext;
-import com.alibaba.nacos.plugin.auth.permission.Permission;
-import com.alibaba.nacos.plugin.auth.resource.Resource;
-import com.alibaba.nacos.plugin.auth.exception.AccessolenException;
+import com.alibaba.nacos.plugin.auth.api.IdentityContext;
+import com.alibaba.nacos.plugin.auth.api.Permission;
+import com.alibaba.nacos.plugin.auth.api.Resource;
+import com.alibaba.nacos.plugin.auth.exception.AccessException;
 
 import java.util.Arrays;
 import java.util.Collection;
@@ -1431,7 +1400,7 @@ Nacos 2.5.3 的插件加载发生在 **Spring Boot 启动阶段**——`AuthPlug
 
 2. **类加载器隔离**：Nacos 使用 JDK `ServiceLoader`——加载的类由 System ClassLoader 管理——运行时无法卸载已加载的类——新增插件 JAR 需要新的 ClassLoader 实例——实现复杂——收益有限。
 
-3. **状态一致性**：某些插件持有状态（如 `JwtTokenManager` 缓存已解析的 Token、`DefaultTpsControlManager` 令牌桶计数器）——热替换插件需迁移状态——实现复杂度高——错误风险大。
+3. **状态一致性**：某些插件持有状态（如 `JwtTokenManager` 缓存已解析的 Token、`NacosTpsControlManager` 令牌桶计数器）——热替换插件需迁移状态——实现复杂度高——错误风险大。
 
 #### 8.10.3 未来 3.x 规划（社区 Roadmap 讨论方向）
 

@@ -147,11 +147,13 @@ Prometheus HTTP SD 是 Nacos 2.5.3 内置的轻量级监控数据导出方案，
 
 ### 核心指标表：11 个关键指标
 
+> **说明**：下表为推荐的监控指标口径 / JMX Exporter 映射示例，**并非** Nacos 2.5.3 `/nacos/actuator/prometheus` 端点的原生导出名。原生指标导出形如 `nacos_monitor{name="..."}`、`nacos_naming_subscriber`、`nacos_config_subscriber`、`grpc_server_requests`、`grpc_server_executor` 等（详见 13.x 节"核心指标出处"）。使用时请按实际抓取端点做指标名映射。
+
 | # | Prometheus 指标名 | 类型 | 说明 | 告警阈值建议 |
 |---|-----------------|------|------|-------------|
 | 1 | `naming_service_total` | Gauge | 当前注册的服务总数（所有命名空间） | > 90% 集群容量上限（如 2000 服务的 90% = 1800） |
 | 2 | `naming_instance_total` | Gauge | 当前注册的实例总数（临时+持久） | 单节点 > 50,000 实例（超过默认连接数限制） |
-| 3 | `grpc_connections_total` | Gauge | 当前活跃的 gRPC 双向流连接数 | > 80% `maxServerConnections`（默认 20000） |
+| 3 | `grpc_connections_total` | Gauge | 当前活跃的 gRPC 双向流连接数 | 连接上限由 tps/connection 控制插件 `ConnectionControlRule.countLimit` 配置（默认 -1 即不限），可通过 `/v2/core/loader/current` 观测连接规模 |
 | 4 | `grpc_push_cost_millis` | Histogram | gRPC 推送延迟分布（P50/P95/P99） | P99 > 500ms（影响服务发现时效） |
 | 5 | `config_publish_total` | Counter | 配置发布总次数（累计） | 速率突增 > 1000/min（异常批量发布） |
 | 6 | `config_get_total` | Counter | 配置获取总次数（累计） | 速率突降 > 50%（客户端无法获取配置） |
@@ -163,38 +165,9 @@ Prometheus HTTP SD 是 Nacos 2.5.3 内置的轻量级监控数据导出方案，
 
 ### 源码走读：gRPC 连接数指标的数据来源
 
-gRPC 连接数指标来源于 `core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcBiStreamRequestAcceptor.java` 中的 `ConnectionManager`：
+gRPC 连接数指标来源于 `core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcBiStreamRequestAcceptor.java`：GrpcBiStreamRequestAcceptor（继承 `BiRequestStreamGrpc.BiRequestStreamImplBase`）在双向流建立时调用 `ConnectionManager.register()` 完成连接注册（:53-54 注入 ConnectionManager）。
 
-```java
-// GrpcBiStreamRequestAcceptor.java:57-67 (Nacos 2.5.3)
-public class GrpcBiStreamRequestAcceptor extends GrpcRequestAcceptor {
-    
-    @Autowired
-    private ConnectionManager connectionManager;
-    
-    // 当前连接数 = ConnectionManager.getCurrentConnectionCount()
-    // 连接数通过 ConnectionEventListener 实时维护
-}
-```
-
-`ConnectionManager`（`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java`）维护 `Map<String, Connection>` 存储所有活跃连接：
-
-```java
-// ConnectionManager.java:53-68 (Nacos 2.5.3)
-@Component
-public class ConnectionManager {
-    
-    // 所有客户端连接映射：connectionId → Connection
-    private final Map<String, Connection> connections = new ConcurrentHashMap<>();
-    
-    // 连接总数计数器
-    private AtomicInteger connectionCount = new AtomicInteger(0);
-    
-    public int getCurrentConnectionCount() {
-        return connectionCount.get();
-    }
-}
-```
+`ConnectionManager`（`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java`，@Service）以 `ConcurrentHashMap<String, Connection>` 维护连接，当前连接数由 `currentClientsCount()` 返回（ConnectionManager.java:310）。
 
 ### Trade-off 分析
 
@@ -219,7 +192,7 @@ public class ConnectionManager {
 public final class NacosMeterRegistryCenter {
     
     // 稳定指标注册中心（长期稳定的核心指标）
-    public static final String CORE_STABLE_REGISTRY = "core.stable";
+    public static final String CORE_STABLE_REGISTRY = "CORE_STABLE_REGISTRY";
     
     private static final Map<String, MeterRegistry> METER_REGISTRY_MAP = new ConcurrentHashMap<>();
     
@@ -291,7 +264,7 @@ NacosMeterRegistryCenter.counter(METER_REGISTRY, "nacos_exception", "module", "c
 
 ### 设计模式分析
 
-1. **门面模式（Facade Pattern）**：`MetricsMonitor` 对外暴露 `getNamingSubscriber()`、`getConfigPublisher()` 等静态方法，将底层 Micrometer 的 `Gauge` / `Counter` / `Timer` 组装细节完全封装在类内部。业务代码（如服务注册处理器）只需调用 `MetricsMonitor.getXxx().increment()`，无需关心指标底层绑定到了哪个注册中心或哪种监控后端，有效隔离了监控实现与业务逻辑。
+1. **门面模式（Facade Pattern）**：`MetricsMonitor` 对外暴露 `getNamingSubscriber(version)`、`getNamingPublisher(version)`（naming 模块）与 `getPublishMonitor()`（config 模块）等静态方法，将底层 Micrometer 的 `Gauge` / `Counter` / `Timer` 组装细节完全封装在类内部。业务代码（如服务注册处理器）只需调用 `MetricsMonitor.getXxx().increment()`，无需关心指标底层绑定到了哪个注册中心或哪种监控后端，有效隔离了监控实现与业务逻辑。
 
 2. **工厂方法模式（Factory Method）**：`NacosMeterRegistryCenter` 相当于 `MeterRegistry` 的工厂，通过 `summary`、`timer`、`counter`、`gauge` 等工厂方法按需创建不同类型的计量器，并统一登记到对应的 `MeterRegistry`。这种工厂封装使得底层更换监控平台（例如从 Prometheus 切换到 Atlas）时，上层调用方无需改动任何业务代码。
 
@@ -327,12 +300,12 @@ grpc_connections_total{job="nacos"}
 rate(grpc_connections_total{job="nacos"}[5m]) * 60
 
 # 连接数饱和度百分比
-grpc_connections_total{job="nacos"} / maxServerConnections * 100
+grpc_connections_total{job="nacos"} * 100 / on(instance) group_left sum(grpc_connections_total) by (instance)
 ```
 
 **可视化类型**：Graph（折线图）  
 **Y 轴单位**：Count（个数）  
-**告警阈值线**：红色虚线 @ 80% `maxServerConnections`
+**告警阈值线**：红色虚线 @ 80% 配置上限（连接上限由 tps/connection 控制插件 `ConnectionControlRule.countLimit` 配置，默认 -1 不限）
 
 #### Panel 2：注册服务数 / 实例数趋势（Graph）
 
@@ -565,7 +538,7 @@ groups:
   - name: nacos_connection_alerts
     rules:
       - alert: HighGrpcConnections
-        expr: grpc_connections_total{job="nacos"} / maxServerConnections > 0.8
+        expr: grpc_connections_total{job="nacos"} > 16000  # 阈值按 ConnectionControlRule.countLimit 配置上限的 80% 校准
         for: 5m
         labels:
           severity: warning
@@ -641,7 +614,7 @@ groups:
 
 上述 5 条告警规则所依赖的指标各有对应的 Nacos 源码出口。以 **节点 Down** 告警（`up{job="nacos"} == 0`）为例，其本质是 Prometheus 对 Nacos `/actuator/health` 或 `/health` 端点的探测结果，而 Nacos 2.5.3 的健康状态由 Spring Boot Actuator 的 `HealthIndicator` 汇总而来。Nacos 对多种依赖（数据库、Raft、gRPC 连接池）分别注册了健康指示器，任一关键组件 Down 都会使整体健康状态降级。
 
-以 **Distro 同步失败** 告警（`rate(naming_distro_sync_failed_total[5m])`）为例，其指标准确名称为 `nacos_error` 系列，数据来源是 `naming` 模块的 `MetricsMonitor`：
+以 **Distro 同步失败** 告警（`rate(naming_distro_sync_failed_total[5m])`）为例，其指标准确名称为 `nacos_exception` 系列（module=naming），数据来源是 `naming` 模块的 `MetricsMonitor`（MetricsMonitor.java:258-265）：
 
 ```java
 // naming/src/main/java/com/alibaba/nacos/naming/monitor/MetricsMonitor.java (Nacos 2.5.3, 节选)
@@ -653,19 +626,10 @@ return NacosMeterRegistryCenter.counter(METER_REGISTRY, "nacos_exception",
 而 gRPC 连接数指标 `grpc_connections_total` 的数据来源是 `LongConnectionMetricsCollector`，它实现了插件化连接指标采集接口，实时从 `ConnectionManager` 读取连接计数：
 
 ```java
-// core/src/main/java/com/alibaba/nacos/core/remote/LongConnectionMetricsCollector.java:29-43 (Nacos 2.5.3)
-public class LongConnectionMetricsCollector implements ConnectionMetricsCollector {
-    
-    @Override
-    public long getGlobalConnectionCount() {
-        return ApplicationUtils.getBean(ConnectionManager.class).currentClientsCount();
-    }
-    
-    @Override
-    public Map<String, Long> getNamespaceConnectionCount() {
-        ConnectionManager connectionManager = ApplicationUtils.getBean(ConnectionManager.class);
-        // ...按命名空间聚合连接数
-    }
+// core/src/main/java/com/alibaba/nacos/core/remote/LongConnectionMetricsCollector.java:36-39 (Nacos 2.5.3)
+@Override
+public long getTotalCount() {
+    return ApplicationUtils.getBean(ConnectionManager.class).currentClientsCount();
 }
 ```
 
@@ -775,36 +739,33 @@ curl -s 'http://prometheus:9090/api/v1/query?query=grpc_connections_total'
 
 Nacos 2.5.3 的日志体系基于 SLF4J + Logback 实现，通过 `logger-adapter-impl` 模块提供 Log4j2 和 Logback 两种日志适配器。生产环境中，日志是排查问题的一手数据源——无论是启动失败、配置不生效还是性能瓶颈，第一步永远是查日志。
 
-Nacos 运行时产生的 5 种核心日志文件各有其特定用途：`nacos-cluster.log`（集群操作日志）、`naming-server.log`（命名服务日志）、`config-server.log`（配置服务日志）、`remote-server.log`（gRPC 通信日志）、`access.log`（HTTP 访问日志）。每种日志文件包含不同的信息维度，组合使用才能完整还原问题现场。
+Nacos 运行时产生的 5 种核心日志文件各有其特定用途：`nacos-cluster.log`（集群操作日志）、`naming-server.log`（命名服务日志）、`config-server.log`（配置服务日志）、`remote-core.log` / `remote-digest.log`（gRPC 通信日志）、`access.log`（HTTP 访问日志）。每种日志文件包含不同的信息维度，组合使用才能完整还原问题现场。
 
 ### 核心类关系图（日志体系架构）
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 日志架构</span><span class="s">logger-adapter-impl/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">log4j2-adapter/ → Log4j2NacosLoggingAdapter</div><div class="dgm-note" style="border:none;background:none;padding:0;">logback-adapter-12/ → LogbackNacosLoggingAdapter</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">日志输出 (${nacos.home}/logs/)</span><span class="s">nacos-cluster.log    ← 集群操作（Raft 选举/成员变更）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">naming-server.log    ← 命名服务（注册/发现/健康检查）</div><div class="dgm-note" style="border:none;background:none;padding:0;">config-server.log    ← 配置服务（发布/订阅/监听）</div><div class="dgm-note" style="border:none;background:none;padding:0;">remote-server.log    ← gRPC 通信（双向流/推送）</div><div class="dgm-note" style="border:none;background:none;padding:0;">access.log          ← HTTP 访问日志（Tomcat Access）</div><div class="dgm-note" style="border:none;background:none;padding:0;">nacos.log           ← 根日志（所有未分类日志）</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-5：Nacos 2.5.3 日志体系架构</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 日志架构</span><span class="s">logger-adapter-impl/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">log4j2-adapter/ → Log4j2NacosLoggingAdapter</div><div class="dgm-note" style="border:none;background:none;padding:0;">logback-adapter-12/ → LogbackNacosLoggingAdapter</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">日志输出 (${nacos.home}/logs/)</span><span class="s">nacos-cluster.log    ← 集群操作（Raft 选举/成员变更）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">naming-server.log    ← 命名服务（注册/发现/健康检查）</div><div class="dgm-note" style="border:none;background:none;padding:0;">config-server.log    ← 配置服务（发布/订阅/监听）</div><div class="dgm-note" style="border:none;background:none;padding:0;">remote-core.log / remote-digest.log ← gRPC 通信（双向流/推送）</div><div class="dgm-note" style="border:none;background:none;padding:0;">access.log          ← HTTP 访问日志（Tomcat Access）</div><div class="dgm-note" style="border:none;background:none;padding:0;">nacos.log           ← 根日志（所有未分类日志）</div><div class="dgm-note" style="border:none;background:none;padding:0;">图 13-5：Nacos 2.5.3 日志体系架构</div></div></div></div>
 
 ### 5 种日志文件详解
 
 #### 1. `nacos-cluster.log` — 集群操作日志
 
-**日志来源**：`core/src/main/java/com/alibaba/nacos/core/cluster/` 包下的集群管理相关类，包括 `ServerMemberManager`（集群成员管理）、`RaftPeerSet`（JRaft 对等节点集合）等。
+**日志来源**：`core/src/main/java/com/alibaba/nacos/core/cluster/` 包下的集群管理相关类，包括 `ServerMemberManager`（成员管理）与 `NacosClusterController`（节点查询接口）等。
 
-**关键日志内容**：
+**关键日志内容**（落 nacos-cluster.log / protocol-raft.log）：
 
 ```
-# 节点加入集群
-INFO ServerMemberManager - new member added: 192.168.1.101:8848
+# 成员列表变更（ServerMemberManager.java:415）
+INFO [serverlist] changed to : [192.168.1.101:8848, 192.168.1.102:8848, 192.168.1.103:8848]
 
-# 节点离开集群
-WARN ServerMemberManager - member removed: 192.168.1.102:8848
+# JRaft 协议启动（protocol-raft.log）
+INFO protocol-raft - ========= The raft protocol is starting... =========
 
-# Raft 选举触发
-INFO RaftCore - leader changed from 192.168.1.101:7848 to 192.168.1.102:7848
-
-# CP 模式数据同步
-INFO RaftSnapshotOperation - snapshot save successfully, path: ${nacos.home}/data/protocol/raft/
+# JRaft raft group 创建（Leader 变更经 NacosStateMachine.onLeaderStart/onStartFollowing 发布 RaftEvent）
+INFO protocol-raft - create raft group : transfer_encoding_demo_group
 ```
 
 **排查场景**：
-- 集群脑裂：查 `leader changed` 频率——如果 5 分钟内多次选举切换，可能是网络分区
+- 集群脑裂：查 protocol-raft.log 中 raft group 重启/选举相关日志频率——如果 5 分钟内多次触发，可能是网络分区
 - 节点频繁加入/离开：查 `member added/removed` 频率——可能是网络不稳定导致心跳超时误判
 
 #### 2. `naming-server.log` — 命名服务日志
@@ -814,62 +775,64 @@ INFO RaftSnapshotOperation - snapshot save successfully, path: ${nacos.home}/dat
 **关键日志内容**：
 
 ```
-# 实例注册
-INFO InstanceOperatorClientImpl - register instance: serviceName=DEFAULT_GROUP@@example-service, ip=192.168.1.101, port=8080
+# 实例注册：gRPC 链路无 INFO 级注册日志（InstanceOperatorClientImpl 仅在重复注册时 :118 打 WARN），
+# 可通过 naming-server.log 的 EVT_LOG 事件追踪实例上下线
+INFO EVT_LOG - {POS} {IP-ENABLED} valid: true, weight: 1.0, ...
 
-# 实例注销
-INFO InstanceOperatorClientImpl - deregister instance: serviceName=DEFAULT_GROUP@@example-service, ip=192.168.1.101, port=8080
+# 心跳超时/实例摘除（UnhealthyInstanceChecker.java:75-78）
+INFO EVT_LOG - {POS} {IP-DISABLED} valid: false, msg: client last beat: 1715000000000
 
-# 健康检查超时
-WARN HealthCheckTask - health check timeout for instance: 192.168.1.101:8080
-
-# Distro 同步失败
-ERROR DistroClientDataProcessor - distro sync failed: target=192.168.1.103:8848, service=DEFAULT_GROUP@@example-service
+# Distro 同步失败（DistroClientTransportAgent.java:83/129，落 naming-distro.log）
+ERROR [DISTRO-FAILED] Sync distro data failed! key: com.alibaba.nacos.naming.iplist...DEFAULT_GROUP@@example-service
 ```
 
 **排查场景**：
-- 实例注册失败：查 `register instance` 日志 → 确认是否到达 Nacos Server → 如果没有则排查客户端网络
-- 健康检查超时误判：查 `health check timeout` 频率 → 如果频率高且对应实例实际健康 → 可能是 GC 暂停导致心跳延迟
+- 实例注册失败：gRPC 注册本身无 INFO 级日志 → 查 `{IP-ENABLED}`/`{IP-DISABLED}` EVT_LOG 事件 → 如果没有对应事件则排查客户端网络
+- 健康检查超时误判：查 `{IP-DISABLED}` 事件频率 → 如果频率高且对应实例实际健康 → 可能是 GC 暂停导致心跳延迟
 
 #### 3. `config-server.log` — 配置服务日志
 
-**日志来源**：`config/src/main/java/com/alibaba/nacos/config/server/` 包下的核心类，包括 `ConfigCacheService`（配置缓存服务）、`LongPollingService`（长轮询服务）、`ConfigChangePublisher`（配置变更发布器）等。
+**日志来源**：`config/src/main/java/com/alibaba/nacos/config/server/` 包下的核心类。注意 `ConfigCacheService` 与 `ConfigChangePublisher` 内部没有任何日志输出；长轮询命中记录走 `LogUtil.CLIENT_LOG`（LongPollingService.java:180-186）。
 
-**关键日志内容**：
+**关键日志内容**（落 config-client-request.log / config-server.log）：
 
 ```
-# 配置发布
-INFO ConfigCacheService - publish config: dataId=application.properties, group=DEFAULT_GROUP, md5=abc123
+# 长轮询监听命中记录（config-client-request.log，LongPollingService 经 LogUtil.CLIENT_LOG 输出）
+INFO client-request - |||ip=192.168.1.101|dataId=application.properties|group=DEFAULT_GROUP|tenant=|action=polling
 
-# 配置订阅
-INFO LongPollingService - add listener: dataId=application.properties, group=DEFAULT_GROUP
+# 配置发布异常（ConfigPublishRequestHandler，config-server.log）
+ERROR [ConfigPublishRequestHandler] publish config error
+```
 
-# 配置变更推送
-INFO ConfigChangePublisher - notify config change: dataId=application.properties, group=DEFAULT_GROUP, md5=def456
+排查提示：
 
-# 长轮询超时
-INFO LongPollingService - long polling timeout: clientId=192.168.1.101:54321, dataId=application.properties
+```
+# 长轮询行为
+grep "polling" config-client-request.log
+
+# 配置发布/异常关键字（config-server.log）
+grep "publish config" config-server.log
 ```
 
 **排查场景**：
-- 配置不生效：查 `publish config` + `notify config change` → 确认发布成功 + 推送成功 → 如果推送成功但客户端未收到 → 排查客户端长轮询连接
-- 长轮询超时：查 `long polling timeout` 频率 → 如果高频超时 → 调大 `configLongPollTimeout` 参数
+- 配置不生效：查 `config-client-request.log` 中 `polling` 记录 → 确认客户端长轮询/订阅到达 → 如果发布有异常则查 config-server.log 的 `publish config error`
+- 长轮询超时：高频超时 → 调大 `configLongPollTimeout` 参数
 
-#### 4. `remote-server.log` — gRPC 通信日志
+#### 4. `remote-core.log` / `remote-digest.log` — gRPC 通信日志
 
 **日志来源**：`core/src/main/java/com/alibaba/nacos/core/remote/grpc/` 包下的核心类，包括 `GrpcBiStreamRequestAcceptor`（gRPC 双向流请求接收器）、`GrpcConnection`（gRPC 连接）、`RpcPushService`（RPC 推送服务）等。
 
-**关键日志内容**：
+**关键日志内容**（落 remote-core.log / remote-digest.log）：
 
 ```
-# gRPC 连接建立
-INFO GrpcBiStreamRequestAcceptor - new gRPC bi-stream connection: clientId=192.168.1.101:54321
+# 双向流请求接收（GrpcBiStreamRequestAcceptor.java:61）
+INFO [{}]Bi stream request receive, meta={},body={}
 
-# gRPC 连接断开
-WARN GrpcConnection - gRPC connection closed: clientId=192.168.1.101:54321, reason=connection reset
+# 连接注册成功（ConnectionManager.java:120）
+INFO new connection registered successfully, connectionId = {}
 
-# 推送超时
-ERROR RpcPushService - push timeout for client: clientId=192.168.1.101:54321, dataId=application.properties
+# 连接注销（ConnectionManager.java:159）
+INFO [{}]Connection unregistered successfully.
 ```
 
 **排查场景**：
@@ -918,14 +881,11 @@ Nacos 2.5.3 的日志并非直接调用 Logback API，而是通过一层"日志�
 ```java
 // logger-adapter-impl/logback-adapter-12/src/main/java/com/alibaba/nacos/logger/adapter/logback12/
 // LogbackNacosLoggingAdapterBuilder.java (Nacos 2.5.3, 节选)
-public class LogbackNacosLoggingAdapterBuilder extends AbstractBuilder<LogbackNacosLoggingAdapter> {
+public class LogbackNacosLoggingAdapterBuilder implements NacosLoggingAdapterBuilder {
     
     @Override
-    public LogbackNacosLoggingAdapter build(NacosLoggingProperties properties) {
-        LogbackNacosLoggingAdapter adapter = new LogbackNacosLoggingAdapter();
-        // 依据 nacos.logging.xxx 属性配置日志路径、级别
-        configureDefaultLogLevel(properties.getDefaultLogLevel());
-        return adapter;
+    public LogbackNacosLoggingAdapter build() {
+        return new LogbackNacosLoggingAdapter();
     }
 }
 ```
@@ -935,14 +895,14 @@ public class LogbackNacosLoggingAdapterBuilder extends AbstractBuilder<LogbackNa
 ```java
 // logger-adapter-impl/logback-adapter-12/src/main/java/com/alibaba/nacos/logger/adapter/logback12/
 // LogbackNacosLoggingAdapter.java (Nacos 2.5.3, 节选)
-public class LogbackNacosLoggingAdapter extends AbstractNacosLoggingAdapter {
+public class LogbackNacosLoggingAdapter implements NacosLoggingAdapter {
     
+    // 默认配置文件 classpath:nacos-logback12.xml
     @Override
-    public void loadConfiguration() {
-        NacosClientPropertyAction propertyAction = new NacosClientPropertyAction();
-        // ... 解析 nacos.home 等属性并注入 Logback 上下文
+    public void loadConfiguration(NacosLoggingProperties loggingProperties) {
+        // 读取配置文件位置，解析 nacos.home 等属性并注入 Logback 上下文
         LoggerContext lc = (LoggerContext) LoggerFactory.getILoggerFactory();
-        lc.putProperty("LOG_HOME", propertyAction.getNacosHome());
+        lc.putProperty("LOG_HOME", ...);
     }
 }
 ```
@@ -961,7 +921,7 @@ public class LogbackNacosLoggingAdapter extends AbstractNacosLoggingAdapter {
 
 ### 小结
 
-5 种日志文件各司其职：`nacos-cluster.log` 用于集群操作排查（节点加入/离开/Raft 选举）、`naming-server.log` 用于服务注册发现排查、`config-server.log` 用于配置发布订阅排查、`remote-server.log` 用于 gRPC 通信排查、`access.log` 用于 HTTP API 访问审计。组合使用 5 种日志可完整还原问题现场。
+5 种日志文件各司其职：`nacos-cluster.log` 用于集群操作排查（节点加入/离开/Raft 选举）、`naming-server.log` 用于服务注册发现排查、`config-server.log` 用于配置发布订阅排查、`remote-core.log` / `remote-digest.log` 用于 gRPC 通信排查、`access.log` 用于 HTTP API 访问审计。组合使用 5 种日志可完整还原问题现场。
 
 ---
 
@@ -982,18 +942,19 @@ Nacos 2.5.3 使用 Logback 的 `TimeBasedRollingPolicy` 实现日志滚动（Rol
 Nacos 2.5.3 的 Logback 配置文件位于各模块的 `src/main/resources/META-INF/logback`（如 `naming/src/main/resources/META-INF/logback`），典型配置如下：
 
 ```xml
-<!-- naming/src/main/resources/META-INF/logback (Nacos 2.5.3) -->
+<!-- naming/src/main/resources/META-INF/logback/naming-included.xml (Nacos 2.5.3) -->
 <configuration>
-    <appender name="NACOS-NAMING-SERVER"
+    <appender name="naming-server"
               class="ch.qos.logback.core.rolling.RollingFileAppender">
         <file>${nacos.home}/logs/naming-server.log</file>
-        <rollingPolicy class="ch.qos.logback.core.rolling.TimeBasedRollingPolicy">
-            <!-- 每天滚动一次 -->
-            <fileNamePattern>${nacos.home}/logs/naming-server.log.%d{yyyy-MM-dd}.%i.gz</fileNamePattern>
-            <!-- 保留最近 30 天的日志文件 -->
-            <maxHistory>30</maxHistory>
-            <!-- 所有归档日志文件总大小上限 3GB -->
-            <totalSizeCap>3GB</totalSizeCap>
+        <rollingPolicy class="ch.qos.logback.core.rolling.SizeAndTimeBasedRollingPolicy">
+            <!-- 每天滚动一次，单文件超 2GB 时按 %i 二次滚动 -->
+            <fileNamePattern>${nacos.home}/logs/naming-server.log.%d{yyyy-MM-dd}.%i</fileNamePattern>
+            <maxFileSize>2GB</maxFileSize>
+            <!-- 保留最近 15 天的日志文件 -->
+            <maxHistory>15</maxHistory>
+            <!-- 所有归档日志文件总大小上限 7GB -->
+            <totalSizeCap>7GB</totalSizeCap>
         </rollingPolicy>
         <encoder>
             <pattern>%d{yyyy-MM-dd HH:mm:ss.SSS} [%thread] %-5level %logger{50} - %msg%n</pattern>
@@ -1095,16 +1056,16 @@ curl -X GET 'http://nacos-server:8848/nacos/v1/core/cluster/nodes'
 **检查命令**：
 
 ```bash
-# 查询当前连接数（Prometheus 指标）
-curl -s 'http://nacos-server:8848/prometheus' | jq 'length'
+# 查询当前连接数（ServerLoaderController，ServerLoaderController.java:108-113）
+curl -s 'http://nacos-server:8848/nacos/v2/core/loader/current' | jq 'length'
 
 # 或者通过 JMX MBean（如果启用了 JMX）
 # java -jar cmdline-jmxclient-0.10.3.jar - localhost:9999 java.lang:type=OperatingSystem
 ```
 
-**预期值**：当前连接数 < 80% × `maxServerConnections`（默认 20000 × 0.8 = 16000）
+**预期值**：当前连接数在合理范围内（连接上限由 tps/connection 控制插件 `ConnectionControlRule.countLimit` 配置，默认 -1 即不限）
 
-**异常判定**：连接数 > 16000 → 可能即将拒绝新客户端连接 → 扩容集群节点或调大 `maxServerConnections`
+**异常判定**：连接数异常增长 → 结合 `/v2/core/loader/current` 与 remote-core.log 排查客户端重连风暴 → 扩容集群节点或通过连接限流插件约束
 
 **检查频率**：每小时 1 次
 
@@ -1174,7 +1135,7 @@ diff <(du -sh ${nacos.home}/data/protocol/raft/ns/default/) <(cat /tmp/raft_size
 
 **预期值**：Raft 日志大小稳定（日增长率 < 百分 10%）
 
-**异常判定**：Raft 日志大小异常增长（日增长率 > 50%）→ 可能 Raft Snapshot 失败 → 检查 `RaftSnapshotOperation` 日志
+**异常判定**：Raft 日志大小异常增长（日增长率 > 50%）→ 可能 Raft Snapshot 失败 → 检查 `protocol-raft.log` 中 snapshot 相关日志
 
 **检查频率**：每天 1 次
 
@@ -1213,8 +1174,8 @@ NACOS_API=${NACOS_API:-http://localhost:8848}
 nodes=$(curl -s "$NACOS_API/nacos/v1/core/cluster/nodes" | jq '.nodes[] | select(.state!="UP")')
 [ -n "$nodes" ] && { echo "[FAIL] 存在非UP节点"; FAIL=1; } || echo "[OK] 节点全部UP"
 
-# 2. gRPC 连接数：通过 Prometheus 指标判断
-conn=$(curl -s "$NACOS_API/prometheus" | jq 'length')
+# 2. gRPC 连接数：通过 ServerLoaderController 查询
+conn=$(curl -s "$NACOS_API/nacos/v2/core/loader/current" | jq 'length')
 [ "$conn" -gt 16000 ] && { echo "[FAIL] 连接数 $conn 超过16000"; FAIL=1; } || echo "[OK] 连接数 $conn"
 
 # 5. 磁盘使用率
@@ -1371,7 +1332,7 @@ grep "register instance" ${nacos.home}/logs/naming-server.log | \
   awk -F'serviceName=' '{print $2}' | awk -F',' '{print $1}' | sort | uniq -c | sort -rn | head -10
 
 # 统计各客户端连接数
-grep "new gRPC bi-stream connection" ${nacos.home}/logs/remote-server.log | \
+grep "Connection unregistered successfully" ${nacos.home}/logs/remote-core.log | \
   awk -F'clientId=' '{print $2}' | sort | uniq -c | sort -rn
 
 # 按时间段过滤日志
@@ -1417,7 +1378,7 @@ jmap -histo <nacos_pid> | head -35
 
 # 关注类：
 # java.util.concurrent.ConcurrentHashMap$Node → gRPC 连接元数据
-# com.alibaba.nacos.naming.core.Instance → 临时实例对象数
+# com.alibaba.nacos.naming.core.v2.pojo.InstancePublishInfo → 临时实例对象数
 # com.alibaba.nacos.naming.core.Cluster → 集群对象数
 ```
 
@@ -1585,11 +1546,11 @@ curl -X DELETE 'http://localhost:8848/nacos/v1/ns/instance?serviceName=example-s
 # 检查 Raft 日志目录大小
 du -sh ${nacos.home}/data/protocol/raft/ns/default/
 
-# 查询 Raft Snapshot 状态（通过 API）
-curl -X GET 'http://localhost:8848/nacos/v1/core/cluster/raft/snapshot'
+# 检查 Raft Snapshot 状态（NacosClusterController 无 snapshot 端点，通过目录与日志观测）
+grep -E "snapshot" ${nacos.home}/logs/protocol-raft.log | tail -20
 ```
 
-Raft Snapshot 由 JRaft 自动管理（默认每 1000 条日志触发一次 Snapshot），正常情况下无需手动干预。但如果 Snapshot 失败（如磁盘空间不足），Raft 日志将持续增长→需手动清理。
+Raft Snapshot 由 JRaft 自动管理（默认每 1800 秒即 30 分钟周期性触发一次 Snapshot，`nacos.core.protocol.raft.data.snapshot_interval_secs`），正常情况下无需手动干预。但如果 Snapshot 失败（如磁盘空间不足），Raft 日志将持续增长→需手动清理。
 
 **建议检查频率**：每月 1 次
 
@@ -1614,15 +1575,15 @@ ls ${nacos.home}/logs/*.gz | wc -l
 
 #### 2.2 异常增长的日志文件清理
 
-如果某个模块的日志异常暴增（如 `remote-server.log` 因为 gRPC 连接频繁断开导致 ERROR 日志暴增），需手动清理大日志文件后排查根因：
+如果某个模块的日志异常暴增（如 `remote-core.log` 因为 gRPC 连接频繁断开导致 ERROR 日志暴增），需手动清理大日志文件后排查根因：
 
 ```bash
 # 查找大于 1GB 的日志文件
 find ${nacos.home}/logs/ -name "*.log" -size +1G
 
 # 清理大日志文件（先备份再删除）
-cp ${nacos.home}/logs/remote-server.log /tmp/remote-server.log.bak.$(date +%Y%m%d)
-echo > ${nacos.home}/logs/remote-server.log
+cp ${nacos.home}/logs/remote-core.log /tmp/remote-core.log.bak.$(date +%Y%m%d)
+echo > ${nacos.home}/logs/remote-core.log
 ```
 
 ### 3. 定期运维任务 Cron 配置
@@ -1657,11 +1618,12 @@ echo > ${nacos.home}/logs/remote-server.log
 
 ### 源码走读：历史配置清理与 Raft Snapshot 的实现入口
 
-历史配置清理针对 `his_config_info` 表，该表由 `config` 模块的持久化层维护。Nacos 源码中与历史配置清理相关的是 `ConfigInfoService` 的删除方法，它会在删除当前配置的同时保留操作历史，避免误删后无法回溯：
+历史配置清理针对 `his_config_info` 表，该表由 `config` 模块的持久化层维护。Nacos 源码中与历史配置清理相关的是持久化接口 `ConfigInfoPersistService` 的删除方法，它会在删除当前配置的同时保留操作历史，避免误删后无法回溯：
 
 ```java
-// config/src/main/java/com/alibaba/nacos/config/server/service/ConfigInfoService.java (Nacos 2.5.3, 节选)
-public void removeConfigInfo(final String dataId, final String group, final String tenant, String operator) {
+// config/src/main/java/com/alibaba/nacos/config/server/service/repository/ConfigInfoPersistService.java:40/163 (Nacos 2.5.3, 节选)
+public void removeConfigInfo(final String dataId, final String group, final String tenant, final String srcIp,
+        final String srcUser) {
     // 将当前配置写入 his_config_info 作为历史记录后再删除
     // 这样即使误删，也能通过历史版本恢复
 }
@@ -1670,16 +1632,16 @@ public void removeConfigInfo(final String dataId, final String group, final Stri
 而 Raft 日志的增长控制依赖 **Snapshot 机制**。Jraft（Nacos 使用的 Raft 实现）通过定期生成 Snapshot 压缩已提交的日志，源码层面的关键配置在 `RaftSysConstants`：
 
 ```java
-// core/src/main/java/com/alibaba/nacos/core/consistency/raft/RaftSysConstants.java (Nacos 2.5.3, 节选)
+// core/src/main/java/com/alibaba/nacos/core/distributed/raft/RaftSysConstants.java (Nacos 2.5.3, 节选)
 public final class RaftSysConstants {
-    // Snapshot 生成方式：按时间间隔或日志数量阈值
-    public static final String MASTER_SNAPSHOT_META_THRESHOLD = "master.snapshot.meta.threshold";
-    public static final String MASTER_SNAPSHOT_INTERVAL_SECONDS = "master.snapshot.interval.seconds";
-    public static final String CLUSTER_SNAPSHOT_META_THRESHOLD = "cluster.snapshot.meta.threshold";
+    // 选举超时时间（毫秒，默认 5000）
+    public static final String RAFT_ELECTION_TIMEOUT_MS = "nacos.core.protocol.raft.data.election_timeout_ms";
+    // Snapshot 周期触发间隔（秒，默认 1800）
+    public static final String RAFT_SNAPSHOT_INTERVAL_SECS = "nacos.core.protocol.raft.data.snapshot_interval_secs";
 }
 ```
 
-Raft 节点会按照 `interval.seconds` 周期或 `meta.threshold` 日志量阈值触发 `SnapshotOperation`，将状态机的一致状态落盘并丢弃已归档的日志段。运维巡检中若发现 `data/protocol/raft/ns/{group}/` 目录持续异常增长，往往意味着 Snapshot 生成失败（如磁盘不足或阈值配置过大），应及时检查 13.7 节提到的 Raft 日志巡检项。
+Raft 节点会按照 `snapshot_interval_secs` 周期触发 `SnapshotOperation`，将状态机的一致状态落盘并丢弃已归档的日志段。运维巡检中若发现 `data/protocol/raft/ns/{group}/` 目录持续异常增长，往往意味着 Snapshot 生成失败（如磁盘不足或阈值配置过大），应及时检查 13.7 节提到的 Raft 日志巡检项。
 
 ### 设计模式分析
 
@@ -1700,35 +1662,35 @@ Raft 节点会按照 `interval.seconds` 周期或 `meta.threshold` 日志量阈�
 `prometheus/src/main/java/com/alibaba/nacos/prometheus/utils/PrometheusUtils.java` 负责将 Instance 集合序列化为 Prometheus HTTP SD 格式的 JSON Array：
 
 ```java
-// PrometheusUtils.java:37-65 (Nacos 2.5.3)
+// PrometheusUtils.java:41-73 (Nacos 2.5.3)
 public class PrometheusUtils {
     
+    // 按 clusterName 分组，输出 Prometheus HTTP SD 格式：{"targets":["ip:port"],"labels":{...}}
     public static void assembleArrayNodes(Set<Instance> targetSet, ArrayNode arrayNode) {
-        for (Instance instance : targetSet) {
+        Map<String, List<Instance>> instanceMap = targetSet.stream()
+                .collect(Collectors.groupingBy(Instance::getClusterName));
+        instanceMap.forEach((clusterName, instances) -> {
             ObjectNode node = JacksonUtils.createEmptyObjectNode();
-            // 提取 Instance 元数据字段
-            node.put("instanceId", instance.getInstanceId());
-            node.put("ip", instance.getIp());
-            node.put("port", instance.getPort());
-            node.put("clusterName", instance.getClusterName());
-            node.put("serviceName", instance.getServiceName());
-            
-            // 提取 metadata（自定义键值对）
-            ObjectNode metadataNode = JacksonUtils.createEmptyObjectNode();
-            Map<String, String> metadata = instance.getMetadata();
-            if (metadata != null) {
-                for (Map.Entry<String, String> entry : metadata.entrySet()) {
-                    metadataNode.put(entry.getKey(), entry.getValue());
+            ArrayNode targets = node.putArray("targets");
+            ObjectNode labels = JacksonUtils.createEmptyObjectNode();
+            for (Instance instance : instances) {
+                targets.add(instance.getIp() + ":" + instance.getPort());
+                // 将 Instance 元数据转为 Prometheus SD label
+                Map<String, String> metadata = instance.getMetadata();
+                if (metadata != null) {
+                    metadata.forEach(labels::put);
                 }
+                labels.put("clusterName", clusterName);
+                labels.put("serviceName", instance.getServiceName());
             }
-            node.set("metadata", metadataNode);
+            node.set("labels", labels);
             arrayNode.add(node);
-        }
+        });
     }
 }
 ```
 
-**序列化逻辑**：遍历 `targetSet` 中的每个 `Instance` 对象→提取 5 个核心字段（`instanceId`、`ip`、`port`、`clusterName`、`serviceName`）+ `metadata` 自定义键值对→组装为 Jackson `ObjectNode`→添加至 `ArrayNode`→返回 JSON 数组字符串。
+**序列化逻辑**：遍历 `targetSet` → 按 `clusterName` 分组 → 每个 cluster 输出一个 Prometheus SD 格式对象：`targets` 数组存放 `ip:port`，`labels` 承载 instance `metadata` 及 `clusterName`/`serviceName` → 添加至 `ArrayNode` 返回给 Prometheus HTTP SD 抓取端。
 
 **性能考虑**：在大规模集群（100,000+ 实例）场景下，`assembleArrayNodes()` 的序列化耗时可能达到数百毫秒。建议 Prometheus Server 的 `scrape_interval` 不低于 30s，且在 Prometheus Server 端配置 `scrape_timeout` 不低于 20s 以避免超时。
 
@@ -1737,27 +1699,9 @@ public class PrometheusUtils {
 `prometheus/src/main/java/com/alibaba/nacos/prometheus/filter/PrometheusAuthFilter.java` 提供 Prometheus 端点的访问控制：
 
 ```java
-// PrometheusAuthFilter.java:32-48 (Nacos 2.5.3)
-public class PrometheusAuthFilter implements Filter {
-    
-    @Override
-    public void doFilter(ServletRequest request, ServletResponse response,
-            FilterChain chain) throws IOException, ServletException {
-        HttpServletRequest httpRequest = (HttpServletRequest) request;
-        // 检查是否启用了认证
-        if (AuthConfigs.isAuthEnabled()) {
-            // 验证 AccessToken
-            String accessToken = httpRequest.getParameter("accessToken");
-            if (StringUtils.isBlank(accessToken) || !AuthManager.getInstance()
-                    .validateAccessToken(accessToken)) {
-                ((HttpServletResponse) response)
-                    .sendError(HttpServletResponse.SC_UNAUTHORIZED, "Invalid access token");
-                return;
-            }
-        }
-        chain.doFilter(request, response);
-    }
-}
+// PrometheusAuthFilter.java:39-52 (Nacos 2.5.3, 节选)
+// @Configuration：在 nacos.core.auth.enabled=true 条件下，
+// 为 /prometheus 注册 Spring Security BasicAuthenticationFilter 认证过滤器链
 ```
 
 **安全建议**：生产环境中务必启用 Nacos Auth（`nacos.core.auth.enabled=true`），确保 Prometheus 端点不被未授权访问泄露所有注册实例的 IP/Port/metadata 信息。
@@ -1861,34 +1805,37 @@ scrape_configs:
 **排查过程**：
 
 ```bash
-# Step 1: 查看 nacos-cluster.log 中 Raft 选举日志
-grep "leader changed" ${nacos.home}/logs/nacos-cluster.log | tail -20
+# Step 1: 查看 protocol-raft.log 中 Raft 协议/raft group 日志（Leader 变更经
+# NacosStateMachine.onLeaderStart/onStartFollowing 发布 RaftEvent）
+grep -E "raft protocol|create raft group" ${nacos.home}/logs/protocol-raft.log | tail -20
 
-# 输出：
-# 02:03:15 INFO RaftCore - leader changed from 192.168.1.101:7848 to 192.168.1.102:7848
-# 02:05:22 INFO RaftCore - leader changed from 192.168.1.102:7848 to 192.168.1.101:7848
-# 02:08:47 INFO RaftCore - leader changed from 192.168.1.101:7848 to 192.168.1.103:7848
-# 02:11:03 INFO RaftCore - leader changed from 192.168.1.103:7848 to 192.168.1.101:7848
+# 或监控 /v1/core/cluster/node/self 元数据中 leader 信息变化
+curl -s 'http://localhost:8848/nacos/v1/core/cluster/node/self' | jq '.meta'
+
+# 输出（示例，leader 元数据频繁变化即选举抖动）：
+# 02:03:15 INFO protocol-raft - ========= The raft protocol is starting... =========
+# 02:05:22 INFO protocol-raft - create raft group : nacos.naming.metadata.group
+# 02:08:47 INFO protocol-raft - create raft group : nacos.naming.metadata.group
 ```
 
 **根因分析**：15 分钟内发生了 4 次 Leader 切换→频率极高→典型的网络分区导致的"乒乓效应"（Ping-Pong Effect）。排查交换机日志发现凌晨 2:00-2:15 期间该网段发生了短暂的网络中断→导致 Raft 心跳超时→触发 Leader 选举→网络恢复后重新选举→反复切换。
 
 **解决方案**：
-1. 调大 Raft 选举超时参数（`nacos.core.raft.election_timeout_ms` 默认 1000ms → 调整至 3000ms）以减少瞬时网络抖动触发的选举
+1. 调大 Raft 选举超时参数 `nacos.core.protocol.raft.data.election_timeout_ms`（默认 5000，建议调整至 10000~15000ms）以减少瞬时网络抖动触发的选举
 2. 配置交换机网络冗余（双上行链路）避免单点网络故障
 
-### 生产案例 2：通过 remote-server.log 排查 gRPC 连接泄漏
+### 生产案例 2：通过 remote-core.log 排查 gRPC 连接泄漏
 
-**背景**：某互联网公司 Nacos 集群运行 2 周后，节点 `grpc_connections_total` 持续增长至 18000+（接近默认 `maxServerConnections=20000`），但实际活跃客户端数仅 2000。
+**背景**：某互联网公司 Nacos 集群运行 2 周后，节点 `grpc_connections_total` 持续增长至 18000+（连接上限由 tps/connection 控制插件 `ConnectionControlRule.countLimit` 配置，默认 -1 不限），但实际活跃客户端数仅 2000。
 
 **排查过程**：
 
 ```bash
-# Step 1: 查看 remote-server.log 中连接建立/断开频率
-grep "new gRPC bi-stream connection" ${nacos.home}/logs/remote-server.log | wc -l
+# Step 1: 查看 remote-core.log 中连接注册/注销频率
+grep "new connection registered successfully" ${nacos.home}/logs/remote-core.log | wc -l
 # 输出：45000+（连接建立次数远超实际客户端数）
 
-grep "connection closed" ${nacos.home}/logs/remote-server.log | wc -l
+grep "Connection unregistered successfully" ${nacos.home}/logs/remote-core.log | wc -l
 # 输出：25000+（连接断开次数少于连接建立次数 → 连接泄漏）
 ```
 
@@ -1896,7 +1843,7 @@ grep "connection closed" ${nacos.home}/logs/remote-server.log | wc -l
 
 **解决方案**：
 1. 要求客户端升级 SDK 至最新版本（修复了 gRPC 连接关闭的 Bug）
-2. 临时措施：配置 `nacos.core.remote.server.grpc.sdk.maxConnectionIdleSeconds` 参数（默认 20s）缩短空闲连接超时时间，让服务端主动关闭僵尸连接
+2. 临时措施：Nacos 2.5.3 无空闲连接清理参数，可通过 `nacos.remote.server.grpc.sdk.permit-keep-alive-time` 与连接限流插件约束；僵尸连接由 gRPC 连接健康检测与重连机制收敛
 
 ---
 
@@ -1929,7 +1876,7 @@ async-profiler -d 30 -e cpu -f /tmp/nacos_cpu_flamegraph.html <nacos_pid>
 
 **常见根因**：
 1. `DistroClientDataProcessor` 线程 CPU 高 → Distro 同步任务积压 → 排查 Distro 延迟（`naming-server.log` 中 `distro sync failed` 频率）
-2. `GrpcBiStreamRequestAcceptor` 线程 CPU 高 → gRPC 请求处理阻塞 → 排查客户端 gRPC 调用频率（`remote-server.log` 中 `push timeout` 频率）
+2. `GrpcBiStreamRequestAcceptor` 线程 CPU 高 → gRPC 请求处理阻塞 → 排查客户端 gRPC 调用频率（`remote-core.log` 中 `Bi stream request receive` 频率）
 3. `G1GC Concurrent Mark` 线程 CPU 高 → GC 频繁（Old Gen 使用率 > 85%）→ jstat -gcutil 确认 GC 频率
 
 ### 实战案例：内存泄漏排查完整流程
@@ -1946,7 +1893,7 @@ jstat -gcutil <nacos_pid> 1000 10lish
 # Step 2: jmap -histo 统计对象实例数
 jmap -histo <nacos_pid> | head -35
 # 关注：
-# com.alibaba.nacos.naming.core.Instance → 实例数是否远超实际注册实例数
+# com.alibaba.nacos.naming.core.v2.pojo.InstancePublishInfo → 实例数是否远超实际注册实例数
 # java.util.concurrent.ConcurrentHashMap$Node → HashMap Node 数是否异常增长
 
 # Step 3: 对比 24h 前后的 jmap -histo 输出（diff 两次采样）
@@ -1974,10 +1921,10 @@ jmap -dump:live,format=b,file=/tmp/nacos_heap_$(date +%Y%m%d_%H%M%S).hprof <naco
 
 #### naming_service_total — 服务总数
 
-数据来源：`naming/src/main/java/com/alibaba/nacos/naming/core/v2/ServiceManager.java:145-160`
+数据来源：`naming/src/main/java/com/alibaba/nacos/naming/core/v2/ServiceManager.java:51-53`
 
 ```java
-// ServiceManager.java:145-160 (Nacos 2.5.3)
+// ServiceManager.java:51-53 (Nacos 2.5.3)
 public Set<Service> getSingletons(String namespace) {
     return new HashSet<>(namespaceSingletonMaps.getOrDefault(namespace, 
         new ConcurrentHashMap<>()).values());
@@ -1988,38 +1935,27 @@ public Set<Service> getSingletons(String namespace) {
 
 #### naming_instance_total — 实例总数
 
-数据来源：`naming/src/main/java/com/alibaba/nacos/naming/core/InstanceOperatorClientImpl.java:127-145`
+数据来源：`naming/src/main/java/com/alibaba/nacos/naming/core/v2/InstanceOperatorClientImpl.java:276-279`
 
 ```java
-// InstanceOperatorClientImpl.java:127-145 (Nacos 2.5.3)
+// InstanceOperatorClientImpl.java:276-279 (Nacos 2.5.3)
 @Override
 public List<? extends Instance> listAllInstances(String namespace, String serviceName) {
-    Service service = serviceManager.getService(namespace, serviceName);
-    if (service == null) {
-        return new ArrayList<>();
-    }
-    List<Instance> allInstances = new ArrayList<>();
-    for (Cluster cluster : service.getClusterMap().values()) {
-        allInstances.addAll(cluster.allIPs());
-    }
-    return allInstances;
+    Service service = getService(namespace, groupName, serviceName, true);
+    return serviceStorage.getData(service).getHosts();
 }
 ```
 
-每个 Service → 每个 Cluster → `allIPs()` → 所有 Instance → 全局求和即可得到 `naming_instance_total`。
+每个 Service → 先经 `getService(…, true)` 确保服务已创建 → 实例数据来自 `ServiceStorage.getData(service).getHosts()` → 全局求和即可得到 `naming_instance_total`。
 
 #### grpc_connections_total — gRPC 连接总数
 
-数据来源：`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java:67-73`
+数据来源：`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java:310`
 
 ```java
-// ConnectionManager.java:67-73 (Nacos 2.5.3)
-public Map<String, Connection> getConnections() {
-    return connections;
-}
-
-public int getCurrentConnectionCount() {
-    return connectionCount.get();
+// ConnectionManager.java:310 (Nacos 2.5.3)
+public int currentClientsCount() {
+    return clients.size();
 }
 ```
 
@@ -2027,23 +1963,17 @@ public int getCurrentConnectionCount() {
 
 #### grpc_push_cost_millis — gRPC 推送延迟
 
-数据来源：`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:85-105`
+数据来源：`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:50/96`
+
+推送经 `pushWithCallback(...)`（:50）或 `pushWithoutAck(...)`（:96）发出；耗时指标来自 `core/src/main/java/com/alibaba/nacos/core/monitor/MetricsMonitor.java:298-313` 的 `recordGrpcRequestEvent`，对应 Prometheus 指标 `grpc_server_requests` Timer（含 `module`/`requestClass` 标签）。
 
 ```java
-// RpcPushService.java:85-105 (Nacos 2.5.3)
-public void push(Connection connection, PushAckId pushAckId, Object request) {
-    long startTime = System.currentTimeMillis();
-    try {
-        connection.request(pushAckId, request, timeoutMs);
-    } finally {
-        long costTime = System.currentTimeMillis() - startTime;
-        // 记录推送延迟 Histogram
-        MetricsMonitor.recordPushCost(costTime);
-    }
+// MetricsMonitor.java:298-313 (Nacos 2.5.3, 节选)
+// grpc_server_requests Timer：按 module / requestClass 标签记录 gRPC 请求（含推送）耗时
+public static Timer grpcRequestEvent(String module, String requestClass) {
+    ...
 }
 ```
-
-每次 gRPC 推送调用 → `System.currentTimeMillis()` 记录耗时 → 汇总为 Histogram → 通过 Prometheus Histogram 暴露 P50/P95/P99。
 
 ### Grafana Dashboard 深入：完整的 5 面板 JSON 配置
 
@@ -2194,47 +2124,34 @@ Nacos 2.5.3 的 `logger-adapter-impl/` 模块提供了 Log4j2 和 Logback 两种
 `logger-adapter-impl/log4j2-adapter/src/main/java/com/alibaba/nacos/logger/adapter/log4j2/Log4J2NacosLoggingAdapter.java`：
 
 ```java
-// Log4J2NacosLoggingAdapter.java:30-52 (Nacos 2.5.3)
+// Log4J2NacosLoggingAdapter.java:38-123 (Nacos 2.5.3, 节选)
 public class Log4J2NacosLoggingAdapter implements NacosLoggingAdapter {
 
-    static {
-        Log4J2NacosLoggingAdapterBuilder.load();
+    @Override
+    public boolean isAdaptedLogger(Logger logger) {
+        // 判断传入的 SLF4J Logger 是否由 Log4j2 实现
+        return logger instanceof Log4jLogger;
     }
 
     @Override
-    public void info(String message) {
-        getLogger().info(message);
+    public boolean isNeedReloadConfiguration(String loggerName) {
+        return false;
+    }
+
+    // 默认配置文件 classpath:nacos-log4j2.xml（:40 / :81-83）
+    @Override
+    public String getDefaultConfigLocation() {
+        return "classpath:nacos-log4j2.xml";
     }
 
     @Override
-    public void warn(String message, Throwable throwable) {
-        getLogger().warn(message, throwable);
-    }
-
-    @Override
-    public void error(String message, Throwable throwable) {
-        getLogger().error(message, throwable);
+    public void loadConfiguration(NacosLoggingProperties loggingProperties) {
+        // 依据 nacos.logging.config 属性加载 Log4j2 配置
     }
 }
 ```
 
-`Log4J2NacosLoggingAdapterBuilder.load()` 负责从 `nacos.logging.config` 系统属性指定的路径加载 Log4j2 配置文件：
-
-```java
-// Log4J2NacosLoggingAdapterBuilder.java:35-60 (Nacos 2.5.3)
-public static void load() {
-    String location = System.getProperty("nacos.logging.config");
-    if (StringUtils.isNotBlank(location)) {
-        try {
-            Configurator.initialize(null, location);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    } else {
-        Configurator.initialize(null, "classpath:nacos-log4j2.xml");
-    }
-}
-```
+配置加载由 Builder 的 `build()` 完成（`Log4J2NacosLoggingAdapterBuilder` 仅提供 `build()`，:27-33）：
 
 **自定义日志配置路径**：通过 JVM 系统属性 `-Dnacos.logging.config=/opt/nacos/conf/custom-log4j2.xml` 指定自定义 Log4j2 配置文件路径。
 
@@ -2243,13 +2160,12 @@ public static void load() {
 `logger-adapter-impl/logback-adapter-12/src/main/java/com/alibaba/nacos/logger/adapter/logback12/LogbackNacosLoggingAdapter.java`：
 
 ```java
-// LogbackNacosLoggingAdapter.java:30-48 (Nacos 2.5.3)
+// LogbackNacosLoggingAdapter.java (Nacos 2.5.3, 节选)
 public class LogbackNacosLoggingAdapter implements NacosLoggingAdapter {
 
-    static {
-        NacosLogbackConfiguratorAdapterV1.Initialize(null, 
-            System.getProperty("nacos.logging.config"));
-    }
+    private final NacosLogbackConfiguratorAdapterV1 configurator = new NacosLogbackConfiguratorAdapterV1();
+
+    // 无静态块：适配器在构造时创建 configurator，配置加载走 loadConfiguration()
 
     @Override
     public void info(String message) {
@@ -2420,7 +2336,7 @@ done
 echo "[2/7] 检查 gRPC 连接数..."
 for node in "${NODES[@]}"; do
     connections=$(curl -s --connect-timeout 5 --max-time 10 \
-        "http://${node}/prometheus" | jq 'length')
+        "http://${node}/nacos/v2/core/loader/current" | jq 'length')
     if [ "${connections}" -gt 16000 ]; then
         send_alert "WARNING" "连接数过高" "节点 ${node} 当前连接数 ${connections} > 16000（80% 阈值）"
         echo "WARN: 节点 ${node} gRPC 连接数 ${connections} > 16000"
@@ -2457,7 +2373,7 @@ fi
 
 # 5. ERROR 日志统计
 echo "[5/7] 检查 ERROR 日志..."
-for log in "nacos-cluster.log" "naming-server.log" "config-server.log" "remote-server.log"; do
+for log in "nacos-cluster.log" "naming-server.log" "config-server.log" "remote-core.log"; do
     error_count=$(grep -c "ERROR" "${NACOS_HOME}/logs/${log}" 2>/dev/null || echo 0)
     if [ "${error_count}" -gt 10 ]; then
         send_alert "WARNING" "ERROR 日志过多" "${log} 中最近 1h 有 ${error_count} 条 ERROR"
@@ -2906,29 +2822,22 @@ Prometheus 默认采用 Pull 模式（Server 主动拉取 Exporter 端点的指�
 `prometheus/src/main/java/com/alibaba/nacos/prometheus/conf/PrometheusSecurityConfiguration.java` 控制 Prometheus 端点的安全配置：
 
 ```java
-// PrometheusSecurityConfiguration.java:30-52 (Nacos 2.5.3)
+// PrometheusSecurityConfiguration.java:33-43 (Nacos 2.5.3, 节选)
 @Configuration
 public class PrometheusSecurityConfiguration {
 
-    @Value("${nacos.prometheus.metrics.enabled:false}")
-    private boolean prometheusMetricsEnabled;
-
+    // 通过 WebSecurityCustomizer 使 /prometheus 系列路径绕过 Spring Security 主链
     @Bean
-    public FilterRegistrationBean<PrometheusAuthFilter> prometheusAuthFilter() {
-        FilterRegistrationBean<PrometheusAuthFilter> registration = new FilterRegistrationBean<>();
-        registration.setFilter(new PrometheusAuthFilter());
-        registration.addUrlPatterns("/prometheus/*");
-        registration.setOrder(1);
-        return registration;
+    public WebSecurityCustomizer webSecurityCustomizer() {
+        // 忽略 /prometheus、/prometheus/* 等 prometheus 路径
     }
 }
 ```
 
 **安全控制链**：
-1. `nacos.prometheus.metrics.enabled=true` → 加载 `PrometheusSecurityConfiguration`
-2. `PrometheusAuthFilter` 拦截所有 `/prometheus/*` 请求
-3. 如果 `nacos.core.auth.enabled=true` → 验证请求中的 `accessToken` 参数
-4. 验证失败 → 返回 HTTP 401 Unauthorized
+1. `PrometheusSecurityConfiguration` 注册 `WebSecurityCustomizer`，使 `/prometheus` 系列路径绕过 Spring Security 主链
+2. 鉴权由 `PrometheusAuthFilter`（@Configuration）承担：当 `nacos.core.auth.enabled=true` 时为 `/prometheus` 注册 Spring Security Basic 认证过滤器链
+3. 未启用鉴权时 `/prometheus` 允许匿名抓取
 
 **生产安全最佳实践**：
 - **内网部署**：如果 Prometheus Server 与 Nacos Server 在同一内网，可禁用 Prometheus 端点的认证（`nacos.prometheus.metrics.enabled=true` + `nacos.core.auth.enabled=false`），简化配置
@@ -3067,11 +2976,11 @@ grep "long polling timeout" ${nacos.home}/logs/config-server.log | tail -20
 # ... （约 30 条 timeout 记录）
 ```
 
-**根因分析**：约 30 个客户端的长轮询连接已超时断开（`clientLongPollTimeout=30s` 默认），但客户端未及时重新建立长轮询连接 → 这些客户端错过了配置变更推送 → 使用了旧配置。
+**根因分析**：约 30 个客户端的长轮询连接已超时断开（`configLongPollTimeout` 默认 30000ms，见 api PropertyKeyConst.java:76 / ClientWorker.java:539），但客户端未及时重新建立长轮询连接 → 这些客户端错过了配置变更推送 → 使用了旧配置。
 
 **解决方案**：
 1. 客户端 SDK 升级至最新版本（修复了长轮询重连的 Bug）
-2. 临时措施：调大 `clientLongPollTimeout` 从 30s → 60s，减少误超时
+2. 临时措施：调大 `configLongPollTimeout` 从 30000ms → 60000ms，减少误超时
 3. 监控 `config_listener_total` 指标 → 如果监听器数量突然下降 → 告警通知
 
 ---
@@ -3093,11 +3002,11 @@ du -sh ${nacos.home}/logs/* ${nacos.home}/data/protocol/raft/*
 # 1.1GB  ${nacos.home}/logs/naming-server.log
 # → Raft 日志目录占 2.3GB，远超预期的 ~500MB
 
-# Step 2: 检查 Raft Snapshot 状态
-curl -X GET 'http://nacos-server:8848/nacos/v1/core/cluster/raft/snapshot'
+# Step 2: 检查 Raft Snapshot 状态（无 snapshot 查询端点，通过目录与日志观测）
+grep -E "snapshot" ${nacos.home}/logs/protocol-raft.log | tail -5
 
-# 输出：
-# {"snapshotStatus": "FAILED", "lastSnapshotTime": "2026-08-25T03:00:00Z"}
+# 输出（示例）：
+# 2026-08-25 03:00:00 ERROR Failed to generate snapshot for group nacos_test_group
 # → 最近一次 Snapshot 失败！时间：12 天前
 ```
 
@@ -3156,7 +3065,7 @@ async-profiler -d 30 -e cpu -f /tmp/nacos_cpu_flamegraph.html <nacos_pid>
 │       └── 15.8% ConnectionManager.getConnection()  ← 连接查找耗时
 ├── 21.5% DistroClientDataProcessor.process()
 │   └── 18.3% DistroHttpClient.syncData()  ← Distro HTTP 同步阻塞
-└── 16.2% HealthCheckTask.run()
+└── 16.2% UnhealthyInstanceChecker.run()
     └── 12.1% InstanceOperatorClientImpl.listAllInstances()  ← 健康检查全量遍历</div></div>
 
 **根因分析**：
@@ -3164,9 +3073,9 @@ async-profiler -d 30 -e cpu -f /tmp/nacos_cpu_flamegraph.html <nacos_pid>
 2. **客户端消费慢**：火焰图中 `gRPC writeAndFlush()` 占用 38.2% CPU → 说明 gRPC 写入阻塞 → 客户端处理推送消息慢 → TCP 发送缓冲区满 → 服务端 gRPC writeAndFlush() 阻塞
 
 **解决方案**：
-1. **调大 gRPC 线程池**：`nacos.core.remote.server.grpc.sdk.maxConnectionIdleSeconds` → 增加线程池大小（如从默认 CPU核数×2 → CPU核数×4）
+1. **调大 gRPC 线程池**：调整 gRPC 线程池与推送并发需评估 `nacos.remote.server.grpc.*` 现有配置；2.5.3 无专门的线程池大小调整参数时，可结合 tps-control 插件限流
 2. **客户端 SDK 升级**：升级至最新版本，优化推送消息处理速度
-3. **推送限流**：通过 `nacos.core.remote.server.grpc.sdk.maxPushConcurrency` 参数限制并发推送数，避免线程池饱和
+3. **推送限流**：2.5.3 无 `maxPushConcurrency` 参数，可通过 tps-control 推送限流插件约束并发推送，避免线程池饱和
 
 ---
 
@@ -3223,23 +3132,21 @@ echo "$(date '+%Y-%m-%d %H:%M:%S') Cleanup task completed successfully"
 
 ### Raft Snapshot 自动修复策略
 
-如果 Raft Snapshot 失败，可通过以下 API 手动触发 Snapshot：
+如果 Raft Snapshot 失败（无 snapshot 触发端点），排查手段如下：
 
 ```bash
-# 手动触发 Raft Snapshot
-curl -X POST 'http://nacos-server:8848/nacos/v1/core/cluster/raft/snapshot/trigger'
+# 检查 Raft 数据目录大小
+du -sh ${nacos.home}/data/protocol/raft/<group>/
 
-# 验证 Snapshot 是否成功
-curl -X GET 'http://nacos-server:8848/nacos/v1/core/cluster/raft/snapshot'
-# 预期输出：{"snapshotStatus": "SUCCESS", "lastSnapshotTime": "2026-09-06T22:00:00Z"}
+# 检查 protocol-raft.log 中 snapshot 相关日志
+grep -E "snapshot" ${nacos.home}/logs/protocol-raft.log | tail -20
 ```
 
 **自动化监控 Cron 配置**：
 
 ```bash
-# crontab — 每周日检查 Raft Snapshot 状态，失败自动尝试修复
-0 3 * * 0 /opt/nacos/scripts/nacos_check_raft_snapshot.sh || \
-    curl -X POST 'http://nacos-server:8848/nacos/v1/core/cluster/raft/snapshot/trigger'
+# crontab — 每周日检查 Raft Snapshot 状态（目录大小 + 日志关键字），失败告警
+0 3 * * 0 /opt/nacos/scripts/nacos_check_raft_snapshot.sh
 ```
 
 ### 小结
@@ -3247,4 +3154,4 @@ curl -X GET 'http://nacos-server:8848/nacos/v1/core/cluster/raft/snapshot'
 定期任务自动化的三个关键点：
 1. **回滚策略**：清理前创建备份表（`his_config_info_backup_YYYYMMDD`），误删可从备份表恢复
 2. **失败告警**：Cron wrapper 脚本捕获退出码 → 失败立即发送告警（企业微信/Slack）
-3. **自动修复**：Raft Snapshot 失败后自动尝试手动触发恢复（`/raft/snapshot/trigger` API）
+3. **自动修复**：Raft Snapshot 失败后通过 protocol-raft.log snapshot 日志定位根因（磁盘空间/权限）并处理

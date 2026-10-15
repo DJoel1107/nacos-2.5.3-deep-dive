@@ -10,7 +10,7 @@
 2. **地址服务器模式（`AddressServerMemberLookup`）**：向 HTTP 地址服务器周期性拉取成员列表，节点可动态注册/注销到地址服务器，适合 Kubernetes 等弹性扩缩容场景。
 3. **单机模式（`StandaloneMemberLookup`）**：仅构造本机 `ip:port` 的单成员列表，用于开发与测试环境，也作为非集群模式下的默认兜底。
 
-三种模式由 `LookupFactory` 统一创建，上层 `ServerMemberManager` 仅依赖 `MemberLookup` 接口（`core/src/main/java/com/alibaba/nacos/core/cluster/MemberLookup.java:29`），与具体实现解耦。`ServerMemberManager` 是整个集群模块的门面组件：它持有成员快照、处理成员变更、向 `NotifyCenter` 发布 `MembersChangeEvent`，并触发节点元数据上报任务。该模块与第 4 章的一致性协议、第 2 章的注册发现存在直接的拓扑依赖——`MembersChangeEvent` 的订阅方包括 `ProtocolManager`（JRaft）、`DistroMapper`（命名模块）、`RaftPeerSet`（命名模块持久化）等（`MembersChangeEvent.java:29-32`），成员变更直接驱动这些组件的 peer 集合重算。因此，集群管理是 Nacos 多模块协同的汇聚点，其正确性直接决定整个集群的可用性。
+三种模式由 `LookupFactory` 统一创建，上层 `ServerMemberManager` 仅依赖 `MemberLookup` 接口（`core/src/main/java/com/alibaba/nacos/core/cluster/MemberLookup.java:29`），与具体实现解耦。`ServerMemberManager` 是整个集群模块的门面组件：它持有成员快照、处理成员变更、向 `NotifyCenter` 发布 `MembersChangeEvent`，并触发节点元数据上报任务。该模块与第 4 章的一致性协议、第 2 章的注册发现存在直接的拓扑依赖——`MembersChangeEvent` 的订阅方包括 `ProtocolManager`（JRaft）、`DistroMapper`（命名模块）等（`MembersChangeEvent.java:29-32` 的 Javadoc 中列出的 `RaftPeerSet` 为 1.x 遗留注释，该类在 2.5.3 已移除），成员变更直接驱动这些组件的 peer 集合重算。因此，集群管理是 Nacos 多模块协同的汇聚点，其正确性直接决定整个集群的可用性。
 
 从架构演变看，`ServerMemberManager` 自 1.x 的 `ClusterManager` 演进而来，2.x 起将"寻址"与"管理"分离为 `MemberLookup` 与 `ServerMemberManager` 两层，并在 2.5.3 中把元数据上报改为默认走 gRPC（`MemberInfoReportTask` 优先 `reportByGrpc`，见 `ServerMemberManager.java:550`）。这一分层使得新寻址方式的接入不需要改动核心管理器，是模块边界清晰化的典型体现。
 
@@ -22,9 +22,9 @@
 
 类图要点文字解释如下。
 
-**门面层 `ServerMemberManager`**：作为 `@Component`（`ServerMemberManager.java:109`）持有唯一的成员状态仓库。它用 `ConcurrentSkipListMap<String, Member>` 保存全部成员（`ServerMemberManager.java:114`），键为 `ip:port`，依靠跳表的排序性满足 `firstKey()`（首节点识别，`isFirstIp()`）等操作；同时用 `ConcurrentHashSet<String>` 维护健康地址集合 `memberAddressInfos`（`ServerMemberManager.java:146`）。需要区分：`serverList` 是全量成员（含非 UP 态），`memberAddressInfos` 才是对外可见的健康地址快照，二者由 `memberChange()` 原子地整体替换，避免不一致。
+**门面层 `ServerMemberManager`**：作为 `@Component`（`ServerMemberManager.java:91-92`）持有唯一的成员状态仓库。它用 `ConcurrentSkipListMap<String, Member>` 保存全部成员（`ServerMemberManager.java:114`），键为 `ip:port`，依靠跳表的排序性满足 `firstKey()`（首节点识别，`isFirstIp()`）等操作；同时用 `ConcurrentHashSet<String>` 维护健康地址集合 `memberAddressInfos`（`ServerMemberManager.java:146`）。需要区分：`serverList` 是全量成员（含非 UP 态），`memberAddressInfos` 才是对外可见的健康地址快照，二者由 `memberChange()` 原子地整体替换，避免不一致。
 
-**寻址层 `MemberLookup` / `AbstractMemberLookup`**：接口定义五类契约（`MemberLookup.java:31-59`）——生命周期（`start`/`destroy`）、结果上报（`afterLookup`）、模式标志（`useAddressServer`）、管理器注入（`injectMemberManager`）与信息展示（`info`）。抽象基类 `AbstractMemberLookup` 提供模板实现（`AbstractMemberLookup.java:41-57`）：`afterLookup` 直接委托 `memberManager.memberChange(members)`，`start`/`destroy` 分别调用子类抽象的 `doStart`/`doDestroy`。具体实现各自只关注"如何拿到成员列表"，而不关心如何入库。
+**寻址层 `MemberLookup` / `AbstractMemberLookup`**：接口定义六方法契约（`MemberLookup.java:37-74`）——生命周期（`start`/`destroy`）、结果上报（`afterLookup`）、模式标志（`useAddressServer`）、管理器注入（`injectMemberManager`）与信息展示（`info`）。抽象基类 `AbstractMemberLookup` 提供模板实现（`AbstractMemberLookup.java:41-57`）：`afterLookup` 直接委托 `memberManager.memberChange(members)`，`start`/`destroy` 分别调用子类抽象的 `doStart`/`doDestroy`。具体实现各自只关注"如何拿到成员列表"，而不关心如何入库。
 
 **工厂层 `LookupFactory`**：final 类（`LookupFactory.java:28`），持有全局单例 `LOOK_UP` 与当前类型 `currentLookupType`，提供创建与切换两个静态入口，并把"配置字符串→枚举"的解析收敛到 `LookupType.sourceOf()`。
 
@@ -34,7 +34,7 @@
 
 #### 5.1.3.1 ServerMemberManager 初始化
 
-`ServerMemberManager` 在构造器中完成两件事：初始化空 `serverList`、调用 `init()`（`ServerMemberManager.java:155-158`）。`init()`（`ServerMemberManager.java:161-202`）的执行序列是：
+`ServerMemberManager` 在构造器中完成两件事：初始化空 `serverList`、调用 `init()`（`ServerMemberManager.java:155-158`）。`init()`（`ServerMemberManager.java:161-188`）的执行序列是：
 
 ```java
 protected void init() throws NacosException {
@@ -54,13 +54,13 @@ protected void init() throws NacosException {
 
 #### 5.1.3.2 memberChange：成员变更的核心入口
 
-所有寻址实现最终都汇聚到 `memberChange()`（`ServerMemberManager.java:364-469`）。该方法为 `synchronized`，避免并发成员变更互相覆盖。其流程：
+所有寻址实现最终都汇聚到 `memberChange()`（`ServerMemberManager.java:364-426`）。该方法为 `synchronized`，避免并发成员变更互相覆盖。其流程：
 
 1. 空列表直接返回 `false`（`ServerMemberManager.java:366-370`）。
 2. 检查 new 列表是否包含本机 `localAddress`（`ServerMemberManager.java:372-382`）：若不含，则把 `self` 追加进去并写告警日志——这是 Nacos 的健壮性设计，保证任一成员来源缺省本机时集群不会把自己排除。
 3. 通过"集合规模 + 逐元素存在性"双重判断计算 `hasChange`（`ServerMemberManager.java:391-408`）：规模不同必变；规模相同但有陌生地址也视为变更。对已存在成员采用 `serverList.get(address)` 保留原有对象（避免覆盖动态上报的 `extendInfo`/`abilities`），新地址才建新条目。
-4. 原子整体替换 `serverList` 与重建 `memberAddressInfos`（仅收集 `state=UP` 的地址，`ServerMemberManager.java:397-433`）。
-5. 若有变更，先 `MemberUtil.syncToFile(finalMembers)` 将当前成员列表持久化回 `cluster.conf`（`ServerMemberManager.java:437-440`），再 `NotifyCenter.publishEvent(MembersChangeEvent.builder().members(finalMembers).build())` 发布事件（`ServerMemberManager.java:441-445`）。事件发布置于同步块内以保证顺序性（源码注释即强调 `important`，`ServerMemberManager.java:433`）。
+4. 原子整体替换 `serverList` 与重建 `memberAddressInfos`（仅收集 `state=UP` 的地址，`ServerMemberManager.java:397-403`，其中 UP 收集为 :401-403）。
+5. 若有变更，先 `MemberUtil.syncToFile(finalMembers)` 将当前成员列表持久化回 `cluster.conf`（`ServerMemberManager.java:416`），再 `NotifyCenter.publishEvent(MembersChangeEvent.builder().members(finalMembers).build())` 发布事件（`ServerMemberManager.java:417-418`）。事件发布置于同步块内以保证顺序性（源码注释即强调 `important`，`ServerMemberManager.java:412-413`）。
 
 注意 `memberChange` 返回 `boolean`，供上游判断列表是否有实质变化。
 
@@ -94,7 +94,7 @@ protected void init() throws NacosException {
 
 3. **模板方法模式（Template Method）**：`AbstractMemberLookup.start()` 在 `doStart()` 外统一封装 `if (started) return` 幂等保护与异常处理（`AbstractMemberLookup.java:53-58`），`destroy()` 同理（`AbstractMemberLookup.java:46-52`），将"生命周期骨架"固定，把易变的"具体发现动作"（`doStart`/`doDestroy`）留给子类实现（`AbstractMemberLookup.java:63,69`）。子类 `FileConfigMemberLookup`、`AddressServerMemberLookup`、`StandaloneMemberLookup` 只需填充骨架，规避了在各实现中重复生命周期与线程安全样板。
 
-4. **观察者模式（Observer / 发布-订阅）**：成员变更通过 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:441-445`），`ProtocolManager`、`DistroMapper`、`RaftPeerSet` 作为订阅方（`MembersChangeEvent.java:29-32`）无须轮询即可感知拓扑变化。相比直接引用回调，事件机制使发布方与订阅方解耦，并支持同一事件触发多个协议的独立响应。
+4. **观察者模式（Observer / 发布-订阅）**：成员变更通过 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:417-418`），`ProtocolManager`、`DistroMapper` 等作为订阅方无须轮询即可感知拓扑变化。相比直接引用回调，事件机制使发布方与订阅方解耦，并支持同一事件触发多个协议的独立响应。
 
 ### 5.1.5 Trade-off 分析
 
@@ -120,15 +120,15 @@ protected void init() throws NacosException {
 
 | 决策 | 收益 | 代价 |
 |------|------|------|
-| 经 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:441`） | 发布方与订阅方解耦，一个变更可触发 JRaft/Distro/Raft 多个订阅方各自处理 | 事件传递引入间接层，调试链路变长，需依赖事件总线可靠性 |
+| 经 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:417-418`） | 发布方与订阅方解耦，一个变更可触发 JRaft/Distro/Raft 多个订阅方各自处理 | 事件传递引入间接层，调试链路变长，需依赖事件总线可靠性 |
 | 订阅方通过 `triggers` 区分"整体变更/单点触发"（`MembersChangeEvent.java:60`） | 订阅方能低成本识别变更粒度，减少重复处理 | 订阅方需自行解析语义，理解成本转移 |
-| 仅在有变更时发布、无变更时写 debug 日志（`ServerMemberManager.java:441-451`） | 避免无效广播，降低网络与处理开销 | 变更判定逻辑（规模+存在性）需保证与"真实变化"等价，误判会遗漏通知 |
+| 仅在有变更时发布、无变更时写 debug 日志（`ServerMemberManager.java:417-418`，无变更 debug 日志 `:420-422`） | 避免无效广播，降低网络与处理开销 | 变更判定逻辑（规模+存在性）需保证与"真实变化"等价，误判会遗漏通知 |
 
 此外，"非本机缺省自愈"设计（`memberChange` 把 `self` 加回，`ServerMemberManager.java:372-382`）在提升健壮性的同时，也使成员来源不含本机时不会报错而是静默补全，需依靠日志追踪，存在隐蔽性。
 
 ### 5.1.6 小结
 
-`ServerMemberManager` 是 Nacos 集群模块的总线中枢：以单一 `serverList` 仓库（`ServerMemberManager.java:114`）保存全量成员、以 `memberAddressInfos` 维护健康视图（`ServerMemberManager.java:146`），通过 `memberChange`（`ServerMemberManager.java:364`）原子重建并持久化、经 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:441`）驱动 `ProtocolManager`/`DistroMapper`/`RaftPeerSet` 等订阅方感知拓扑。寻址与管理的分离（`MemberLookup` 接口 + `AbstractMemberLookup` 模板 + `LookupFactory` 工厂）使静态文件、HTTP 地址服务器与单机三种来源得以统一接入。成员变更还由 `MemberUtil` 完成解析、持久化与健康判定，由 `MemberInfoReportTask` 周期性上报元数据（`ServerMemberManager.java:550`）。
+`ServerMemberManager` 是 Nacos 集群模块的总线中枢：以单一 `serverList` 仓库（`ServerMemberManager.java:114`）保存全量成员、以 `memberAddressInfos` 维护健康视图（`ServerMemberManager.java:146`），通过 `memberChange`（`ServerMemberManager.java:364`）原子重建并持久化、经 `NotifyCenter` 发布 `MembersChangeEvent`（`ServerMemberManager.java:417-418`）驱动 `ProtocolManager`/`DistroMapper` 等订阅方感知拓扑。寻址与管理的分离（`MemberLookup` 接口 + `AbstractMemberLookup` 模板 + `LookupFactory` 工厂）使静态文件、HTTP 地址服务器与单机三种来源得以统一接入。成员变更还由 `MemberUtil` 完成解析、持久化与健康判定，由 `MemberInfoReportTask` 周期性上报元数据（`ServerMemberManager.java:550`）。
 
 承上启下：`Member` 是这一切操作的基本数据载体，`NodeState` 状态机决定了成员的健康归属，将在 5.2 节展开；三种寻址模式的工厂创建与接口契约的细节在 5.3 节深入，其中 file 与 address-server 两种模式分别在 5.4、5.5 节剖析。理解本章是理解第 4 章一致性协议如何获得 peer 集合的前提。
 
@@ -143,21 +143,21 @@ protected void init() throws NacosException {
 - **元数据可扩展**：Raft 端口、版本、权重、站点、最后刷新时间等附加信息不属于网络标识，但各协议与运维场景需要读取，且字段集合是开放的、由不同模块写入。
 - **线程安全与快照隔离**：多个后台任务（成员上报、健康检查、寻址轮询）会并发读写成员，读方需要拿到一致快照而不阻塞写方。
 
-围绕这些约束，`Member` 以"网络标识 + 状态枚举 + 扩展 Map"三维结构建模，`NodeState` 作为独立枚举（`NodeState.java:23`）定义状态全集。2.5.3 中 `NodeState` 的实际取值为五态：`STARTING`、`UP`、`SUSPICIOUS`、`DOWN`、`ISOLATION`（`NodeState.java:30-50`），比早期文档流传的三态（UP/DOWN/SUSPECT）多出"启动中"与"隔离"两种语义，分别对应节点尚未就绪与主动下线两种情形。这一状态机直接影响一致性 Leader 选举（第 4 章）与健康视图计算，是集群管理向外暴露的核心抽象。
+围绕这些约束，`Member` 以"网络标识 + 状态枚举 + 扩展 Map"三维结构建模，`NodeState` 作为独立枚举（`NodeState.java:23`）定义状态全集。2.5.3 中 `NodeState` 枚举定义了五个取值：`STARTING`、`UP`、`SUSPICIOUS`、`DOWN`、`ISOLATION`（`NodeState.java:30-50`）——但需要注意，`ISOLATION` 在 2.5.3 全源码中没有任何写入点，是预留的死枚举，实际参与状态迁移的只有前四态：`STARTING` 对应节点尚未就绪；"隔离"语义在 2.5.3 中已由 `ServerMemberManager.isInIpList` 布尔标记与 `DistroMapper.responsible()` 的"本机不在健康列表即全责承担"分支承接（详见后文 DistroMapper 责任归属分析），而非状态枚举。这一状态机直接影响一致性 Leader 选举（第 4 章）与健康视图计算，是集群管理向外暴露的核心抽象。
 
-从错误处理视角看，五态划分还承载了"分级降级"的意图：`SUSPICIOUS` 与 `DOWN` 的区分使节点在"瞬时抖动"与"确认故障"之间留有缓冲，避免一次失败就把成员剔除健康集合引发集群震荡；`ISOLATION` 则为运维主动摘除故障或迁移节点提供了非故障语义的出口。状态读写均需经受多线程并发——健康上报、元数据上报、心跳检测可同时触碰同一成员，因此 `state` 以 `volatile` 承载可见性（`Member.java:48`），而状态迁移引发的副作用（健康集合增删、事件发布）由 `ServerMemberManager` 的同步方法串行化（`ServerMemberManager.java:364`）。这类"细粒度状态 + 粗粒度副作用"的组合，是理解本章后续健康判定代码的钥匙。
+从错误处理视角看，状态划分承载了"分级降级"的意图：`SUSPICIOUS` 与 `DOWN` 的区分使节点在"瞬时抖动"与"确认故障"之间留有缓冲，避免一次失败就把成员剔除健康集合引发集群震荡——且 `SUSPICIOUS` 仍计入 Distro 责任计算的健康列表，只有 `DOWN` 才真正摘除。状态读写均需经受多线程并发——成员上报、元数据上报、探活检测可同时触碰同一成员，因此 `state` 以 `volatile` 承载可见性（`Member.java:48`），而状态迁移引发的副作用（健康集合增删、事件发布）由 `ServerMemberManager` 的同步方法串行化（`ServerMemberManager.java:364`）。这类"细粒度状态 + 粗粒度副作用"的组合，是理解本章后续健康判定代码的钥匙。
 
 ### 5.2.2 核心类关系图
 
 图 5-2 展示 `Member` 模型、`NodeState` 枚举与 `ServerMemberManager` 的关系：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServerMemberManager</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">serverList</span><span class="typ">: ConcurrentSkipListMap&lt;String, Member&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.1:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.2:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.3:8848" → Member{state=SUSPICIOUS}</div><ul class="dgm-kv"><li><span class="fld">memberAddressInfos</span><span class="typ">: ConcurrentHashSet&lt;String&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">仅含 state=UP 的地址集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">memberChange()/update()/allMembers()/getServerList()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Comparable, Cloneable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                ← 网络标识</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1            ← 端口，默认 8848</span></li></ul><ul class="dgm-kv"><li><span class="fld">state</span><span class="typ">: NodeState = UP     ← 健康状态（volatile）</span></li></ul><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: synchronizedMap(TreeMap&lt;String,Object&gt;)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">SITE_KEY / AD_WEIGHT / WEIGHT / RAFT_PORT / VERSION</div><ul class="dgm-kv"><li><span class="fld">address</span><span class="typ">: String           ← "ip:port" 缓存串</span></li></ul><ul class="dgm-kv"><li><span class="fld">failAccessCnt</span><span class="typ">: int        ← 连续访问失败计数</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getAddress()/setState()/getExtendVal()/setExtendVal()</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy() / MemberBuilder</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NodeState (enum)：五态状态机</span><span class="s">主动/运维 隔离</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">► ISOLATION</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UP</span></div><div class="dgm-box-b"></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServerMemberManager</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">serverList</span><span class="typ">: ConcurrentSkipListMap&lt;String, Member&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.1:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.2:8848" → Member{state=UP}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.0.3:8848" → Member{state=SUSPICIOUS}</div><ul class="dgm-kv"><li><span class="fld">memberAddressInfos</span><span class="typ">: ConcurrentHashSet&lt;String&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">仅含 state=UP 的地址集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">memberChange()/update()/allMembers()/getServerList()</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Comparable, Cloneable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                ← 网络标识</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1            ← 端口，默认 8848</span></li></ul><ul class="dgm-kv"><li><span class="fld">state</span><span class="typ">: NodeState = UP     ← 健康状态（volatile）</span></li></ul><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: synchronizedMap(TreeMap&lt;String,Object&gt;)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">SITE_KEY / AD_WEIGHT / WEIGHT / RAFT_PORT / VERSION</div><ul class="dgm-kv"><li><span class="fld">address</span><span class="typ">: String           ← "ip:port" 缓存串</span></li></ul><ul class="dgm-kv"><li><span class="fld">failAccessCnt</span><span class="typ">: int        ← 连续访问失败计数</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getAddress()/setState()/getExtendVal()/setExtendVal()</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy() / MemberBuilder</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NodeState (enum)：状态机（ISOLATION 为预留值）</span><span class="s">UP/SUSPICIOUS/DOWN 实际生效</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">► ISOLATION（2.5.3 预留值，无写入点）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UP</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 文字解释：
 
 **`Member` 的三层建模**：核心是"网络标识（ip+port）— 健康状态（state）— 扩展信息（extendInfo）"三元组。网络标识保证寻址唯一性（`Member.java:44,46`）；`state` 用 `volatile` 修饰保证多线程可见性（`Member.java:48`）；`extendInfo` 采用 `Collections.synchronizedMap(new TreeMap<>())`（`Member.java:50`），既线程安全又依赖 TreeMap 顺序迭代。默认构造器还会预置站点、权重、权重系数三个键（`Member.java:61-73`）。地址 `address` 作为惰性缓存串保存 `ip:port`（`Member.java:52`），`getAddress()` 在缓存为空时构造（`Member.java:127-133`）。
 
-**五态 `NodeState` 的语义边界**：`STARTING` 表示节点正在启动、尚未就绪；`UP` 表示健康，可参与共识与通信；`SUSPICIOUS` 对应 `MemberUtil.onFail`（`MemberUtil.java:188`）后的"疑似故障"，保留在 `serverList` 但已从 `memberAddressInfos` 移除；`DOWN` 表示确认故障；`ISOLATION` 用于主动隔离。状态迁移由健康检查与上报任务驱动（`MemberUtil.onFail`/`onSuccess`，`MemberUtil.java:143-210`），迁移发生时经 `ServerMemberManager.notifyMemberChange`（`ServerMemberManager.java:291`）广播事件。
+**`NodeState` 的语义边界**：`STARTING` 表示节点正在启动、尚未就绪；`UP` 表示健康，可参与共识与通信；`SUSPICIOUS` 对应 `MemberUtil.onFail`（`MemberUtil.java:188`）后的"疑似故障"，保留在 `serverList` 但已从 `memberAddressInfos` 移除；`DOWN` 表示确认故障；`ISOLATION` 仅为枚举预留值——2.5.3 源码中不存在任何将其写入成员状态的代码路径，运维"主动隔离"的意图实际由配置层摘除节点（从 cluster.conf / address-server 移除）实现。状态迁移由健康检查与上报任务驱动（`MemberUtil.onFail`/`onSuccess`，`MemberUtil.java:143-210`），迁移发生时经 `ServerMemberManager.notifyMemberChange`（`ServerMemberManager.java:291`）广播事件。
 
 **`Member` 与管理器的一致性约定**：`serverList` 的键必须与 `member.getAddress()` 逐字一致（`Member.java:127`），`MemberUtil.singleParse`（`MemberUtil.java:79`）负责从地址串构造 `Member` 并保持 `address` 一致，`MemberUtil.copy`（`MemberUtil.java:62`）负责在更新时保持引用一致性。
 
@@ -193,7 +193,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 | 健康可服务 | `UP`（`NodeState.java:35`） | 可参与共识/通信 | 是 |
 | 疑似故障 | `SUSPICIOUS`（`NodeState.java:40`） | 访问失败未达阈值 | 否 |
 | 确认故障 | `DOWN`（`NodeState.java:45`） | 连续失败超阈值/连接拒绝 | 否 |
-| 隔离 | `ISOLATION`（`NodeState.java:50`） | 主动下线 | 否 |
+| 隔离（预留） | `ISOLATION`（`NodeState.java:50`） | 枚举预留值，2.5.3 无写入点 | 否 |
 
 状态迁移的主要驱动是 `MemberUtil`：
 - `onSuccess`（`MemberUtil.java:143-157`）：上报/心跳成功 → 状态置 `UP`、`failAccessCnt` 归零、加入健康集合；若旧状态非 `UP`，触发 `notifyMemberChange`。
@@ -202,7 +202,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 
 #### 5.2.3.4 ServerMemberManager 中的状态消费
 
-健康视图由 `memberAddressInfos`（仅 `UP` 地址，`ServerMemberManager.java:146`）承载，供 `getMemberAddressInfos()`（`ServerMemberManager.java:536-537`）读取；RPC 层与一致性组件据此决定连接目标。`isUnHealth(address)`（`ServerMemberManager.java:477-485`）用于快速判断某地址是否故障。`allMembers()`（`ServerMemberManager.java:346-354`）与 `allMembersWithoutSelf()`（`ServerMemberManager.java:358-362`）分别提供含本机与不含本机的全量快照。这些查询都读取 `volatile` 引用的 `serverList`，因此能获取一致视图。
+健康视图由 `memberAddressInfos`（仅 `UP` 地址，`ServerMemberManager.java:146`）承载，供 `getMemberAddressInfos()`（`ServerMemberManager.java:520-522`）读取；RPC 层与一致性组件据此决定连接目标。`isUnHealth(address)`（`ServerMemberManager.java:477-485`）用于快速判断某地址是否故障。`allMembers()`（`ServerMemberManager.java:346-354`）与 `allMembersWithoutSelf()`（`ServerMemberManager.java:358-362`）分别提供含本机与不含本机的全量快照。这些查询都读取 `volatile` 引用的 `serverList`，因此能获取一致视图。
 
 #### 5.2.3.5 MemberBuilder 与工具
 
@@ -210,7 +210,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 
 ### 5.2.4 设计模式分析
 
-1. **状态模式（State）**：`NodeState` 将节点生命周期建模为有限状态集（`NodeState.java:23-51`），状态作为 `Member` 的字段持有（`Member.java:48`），不同状态决定该成员是否进入健康集合（`memberChange` 仅收集 `UP`，`ServerMemberManager.java:430-432`）、是否需要补报元数据（`UnhealthyMemberInfoReportTask`，`ServerMemberManager.java:691`）。状态迁移行为（何时转 `SUSPICIOUS`/`DOWN`）被抽到 `MemberUtil.onFail`/`onSuccess`（`MemberUtil.java:143-210`），与状态持有者分离，符合状态模式"将状态相关行为从上下文对象移出"的倾向。
+1. **状态模式（State）**：`NodeState` 将节点生命周期建模为有限状态集（`NodeState.java:23-51`），状态作为 `Member` 的字段持有（`Member.java:48`），不同状态决定该成员是否进入健康集合（`memberChange` 仅收集 `UP`，`ServerMemberManager.java:401-403`）、是否需要补报元数据（`UnhealthyMemberInfoReportTask`，`ServerMemberManager.java:691`）。状态迁移行为（何时转 `SUSPICIOUS`/`DOWN`）被抽到 `MemberUtil.onFail`/`onSuccess`（`MemberUtil.java:143-210`），与状态持有者分离，符合状态模式"将状态相关行为从上下文对象移出"的倾向。
 
 2. **原型/复制模式（Prototype via Copy）**：`Member.copy()`（`Member.java:198-211`）以序列化深拷贝方式复制成员，`ServerMemberManager` 在需要向外部传递不共享引用的成员副本时使用。虽然 Nacos 未显式声明该模式的命名，但 `copy()` 的语义等价于原型复制，规避了浅拷贝导致的 `extendInfo` 引用共享问题。
 
@@ -226,7 +226,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 
 | 决策 | 收益 | 代价 |
 |------|------|------|
-| 采用五态（含 `STARTING`、`ISOLATION`，`NodeState.java:30-50`） | 语义更完整：能表达启动未就绪与主动隔离，避免把未就绪/隔离误判为 `DOWN` 或 `UP`；状态驱动决策更贴合实际运维 | 状态机面更宽，健康判定与迁移分支增多，单元测试需覆盖更多迁移组合 |
+| 枚举定义五值（含 `STARTING`、`ISOLATION`，`NodeState.java:30-50`；`ISOLATION` 实际无写入点） | 语义更完整：能表达启动未就绪等阶段，避免把未就绪误判为 `DOWN` 或 `UP`；为未来运维隔离语义预留扩展位 | 状态机面更宽，健康判定与迁移分支增多，单元测试需覆盖更多迁移组合 |
 | 若仅用 UP/DOWN/SUSPICIOUS 三态 | 迁移路径少，实现直观 | 无法区分"启动中"与"真正故障"，也无法表达主动隔离，可能引发误下线或误服务 |
 
 **维度二：state 的并发模型（volatile 字段 vs 锁保护）**
@@ -271,7 +271,7 @@ private transient int failAccessCnt = 0;                      // Member.java:54
 
 图 5-3 展示 `LookupFactory` 工厂、`MemberLookup` 接口与 `AbstractMemberLookup` 模板及三种实现的静态关系：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LookupFactory (final)</span><span class="s">◆ LOOK_UP: MemberLookup   currentLookupType: LookupType</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">LOOKUP_MODE_TYPE = "nacos.core.member.lookup.type"</div><div class="dgm-note" style="border:none;background:none;padding:0;">createLookUp(memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">standalone? → new StandaloneMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">else → chooseLookup(type) → find(type)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LOOK_UP.injectMemberManager(memberManager)</div><div class="dgm-note" style="border:none;background:none;padding:0;">switchLookup(name, memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LookupType.sourceOf(name) → find(type).start()</div><div class="dgm-note" style="border:none;background:none;padding:0;">chooseLookup(str): 缺省→文件存在→FILE / 否则 ADDRESS</div><div class="dgm-note" style="border:none;background:none;padding:0;">find(type): FILE→new FileConfigMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">ADDRESS→new AddressServerMemberLookup()</div><ul class="dgm-kv"><li><span class="fld">Getter</span><span class="typ">: getLookUp() / destroy()</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; MemberLookup</span><span class="s">start()                                      (MemberLookup:31</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">useAddressServer()</span><span class="typ">: boolean                 (MemberLookup:38)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)                    (MemberLookup:44)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(Collection&lt;Member&gt;)             (MemberLookup:49)</div><div class="dgm-note" style="border:none;background:none;padding:0;">destroy()                                   (MemberLookup:54)</div><div class="dgm-note" style="border:none;background:none;padding:0;">info()（default，返回空 Map）              (MemberLookup:59)</div></div></div><div class="dgm-note">▲                  implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractMemberLookup (abstract)</span><span class="s">◆ protected ServerMemberManager memberManager  (Lookup:31)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)→this.memberManager  (Lookup:36)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(members)→memberManager           (Lookup:41)</div><div class="dgm-note" style="border:none;background:none;padding:0;">.memberChange(members)</div><ul class="dgm-kv"><li><span class="fld">start()</span><span class="typ">: 幂等 + doStart()（模板）           (Lookup:53)</span></li></ul><ul class="dgm-kv"><li><span class="fld">destroy()</span><span class="typ">: doDestroy()（模板）              (Lookup:46)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">◇ abstract doStart() / doDestroy()            (Lookup:63,69)</div></div></div><div class="dgm-note">▲            ▲                 ▲</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Standalone</span><span class="s">MemberLookup</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">自发现</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Standalone.</div><div class="dgm-note" style="border:none;background:none;padding:0;">:24)</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LookupFactory (final)</span><span class="s">◆ LOOK_UP: MemberLookup   currentLookupType: LookupType</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">LOOKUP_MODE_TYPE = "nacos.core.member.lookup.type"</div><div class="dgm-note" style="border:none;background:none;padding:0;">createLookUp(memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">standalone? → new StandaloneMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">else → chooseLookup(type) → find(type)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LOOK_UP.injectMemberManager(memberManager)</div><div class="dgm-note" style="border:none;background:none;padding:0;">switchLookup(name, memberManager):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LookupType.sourceOf(name) → find(type).start()</div><div class="dgm-note" style="border:none;background:none;padding:0;">chooseLookup(str): 缺省→文件存在→FILE / 否则 ADDRESS</div><div class="dgm-note" style="border:none;background:none;padding:0;">find(type): FILE→new FileConfigMemberLookup()</div><div class="dgm-note" style="border:none;background:none;padding:0;">ADDRESS→new AddressServerMemberLookup()</div><ul class="dgm-kv"><li><span class="fld">Getter</span><span class="typ">: getLookUp() / destroy()</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; MemberLookup</span><span class="s">start()                                      (MemberLookup:31</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">useAddressServer()</span><span class="typ">: boolean                 (MemberLookup:38)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)                    (MemberLookup:44)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(Collection&lt;Member&gt;)             (MemberLookup:49)</div><div class="dgm-note" style="border:none;background:none;padding:0;">destroy()                                   (MemberLookup:65)</div><div class="dgm-note" style="border:none;background:none;padding:0;">info()（default，返回空 Map）              (MemberLookup:72-74)</div></div></div><div class="dgm-note">▲                  implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AbstractMemberLookup (abstract)</span><span class="s">◆ protected ServerMemberManager memberManager  (Lookup:31)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">injectMemberManager(mgr)→this.memberManager  (Lookup:36)</div><div class="dgm-note" style="border:none;background:none;padding:0;">afterLookup(members)→memberManager           (Lookup:41)</div><div class="dgm-note" style="border:none;background:none;padding:0;">.memberChange(members)</div><ul class="dgm-kv"><li><span class="fld">start()</span><span class="typ">: 幂等 + doStart()（模板）           (Lookup:53)</span></li></ul><ul class="dgm-kv"><li><span class="fld">destroy()</span><span class="typ">: doDestroy()（模板）              (Lookup:46)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">◇ abstract doStart() / doDestroy()            (Lookup:63,69)</div></div></div><div class="dgm-note">▲            ▲                 ▲</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Standalone</span><span class="s">MemberLookup</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">自发现</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Standalone.</div><div class="dgm-note" style="border:none;background:none;padding:0;">:24)</div></div></div></div>
 
 文字解释：
 
@@ -336,7 +336,7 @@ protected abstract void doDestroy() throws NacosException; // :69
 
 #### 5.3.3.5 MemberLookup 接口与 info
 
-`MemberLookup`（`MemberLookup.java:29-76`）接口方法如上节类图所列；`info()` 以 `default` 实现返回空 `Map`（`MemberLookup.java:69-74`），`AddressServerMemberLookup` 覆写它返回 `addressServerHealth`、`addressServerUrl`、`envIdUrl`、`addressServerFailCount` 等诊断信息（`AddressServerMemberLookup.java:189-201`），可被监控/运维接口消费。
+`MemberLookup`（`MemberLookup.java:29-76`）接口方法如上节类图所列；`info()` 以 `default` 实现返回空 `Map`（`MemberLookup.java:69-74`），`AddressServerMemberLookup` 覆写它返回 `addressServerHealth`、`addressServerUrl`、`envIdUrl`、`addressServerFailCount` 等诊断信息（`AddressServerMemberLookup.java:163-171`），可被监控/运维接口消费。
 
 ### 5.3.4 设计模式分析
 
@@ -477,7 +477,7 @@ private void readClusterConfFromDisk() {
 
 ### 5.4.4 设计模式分析
 
-1. **观察者模式（Observer，文件事件发布-订阅）**：`FileConfigMemberLookup` 订阅 `cluster.conf` 的变更事件——向 `WatchFileCenter.registerWatcher` 注册 `FileWatcher`（`FileConfigMemberLookup.java:50-51`），由文件系统监控作为主题，文件变化时回调 `watcher.onChange`（`FileConfigMemberLookup.java:36-40`）触发重读。相比定时轮询文件，事件驱动使成员刷新仅在"真正变更"时发生，省去无意义的重复 I/O；代价是依赖底层 inotify 覆盖度，个别平台受限。
+1. **观察者模式（Observer，文件事件发布-订阅）**：`FileConfigMemberLookup` 订阅 `cluster.conf` 的变更事件——向 `WatchFileCenter.registerWatcher` 注册 `FileWatcher`（`FileConfigMemberLookup.java:62`），由文件系统监控作为主题，文件变化时回调 `watcher.onChange`（`FileConfigMemberLookup.java:36-40`）触发重读。相比定时轮询文件，事件驱动使成员刷新仅在"真正变更"时发生，省去无意义的重复 I/O；代价是依赖底层 inotify 覆盖度，个别平台受限。
 
 2. **模板方法模式（Template Method）**：继承 `AbstractMemberLookup`，复用其 `afterLookup→memberManager.memberChange`（`AbstractMemberLookup.java:41-44`）与 `start`/`destroy` 的幂等骨架（`AbstractMemberLookup.java:46-58`），本类仅实现 `doStart`（`FileConfigMemberLookup.java:46`）与 `doDestroy`（`FileConfigMemberLookup.java:68`）。这使"读文件"这一发现策略与"入库通知"通用流程解耦。
 
@@ -528,31 +528,31 @@ private void readClusterConfFromDisk() {
 
 弹性扩缩容场景（Kubernetes、容器编排）下，节点随时上线/下线，靠人工编辑 `cluster.conf` 既不实时也不可靠。`AddressServerMemberLookup` 把"谁是集群成员"这一问题的答案移到一台外部地址服务器（Address Server），各 Nacos 节点周期性向它发 HTTP 请求获取成员列表，从而成员增删只需更新地址服务器一侧，无需触碰每个节点。
 
-设计动因包括三点。其一，**单一事实源**：成员列表由地址服务器统一维护，各节点拉取同一份数据，天然一致，避免多节点文件各自维护造成的漂移。其二，**动态生效**：地址服务器上的成员增删在下一个拉取周期即被各节点感知，配合 `ServerMemberManager.memberChange`（`ServerMemberManager.java:364`）自动完成 join/leave，扩缩容无需重启。其三，**容错与自愈**：本类实现一个简易断路器——通过连续失败计数（`addressServerFailCount`）与阈值（`maxFailCount`，默认 12，`AddressServerMemberLookup.java:78`）判断地址服务器是否健康，健康状态经 `info()` 暴露给监控（`AddressServerMemberLookup.java:189-201`）；同时启动阶段会重试拉取，避免一次性失败导致启动失败（`AddressServerMemberLookup.java:161-180`）。
+设计动因包括三点。其一，**单一事实源**：成员列表由地址服务器统一维护，各节点拉取同一份数据，天然一致，避免多节点文件各自维护造成的漂移。其二，**动态生效**：地址服务器上的成员增删在下一个拉取周期即被各节点感知，配合 `ServerMemberManager.memberChange`（`ServerMemberManager.java:364`）自动完成 join/leave，扩缩容无需重启。其三，**容错与自愈**：本类实现一个简易断路器——通过连续失败计数（`addressServerFailCount`）与阈值（`maxFailCount`，默认 12，`AddressServerMemberLookup.java:64`）判断地址服务器是否健康，健康状态经 `info()` 暴露给监控（`AddressServerMemberLookup.java:163-171`）；同时启动阶段会重试拉取，避免一次性失败导致启动失败（`AddressServerMemberLookup.java:135-156`）。
 
-配置与缺省值（源自 `AddressServerMemberLookup.java` 常量）：地址服务器域名缺省 `jmenv.tbsite.net`（`AddressServerMemberLookup.java:100`）、端口缺省 `8080`（`AddressServerMemberLookup.java:102`）、路径缺省 `${contextPath}/serverlist`、启动同步最大重试 `DEFAULT_SERVER_RETRY_TIME = 5`（`AddressServerMemberLookup.java:104`）、周期任务间隔 `DEFAULT_SYNC_TASK_DELAY_MS = 5000ms`（`AddressServerMemberLookup.java:106`）。域名/端口/URL 均支持环境变量与系统属性覆盖（`AddressServerMemberLookup.java:133-159`）。该模式依赖 Nacos 自身的 HTTP 客户端 `NacosRestTemplate`（`HttpClientBeanHolder.getNacosRestTemplate`，`AddressServerMemberLookup.java:80`），并在返回体上复用 `EnvUtil.analyzeClusterConf(reader)` 做统一的行解析（`AddressServerMemberLookup.java:215-217`）。
+配置与缺省值（源自 `AddressServerMemberLookup.java` 常量）：地址服务器域名缺省 `jmenv.tbsite.net`（`AddressServerMemberLookup.java:74`）、端口缺省 `8080`（`AddressServerMemberLookup.java:76`）、路径缺省 `${contextPath}/serverlist`、启动同步最大重试 `DEFAULT_SERVER_RETRY_TIME = 5`（`AddressServerMemberLookup.java:78`）、周期任务间隔 `DEFAULT_SYNC_TASK_DELAY_MS = 5000ms`（`AddressServerMemberLookup.java:80`）。域名/端口/URL 均支持环境变量与系统属性覆盖（`AddressServerMemberLookup.java:108-132`）。该模式依赖 Nacos 自身的 HTTP 客户端 `NacosRestTemplate`（`HttpClientBeanHolder.getNacosRestTemplate`，`AddressServerMemberLookup.java:66`），并在返回体上复用 `EnvUtil.analyzeClusterConf(reader)` 做统一的行解析（`AddressServerMemberLookup.java:180`）。
 
 ### 5.5.2 核心类关系图
 
 图 5-5 展示 `AddressServerMemberLookup` 的启动同步、周期任务与健康判定：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerMemberLookup  (AddressServer.java:29)</span><span class="s">◆ domainName / addressPort / addressUrl / envIdUrl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">/ addressServerUrl                    (AddressServer:67-71)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ isAddressServerHealth=true        (AddressServer:74)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ addressServerFailCount=0          (AddressServer:76)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ maxFailCount=12                   (AddressServer:78)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ restTemplate: NacosRestTemplate   (AddressServer:80)</div><div class="dgm-note" style="border:none;background:none;padding:0;">doStart()→maxFailCount+initAddressSys()+run()   :120-126</div><div class="dgm-note" style="border:none;background:none;padding:0;">useAddressServer()=true            :128-130</div><ul class="dgm-kv"><li><span class="fld">initAddressSys()</span><span class="typ">: 解析域名/端口/URL 各来源       :133-159</span></li></ul><ul class="dgm-kv"><li><span class="fld">run()</span><span class="typ">: 启动同步(≤5次重试)+调度周期任务        :161-180</span></li></ul><ul class="dgm-kv"><li><span class="fld">syncFromAddressUrl()</span><span class="typ">: HTTP GET+解析+健康判定   :198-226</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">doDestroy()→shutdown=true           :182-184</div><ul class="dgm-kv"><li><span class="fld">info()</span><span class="typ">: 暴露健康/URL/失败计数        :189-201</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">run() 启动流程</span><span class="s">① for i in 0..maxRetry(=5): syncFromAddressUrl()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">成功→success=true,break；失败→累计日志</div><div class="dgm-note" style="border:none;background:none;padding:0;">② 全部失败→抛 NacosException(SERVER_ERROR)</div><div class="dgm-note" style="border:none;background:none;padding:0;">③ 成功→ GlobalExecutor.scheduleByCommon(</div><div class="dgm-note" style="border:none;background:none;padding:0;">new AddressServerSyncTask(), 5000ms)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerSyncTask (implements Runnable)</span><span class="s">class AddressServer.java:228-249</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">run():</div><div class="dgm-note" style="border:none;background:none;padding:0;">if(shutdown) return;</div><div class="dgm-note" style="border:none;background:none;padding:0;">syncFromAddressUrl();</div><ul class="dgm-kv"><li><span class="fld">finally</span><span class="typ">: scheduleByCommon(this, 5000ms)  ← 自调度</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">地址服务器（外部）：返回文本行列表</span><span class="s">192.168.0.21:8848</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.22:8848</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">syncFromAddressUrl()：</span><span class="s">ok → isHealth=true；解析→afterLookup→memberChange；failCnt=0</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">失败 → failCnt++；&gt;=maxFailCount → isHealth=false</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerMemberLookup  (AddressServer.java:29)</span><span class="s">◆ domainName / addressPort / addressUrl / envIdUrl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">/ addressServerUrl                    (AddressServer:67-71)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ isAddressServerHealth=true        (AddressServer:60)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ addressServerFailCount=0          (AddressServer:62)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ maxFailCount=12                   (AddressServer:64)</div><div class="dgm-note" style="border:none;background:none;padding:0;">◆ restTemplate: NacosRestTemplate   (AddressServer:66)</div><div class="dgm-note" style="border:none;background:none;padding:0;">doStart()→maxFailCount+initAddressSys()+run()   :96-101</div><div class="dgm-note" style="border:none;background:none;padding:0;">useAddressServer()=true            :103-106</div><ul class="dgm-kv"><li><span class="fld">initAddressSys()</span><span class="typ">: 解析域名/端口/URL 各来源       :108-132</span></li></ul><ul class="dgm-kv"><li><span class="fld">run()</span><span class="typ">: 启动同步(≤5次重试)+调度周期任务        :135-156</span></li></ul><ul class="dgm-kv"><li><span class="fld">syncFromAddressUrl()</span><span class="typ">: HTTP GET+解析+健康判定   :173-193</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">doDestroy()→shutdown=true           :158-161</div><ul class="dgm-kv"><li><span class="fld">info()</span><span class="typ">: 暴露健康/URL/失败计数        :163-171</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">run() 启动流程</span><span class="s">① for i in 0..maxRetry(=5): syncFromAddressUrl()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">成功→success=true,break；失败→累计日志</div><div class="dgm-note" style="border:none;background:none;padding:0;">② 全部失败→抛 NacosException(SERVER_ERROR)</div><div class="dgm-note" style="border:none;background:none;padding:0;">③ 成功→ GlobalExecutor.scheduleByCommon(</div><div class="dgm-note" style="border:none;background:none;padding:0;">new AddressServerSyncTask(), 5000ms)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">AddressServerSyncTask (implements Runnable)</span><span class="s">class AddressServer.java:228-249</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">run():</div><div class="dgm-note" style="border:none;background:none;padding:0;">if(shutdown) return;</div><div class="dgm-note" style="border:none;background:none;padding:0;">syncFromAddressUrl();</div><ul class="dgm-kv"><li><span class="fld">finally</span><span class="typ">: scheduleByCommon(this, 5000ms)  ← 自调度</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">地址服务器（外部）：返回文本行列表</span><span class="s">192.168.0.21:8848</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">192.168.0.22:8848</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">syncFromAddressUrl()：</span><span class="s">ok → isHealth=true；解析→afterLookup→memberChange；failCnt=0</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">失败 → failCnt++；&gt;=maxFailCount → isHealth=false</div></div></div></div>
 
 文字解释：
 
-**状态字段**：`isAddressServerHealth`（`AddressServerMemberLookup.java:74`）与 `addressServerFailCount`（`AddressServerMemberLookup.java:76`）构成简单健康机；`maxFailCount` 为阈值（`AddressServerMemberLookup.java:78`）；`restTemplate` 是公用的 HTTP 客户端（`AddressServerMemberLookup.java:80`）。
+**状态字段**：`isAddressServerHealth`（`AddressServerMemberLookup.java:60`）与 `addressServerFailCount`（`AddressServerMemberLookup.java:62`）构成简单健康机；`maxFailCount` 为阈值（`AddressServerMemberLookup.java:64`）；`restTemplate` 是公用的 HTTP 客户端（`AddressServerMemberLookup.java:66`）。
 
-**启动链路**：`doStart`（`AddressServerMemberLookup.java:120-126`）先按配置覆盖 `maxFailCount`，再 `initAddressSys()` 装配 URL（域名/端口/路径多来源解析，`AddressServerMemberLookup.java:133-159`），最后 `run()`（`AddressServerMemberLookup.java:161-180`）——`run` 先做至多 5 次同步拉取（成功即跳出），全部失败则抛 `SERVER_ERROR` 阻断启动；成功后才 `scheduleByCommon(new AddressServerSyncTask(), 5000)` 启动周期任务。
+**启动链路**：`doStart`（`AddressServerMemberLookup.java:96-101`）先按配置覆盖 `maxFailCount`，再 `initAddressSys()` 装配 URL（域名/端口/路径多来源解析，`AddressServerMemberLookup.java:108-132`），最后 `run()`（`AddressServerMemberLookup.java:135-156`）——`run` 先做至多 5 次同步拉取（成功即跳出），全部失败则抛 `SERVER_ERROR` 阻断启动；成功后才 `scheduleByCommon(new AddressServerSyncTask(), 5000)` 启动周期任务。
 
-**周期与自调度**：`AddressServerSyncTask`（`AddressServerMemberLookup.java:228-249`）在 `run` 中先判 `shutdown`、再 `syncFromAddressUrl`、并在 `finally` 中把自身重新调度到 5 秒后（`AddressServerMemberLookup.java:236-246`），形成不定长自调度链。
+**周期与自调度**：`AddressServerSyncTask`（`AddressServerMemberLookup.java:195-214`）在 `run` 中先判 `shutdown`、再 `syncFromAddressUrl`、并在 `finally` 中把自身重新调度到 5 秒后（`AddressServerMemberLookup.java:210-212`），形成不定长自调度链。
 
-**健康判定**：`syncFromAddressUrl`（`AddressServerMemberLookup.java:198-226`）成功时置 `isAddressServerHealth=true`、`failCount=0`，失败时递增并超标置 false（`AddressServerMemberLookup.java:215-225`）。
+**健康判定**：`syncFromAddressUrl`（`AddressServerMemberLookup.java:173-193`）成功时置 `isAddressServerHealth=true`、`failCount=0`，失败时递增并超标置 false（`AddressServerMemberLookup.java:186-190`）。
 
 ### 5.5.3 源码走读
 
 #### 5.5.3.1 doStart 与 initAddressSys 装配
 
-`doStart()`（`AddressServerMemberLookup.java:120-126`）：
+`doStart()`（`AddressServerMemberLookup.java:96-101`）：
 
 ```java
 @Override
@@ -564,11 +564,11 @@ public void doStart() throws NacosException {
 }
 ```
 
-`initAddressSys()`（`AddressServerMemberLookup.java:133-159`）依次解析域名、端口、路径，优先级为"环境变量 > 系统属性 > 缺省"（如域名：`address_server_domain` 环境变量，否则 `address.server.domain`，否则 `jmenv.tbsite.net`；`AddressServerMemberLookup.java:137-144`）。随后拼出 `addressServerUrl = HTTP_PREFIX + domainName + ":" + addressPort + addressUrl`（`AddressServerMemberLookup.java:153`）与 `envIdUrl`（`/env`，`AddressServerMemberLookup.java:154`）。
+`initAddressSys()`（`AddressServerMemberLookup.java:108-132`）依次解析域名、端口、路径，优先级为"环境变量 > 系统属性 > 缺省"（如域名：`address_server_domain` 环境变量，否则 `address.server.domain`，否则 `jmenv.tbsite.net`；`AddressServerMemberLookup.java:109-114`）。随后拼出 `addressServerUrl = HTTP_PREFIX + domainName + ":" + addressPort + addressUrl`（`AddressServerMemberLookup.java:127`）与 `envIdUrl`（`/env`，`AddressServerMemberLookup.java:128`）。
 
 #### 5.5.3.2 run：启动同步 + 周期任务启动
 
-`run()`（`AddressServerMemberLookup.java:161-180`）：
+`run()`（`AddressServerMemberLookup.java:135-156`）：
 
 ```java
 boolean success = false; Throwable ex = null;
@@ -581,11 +581,11 @@ if (!success) { throw new NacosException(NacosException.SERVER_ERROR, ex); }
 GlobalExecutor.scheduleByCommon(new AddressServerSyncTask(), DEFAULT_SYNC_TASK_DELAY_MS);
 ```
 
-启动阶段"同步拉取 + 重试"（`AddressServerMemberLookup.java:161-175`）保证节点启动时尽量拿到成员，避免带着空成员列表就绪（`ServerMemberManager` 的 `init` 后置校验 `serverList.isEmpty()` 会抛错，`ServerMemberManager.java:198-201` 附近）。全部失败抛 `SERVER_ERROR`（`AddressServerMemberLookup.java:174-176`）。成功后才启周期任务（`AddressServerMemberLookup.java:178-179`）。
+启动阶段"同步拉取 + 重试"（`AddressServerMemberLookup.java:135-150`）保证节点启动时尽量拿到成员，避免带着空成员列表就绪（`ServerMemberManager` 的 `init` 后置校验 `serverList.isEmpty()` 会抛错，`ServerMemberManager.java:183-185`）。全部失败抛 `SERVER_ERROR`（`AddressServerMemberLookup.java:152`）。成功后才启周期任务（`AddressServerMemberLookup.java:155`）。
 
 #### 5.5.3.3 syncFromAddressUrl：HTTP 拉取与健康判定
 
-`syncFromAddressUrl()`（`AddressServerMemberLookup.java:198-226`）：
+`syncFromAddressUrl()`（`AddressServerMemberLookup.java:173-193`）：
 
 ```java
 private void syncFromAddressUrl() throws Exception {
@@ -603,11 +603,11 @@ private void syncFromAddressUrl() throws Exception {
 }
 ```
 
-HTTP GET 返回体为文本（每行 `ip:port`，`RestResult<String>` 以 `GenericType<String>` 反序列化，`AddressServerMemberLookup.java:63-66,200`）；`ok()` 时经 `EnvUtil.analyzeClusterConf(reader)` 统一行解析 + `MemberUtil.readServerConf` 转换为成员，并 `afterLookup`（`AddressServerMemberLookup.java:205-208`）——该段与 5.4 节 `readClusterConfFromDisk` 复用同一解析函数，体现文本解析的公共化（`MemberUtil.readServerConf`，`MemberUtil.java:228`）。失败时递增 `addressServerFailCount`，达到 `maxFailCount` 置健康为 `false`（`AddressServerMemberLookup.java:215-220`）。
+HTTP GET 返回体为文本（每行 `ip:port`，`RestResult<String>` 以 `GenericType<String>` 反序列化，`AddressServerMemberLookup.java:66,174`）；`ok()` 时经 `EnvUtil.analyzeClusterConf(reader)` 统一行解析 + `MemberUtil.readServerConf` 转换为成员，并 `afterLookup`（`AddressServerMemberLookup.java:180`）——该段与 5.4 节 `readClusterConfFromDisk` 复用同一解析函数，体现文本解析的公共化（`MemberUtil.readServerConf`，`MemberUtil.java:228`）。失败时递增 `addressServerFailCount`，达到 `maxFailCount` 置健康为 `false`（`AddressServerMemberLookup.java:186-190`）。
 
 #### 5.5.3.4 AddressServerSyncTask 周期自调度
 
-内部类 `AddressServerSyncTask`（`AddressServerMemberLookup.java:228-249`）：
+内部类 `AddressServerSyncTask`（`AddressServerMemberLookup.java:195-214`）：
 
 ```java
 class AddressServerSyncTask implements Runnable {
@@ -627,19 +627,19 @@ class AddressServerSyncTask implements Runnable {
 }
 ```
 
-与 `run()` 中的启动同步不同，周期任务捕获 `Throwable` 后仍自调度（`AddressServerMemberLookup.java:236-246`），因此一次拉取异常不影响后续周期。`shutdown` 标志在 `doDestroy` 置 `true`（`AddressServerMemberLookup.java:182-184`）后，下一次周期将直接返回，从而安全停止。
+与 `run()` 中的启动同步不同，周期任务捕获 `Throwable` 后仍自调度（`AddressServerMemberLookup.java:210-212`），因此一次拉取异常不影响后续周期。`shutdown` 标志在 `doDestroy` 置 `true`（`AddressServerMemberLookup.java:158-161`）后，下一次周期将直接返回，从而安全停止。
 
 #### 5.5.3.5 info 与健康暴露
 
-`info()`（`AddressServerMemberLookup.java:189-201`）返回 `addressServerHealth`、`addressServerUrl`、`envIdUrl`、`addressServerFailCount` 四项，覆写基类空实现（`MemberLookup.java:69-74`），可供管理、监控界面展示地址服务器运行状态，是对"外部依赖健康"这一关注点的显式化。
+`info()`（`AddressServerMemberLookup.java:163-171`）返回 `addressServerHealth`、`addressServerUrl`、`envIdUrl`、`addressServerFailCount` 四项，覆写基类空实现（`MemberLookup.java:69-74`），可供管理、监控界面展示地址服务器运行状态，是对"外部依赖健康"这一关注点的显式化。
 
 ### 5.5.4 设计模式分析
 
-1. **模板方法模式（Template Method）**：与 `FileConfigMemberLookup` 一致，继承 `AbstractMemberLookup` 复用 `afterLookup→memberManager.memberChange`（`AbstractMemberLookup.java:41-44`）与 `start`/`destroy` 骨架（`AbstractMemberLookup.java:46-58`），本类仅实现 `doStart`（`AddressServerMemberLookup.java:120`）与 `doDestroy`（`AddressServerMemberLookup.java:182`）。HTTP 发现的具体策略被填充进模板，与结果入库解耦。
+1. **模板方法模式（Template Method）**：与 `FileConfigMemberLookup` 一致，继承 `AbstractMemberLookup` 复用 `afterLookup→memberManager.memberChange`（`AbstractMemberLookup.java:41-44`）与 `start`/`destroy` 骨架（`AbstractMemberLookup.java:46-58`），本类仅实现 `doStart`（`AddressServerMemberLookup.java:97`）与 `doDestroy`（`AddressServerMemberLookup.java:159`）。HTTP 发现的具体策略被填充进模板，与结果入库解耦。
 
-2. **断路器模式 / 熔断（Circuit Breaker 的简化形态）**：`addressServerFailCount` + `maxFailCount`（`AddressServerMemberLookup.java:76,78`）构成开关型熔断——连续失败超过阈值后 `isAddressServerHealth` 置 `false`（`AddressServerMemberLookup.java:215-220,237-246`），从"调用服务"切换到"健康感知失败"状态，避免在地址服务器已经不可用的情况下继续无效请求并放大日志噪音；健康标志经 `info()` 暴露（`AddressServerMemberLookup.java:189-201`）。这是无半开状态的简化熔断：一旦失败计数回落（成功即清零，`AddressServerMemberLookup.java:207`），下次调用自动恢复。
+2. **断路器模式 / 熔断（Circuit Breaker 的简化形态）**：`addressServerFailCount` + `maxFailCount`（`AddressServerMemberLookup.java:62,64`）构成开关型熔断——连续失败超过阈值后 `isAddressServerHealth` 置 `false`（`AddressServerMemberLookup.java:186-190,205-207`），从"调用服务"切换到"健康感知失败"状态，避免在地址服务器已经不可用的情况下继续无效请求并放大日志噪音；健康标志经 `info()` 暴露（`AddressServerMemberLookup.java:163-171`）。这是无半开状态的简化熔断：一旦失败计数回落（成功即清零，`AddressServerMemberLookup.java:185`），下次调用自动恢复。
 
-3. **定时器/周期任务模式（Scheduling）**：`AddressServerSyncTask` 以"每次执行后重新 `scheduleByCommon` 自身"的方式形成自调度链（`AddressServerMemberLookup.java:236-246`），相比 `scheduleWithFixedDelay` 语义，其调度时刻取决于上一次执行完成时间（固定间隔），天然规避了任务耗时导致的并发重叠。
+3. **定时器/周期任务模式（Scheduling）**：`AddressServerSyncTask` 以"每次执行后重新 `scheduleByCommon` 自身"的方式形成自调度链（`AddressServerMemberLookup.java:210-212`），相比 `scheduleWithFixedDelay` 语义，其调度时刻取决于上一次执行完成时间（固定间隔），天然规避了任务耗时导致的并发重叠。
 
 ### 5.5.5 Trade-off 分析
 
@@ -649,21 +649,21 @@ class AddressServerSyncTask implements Runnable {
 
 | 决策 | 收益 | 代价 |
 |------|------|------|
-| 节点周期性 HTTP 拉取（默认 5s，`AddressServerMemberLookup.java:106,178`） | 实现简单、无状态、易于部署；成员一致性依赖各节点各自拉取，天然最终一致 | 存在至多一个周期的变更延迟（≤5s）；无效轮询在成员不变化时浪费网络与 CPU；地址服务器需承载所有节点的拉取压力 |
+| 节点周期性 HTTP 拉取（默认 5s，`AddressServerMemberLookup.java:80,155`） | 实现简单、无状态、易于部署；成员一致性依赖各节点各自拉取，天然最终一致 | 存在至多一个周期的变更延迟（≤5s）；无效轮询在成员不变化时浪费网络与 CPU；地址服务器需承载所有节点的拉取压力 |
 | （对照）若采用推送/长连接 | 变更实时、资源节省 | 需在地址服务器维护连接状态与推送协议，复杂度高；地址服务器本身多为纯 HTTP 资源，不具备推送能力 |
 
 **维度二：启动强同步 vs 容错启动**
 
 | 决策 | 收益 | 代价 |
 |------|------|------|
-| 启动时先同步拉取、失败重试 5 次、全败抛错（`AddressServerMemberLookup.java:161-176`） | 保证节点尽可能带着正确成员就绪，避免空成员启动 | 启动依赖地址服务器可用性；地址服务器短暂不可用会拖长节点启动甚至失败 |
+| 启动时先同步拉取、失败重试 5 次、全败抛错（`AddressServerMemberLookup.java:135-152`） | 保证节点尽可能带着正确成员就绪，避免空成员启动 | 启动依赖地址服务器可用性；地址服务器短暂不可用会拖长节点启动甚至失败 |
 | （对照）启动即异步、失败不阻断 | 启动不依赖外部 | 节点可能短暂以空/不完整成员视图运行，一致性窗口风险更高 |
 
 **维度三：短路容护 vs 持续重试**
 
 | 决策 | 收益 | 代价 |
 |------|------|------|
-| 连续失败超 `maxFailCount`（默认12）即置 `isAddressServerHealth=false`（`AddressServerMemberLookup.java:215-220`） | 控制失败后的无效请求与日志洪峰；健康状态可被监控感知 | 无半开状态，恢复依赖成功清零；`maxFailCount` 阈值需经验调优，过低易抖动、过高延误感知 |
+| 连续失败超 `maxFailCount`（默认12）即置 `isAddressServerHealth=false`（`AddressServerMemberLookup.java:186-190`） | 控制失败后的无效请求与日志洪峰；健康状态可被监控感知 | 无半开状态，恢复依赖成功清零；`maxFailCount` 阈值需经验调优，过低易抖动、过高延误感知 |
 
 **维度四：地址服务器模式 vs 配置文件模式（横向，补充 5.4 的对比）**
 
@@ -673,13 +673,13 @@ class AddressServerSyncTask implements Runnable {
 | 外部依赖 | 依赖地址服务器可用性 | 无外部依赖 |
 | 变更延迟 | 至多一个周期（默认 5s） | 文件变更即时（inotify） |
 | 启动失败面 | 地址服务器不可用可能阻断启动（5 次重试后抛错） | 本地文件，启动几乎不失败 |
-| 健康可见性 | `info()` 暴露健康/失败计数（`AddressServerMemberLookup.java:189`） | 无显式健康暴露 |
+| 健康可见性 | `info()` 暴露健康/失败计数（`AddressServerMemberLookup.java:163`） | 无显式健康暴露 |
 
 综合结论：地址服务器模式以"外部依赖 + 周期轮询延迟"为代价，换取了成员维护的集中化与动态扩缩容能力；其熔断与启动重试设计缓解了对外部依赖的脆弱性，但无法消除"地址服务器不可用即成员发现失效"的根本风险。选择哪一种，取决于"弹性优先"还是"低依赖优先"的部署取向。
 
 ### 5.5.6 小结
 
-`AddressServerMemberLookup` 面向弹性扩缩容场景，通过 `NacosRestTemplate` 周期性 HTTP 拉取地址服务器成员列表实现成员发现的自动化（`AddressServerMemberLookup.java:198-226`）：`doStart` 装配 URL 后 `run()` 启动（`AddressServerMemberLookup.java:120-180`），启动阶段同步拉取并重试 5 次（全败抛 `SERVER_ERROR`），成功后用 `AddressServerSyncTask` 以 5 秒间隔自调度（`AddressServerMemberLookup.java:228-249`）；拉取结果 `ok()` 时经 `EnvUtil.analyzeClusterConf` + `MemberUtil.readServerConf` 解析并 `afterLookup`（`AddressServerMemberLookup.java:205-208`，`MemberUtil.java:228`），失败时累加计数并在超 `maxFailCount`（默认12）后置健康为 `false`（`AddressServerMemberLookup.java:215-220`），健康状态经 `info()` 暴露（`AddressServerMemberLookup.java:189-201`）。整体在外部依赖脆弱性与弹性能力之间做了显式权衡。
+`AddressServerMemberLookup` 面向弹性扩缩容场景，通过 `NacosRestTemplate` 周期性 HTTP 拉取地址服务器成员列表实现成员发现的自动化（`AddressServerMemberLookup.java:173-193`）：`doStart` 装配 URL 后 `run()` 启动（`AddressServerMemberLookup.java:96-156`），启动阶段同步拉取并重试 5 次（全败抛 `SERVER_ERROR`），成功后用 `AddressServerSyncTask` 以 5 秒间隔自调度（`AddressServerMemberLookup.java:195-214`）；拉取结果 `ok()` 时经 `EnvUtil.analyzeClusterConf` + `MemberUtil.readServerConf` 解析并 `afterLookup`（`AddressServerMemberLookup.java:180`，`MemberUtil.java:228`），失败时累加计数并在超 `maxFailCount`（默认12）后置健康为 `false`（`AddressServerMemberLookup.java:186-190`），健康状态经 `info()` 暴露（`AddressServerMemberLookup.java:163-171`）。整体在外部依赖脆弱性与弹性能力之间做了显式权衡。
 
 承上启下：至此三种寻址来源（file / address-server / standalone）及其工厂、接口、模板均已闭环，`ServerMemberManager` 作为唯一成员权威对外提供统一视图。本章后续将进入基于这些成员拓扑之上的通信与健康机制——成员一经发现，节点间便需要 gRPC 长连接来上报元数据（`MemberInfoReportTask` 的 `reportByGrpc`，`ServerMemberManager.java:550` 附近）与协同健康判定，这部分内容将在集群 RPC 与健康检查相关章节展开。
 
@@ -705,7 +705,7 @@ class AddressServerSyncTask implements Runnable {
 
 #### 5.6.3 源码走读
 
-`StandaloneMemberLookup`（`core/src/main/java/com/alibaba/nacos/core/cluster/lookup/StandaloneMemberLookup.java:31-48`）是 `MemberLookup` 接口最简实现，仅包含 18 行业务代码。其构造过程依赖 Spring 容器注入 `ServerEnv`，与 `AbstractMemberLookup` 抽象类协作：
+`StandaloneMemberLookup`（`core/src/main/java/com/alibaba/nacos/core/cluster/lookup/StandaloneMemberLookup.java:31-48`）是 `MemberLookup` 接口最简实现，仅包含 18 行业务代码。其实现无任何 Spring 注入，仅依赖 `EnvUtil` 静态工具方法，与 `AbstractMemberLookup` 抽象类协作：
 
 ```java
 // StandaloneMemberLookup.java:31-48
@@ -734,7 +734,7 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 逐段解析：
 
-**`doStart()`（StandaloneMemberLookup.java:33-37）**。这是核心启动方法。第一行通过 `EnvUtil.getLocalAddress()`（`sys/src/main/java/com/alibaba/nacos/sys/env/EnvUtil.java:216-219`）取得本机地址，该方法将 `InetUtils.getSelfIP()` 解析的本机 IP 与 `getPort()`（`EnvUtil.java:231-238`，默认 `nacos.server.port=8848`，可配置覆盖）拼接为 `ip:port`。第二行将 `[localAddress]` 单元素集合交给 `MemberUtil.readServerConf()`（`core/src/main/java/com/alibaba/nacos/core/cluster/MemberUtil.java:228-238`），该方法遍历每个 `ip:port` 字符串并调用 `singleParse()` 解析为 `Member`。
+**`doStart()`（StandaloneMemberLookup.java:33-37）**。这是核心启动方法。第一行通过 `EnvUtil.getLocalAddress()`（`sys/src/main/java/com/alibaba/nacos/sys/env/EnvUtil.java:216-219`）取得本机地址，该方法将 `InetUtils.getSelfIP()` 解析的本机 IP 与 `getPort()`（`EnvUtil.java:231-238`，默认 `server.port=8848`，可配置覆盖）拼接为 `ip:port`。第二行将 `[localAddress]` 单元素集合交给 `MemberUtil.readServerConf()`（`core/src/main/java/com/alibaba/nacos/core/cluster/MemberUtil.java:228-238`），该方法遍历每个 `ip:port` 字符串并调用 `singleParse()` 解析为 `Member`。
 
 **`MemberUtil.singleParse()`（MemberUtil.java:79-107）**。地址解析的核心逻辑：先用 `InternetAddressUtil.splitIPPortStr(address)` 拆分 IP 与端口，未携带端口时回退到默认端口；随后通过流式 `Member.builder().ip(address).port(port).state(NodeState.UP).build()` 构造成员对象；最后写入两个默认扩展元数据——`RAFT_PORT`（由 `calculateRaftPort()` 按端口偏移量推得）与 `READY_TO_UPGRADE=true`，并将 `grpcReportEnabled` 置为 `true`，表示该成员默认支持 gRPC 长连接上报能力。由此可见，即使是最简的单机路径，构造出的 `Member` 也携带了完整的协议元数据，供上层 JRaft 模块直接使用。
 
@@ -750,9 +750,9 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 `StandaloneMemberLookup` 的 18 行代码浓缩了三个可复用设计策略：
 
-**空对象模式（Null Object Pattern）**。`doDestroy()` 与 `useAddressServer()` 在单机场景下均为空行为/常量返回值（`StandaloneMemberLookup.java:39-47`）。空对象模式的价值在于用无副作用的对象替代 `null` 分支判断：`AbstractMemberLookup` 的启动骨架统一调用 `doStart()`，`MemberLookupFactory` 无需为单机模式编写"若无清理逻辑则跳过"的特殊分支，调用方一律按既定协议执行。这消除了空指针风险，也保证了 `MemberLookup` 接口六个方法的调用契约在任何实现下都成立。
+**空对象模式（Null Object Pattern）**。`doDestroy()` 与 `useAddressServer()` 在单机场景下均为空行为/常量返回值（`StandaloneMemberLookup.java:39-47`）。空对象模式的价值在于用无副作用的对象替代 `null` 分支判断：`AbstractMemberLookup` 的启动骨架统一调用 `doStart()`，`LookupFactory` 无需为单机模式编写"若无清理逻辑则跳过"的特殊分支，调用方一律按既定协议执行。这消除了空指针风险，也保证了 `MemberLookup` 接口六个方法的调用契约在任何实现下都成立。
 
-**策略模式（Strategy Pattern）**。`MemberLookup` 接口定义寻址策略的抽象契约，`StandaloneMemberLookup`、`FileConfigMemberLookup`、`AddressServerMemberLookup` 为三种具体策略。`MemberLookupFactory.createLookUp()` 依据部署模式（单机 or 集群）与配置项（`nacos.core.member.lookup.type`）在运行时选择策略对象。策略模式在此场景的收益是：新增一种寻址来源仅需新增一个 `MemberLookup` 实现并注册到工厂，`ServerMemberManager` 与各消费方均不感知策略差异。
+**策略模式（Strategy Pattern）**。`MemberLookup` 接口定义寻址策略的抽象契约，`StandaloneMemberLookup`、`FileConfigMemberLookup`、`AddressServerMemberLookup` 为三种具体策略。`LookupFactory.createLookUp()` 依据部署模式（单机 or 集群）与配置项（`nacos.core.member.lookup.type`）在运行时选择策略对象。策略模式在此场景的收益是：新增一种寻址来源仅需新增一个 `MemberLookup` 实现并注册到工厂，`ServerMemberManager` 与各消费方均不感知策略差异。
 
 **模板方法模式（Template Method Pattern）**。`AbstractMemberLookup` 定义了 `start()` → 校验 → `doStart()` → `afterLookup()` 的启动骨架，`doStart()` 作为模板留给子类实现，`afterLookup()` 复用父类的成员上抛逻辑。`StandaloneMemberLookup` 只需填充 `doStart()`，其余启动时序、异常传播、成员通知均由父类统一编排，避免三个实现各自重复启动编排代码。
 
@@ -773,7 +773,7 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 #### 5.6.6 小结
 
-`StandaloneMemberLookup` 以 18 行业务代码实现了单机形态下的成员自发现，是全章最短的 `MemberLookup` 实现。其设计要点可归纳为三条：其一，通过 `EnvUtil.getLocalAddress()` + `MemberUtil.readServerConf()` 将本机 `ip:port` 解析为携带完整协议元数据（`RAFT_PORT`、`grpcReportEnabled`）的 `Member`；其二，通过继承 `AbstractMemberLookup` 复用启动骨架与成员上抛链路，自身仅实现 `doStart()`、`doDestroy()`、`useAddressServer()` 三个方法；其三，以策略模式注册到 `MemberLookupFactory`，与文件/地址服务器寻址实现平级，使上层 `ServerMemberManager` 对部署形态无感知。该实现是理解 Nacos 集群成员管理的地基——它界定了"单机免配置启动"这一最低形态，并为 5.7 节 `Member` 成员模型的字段与解析规则提供了首个实际用例。
+`StandaloneMemberLookup` 以 18 行业务代码实现了单机形态下的成员自发现，是全章最短的 `MemberLookup` 实现。其设计要点可归纳为三条：其一，通过 `EnvUtil.getLocalAddress()` + `MemberUtil.readServerConf()` 将本机 `ip:port` 解析为携带完整协议元数据（`RAFT_PORT`、`grpcReportEnabled`）的 `Member`；其二，通过继承 `AbstractMemberLookup` 复用启动骨架与成员上抛链路，自身仅实现 `doStart()`、`doDestroy()`、`useAddressServer()` 三个方法；其三，以策略模式注册到 `LookupFactory`，与文件/地址服务器寻址实现平级，使上层 `ServerMemberManager` 对部署形态无感知。该实现是理解 Nacos 集群成员管理的地基——它界定了"单机免配置启动"这一最低形态，并为 5.7 节 `Member` 成员模型的字段与解析规则提供了首个实际用例。
 
 ### 5.7 Member 成员模型详解
 
@@ -781,7 +781,7 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 `Member` 是 Nacos 集群成员信息的基本载体，在 Nacos 2.5.3 中承担三重职责：网络标识（`ip`、`port`、地址串）、状态追踪（`NodeState` 三态化生命周期）、扩展元数据（`extendInfo`）与能力声明。集群中的每一个节点都以一个 `Member` 实例存在于 `ServerMemberManager` 的成员列表中，所有涉及成员交互的模块——JRaft 一致性协议、Distro 数据同步、`ClusterRpcClientProxy` 集群 gRPC 通信、健康检查——都围绕这一模型展开。
 
-`Member` 的设计目标可拆解为四条。其一，网络定位稳定：以 `ip:port` 作为节点在集群内的唯一坐标，`getAddress()` 返回的地址串同时充当各模块的连接依据与成员去重（`hashCode`/`equals`/`compareTo`）的依据。其二，状态表达可演进：节点在生命周期内经历启动、健康、疑似故障、下线、隔离等阶段，`NodeState` 枚举把这种阶段性显式化，为上层模块提供统一的健康度判断入口。其三，扩展能力开放：集群协议需要额外交换的信息（JRaft 的 `raft_port`/Raft 元数据、地址服务器的 `ad_weight`、多数据中心部署的 `site`、升级就绪标记）不应以新增字段的方式污染 `Member` 本体，而通过 `extendInfo` 键值容器注入。其四，序列化友好：`Member` 需经过 gRPC 消息转换、Spring 事件传递、本地缓存持久化（`copy()` 深拷贝）等多条传输路径，其字段结构与 `Serializable` 语义需在这些路径下保持一致。
+`Member` 的设计目标可拆解为四条。其一，网络定位稳定：以 `ip:port` 作为节点在集群内的唯一坐标，`getAddress()` 返回的地址串同时充当各模块的连接依据与成员去重（`hashCode`/`equals`/`compareTo`）的依据。其二，状态表达可演进：节点在生命周期内经历启动、健康、疑似故障、下线等阶段（`ISOLATION` 为预留枚举值，2.5.3 无写入点），`NodeState` 枚举把这种阶段性显式化，为上层模块提供统一的健康度判断入口。其三，扩展能力开放：集群协议需要额外交换的信息（JRaft 的 `raft_port`/Raft 元数据、地址服务器的 `ad_weight`、多数据中心部署的 `site`、升级就绪标记）不应以新增字段的方式污染 `Member` 本体，而通过 `extendInfo` 键值容器注入。其四，序列化友好：`Member` 需经过 gRPC 消息转换、Spring 事件传递、本地缓存持久化（`copy()` 深拷贝）等多条传输路径，其字段结构与 `Serializable` 语义需在这些路径下保持一致。
 
 与 5.2 节相比，本节不以 `Member` 在集群管理流程中的角色为主轴，而是聚焦模型自身：`extendInfo` 扩展信息的读写约定与其承载的协议元数据、`Member` 的地址解析与序列化/反序列化行为、`NodeState` 状态机的完整转换规则，以及 `MemberBuilder` 的流式构建约定。
 
@@ -789,7 +789,7 @@ public class StandaloneMemberLookup extends AbstractMemberLookup {
 
 `Member` 是核心域模型，周边围绕三类协同对象：构建器 `MemberBuilder`、状态枚举 `NodeState`、工具类 `MemberUtil`。图 5-7 展示其字段构成、与周边对象的关系及状态机：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Member.java:40)</span><span class="s">implements Comparable, Cloneable, Serializable</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                          ← 节点 IP 地址</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1                      ← 节点端口</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">volatile state: NodeState = UP      ← 健康状态</div><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: Map&lt;String,Object&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">= Collections.synchronizedMap(new TreeMap&lt;&gt;())</div><div class="dgm-note" style="border:none;background:none;padding:0;">site / adWeight? weight / raftPort /</div><div class="dgm-note" style="border:none;background:none;padding:0;">readyToUpgrade ... (构造/解析时注入)</div><div class="dgm-note" style="border:none;background:none;padding:0;">volatile grpcReportEnabled: boolean ← gRPC 上报能力</div><ul class="dgm-kv"><li><span class="fld">getAddress()</span><span class="typ">: "ip:port"             ← 节点坐标</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">setExtendVal/getExtendVal/delExtendVal ← 扩展读写</div><ul class="dgm-kv"><li><span class="fld">copy()</span><span class="typ">: 深拷贝                       ← Java 序列化深拷贝</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberBuilder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ip/port/state/</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">extendInfo 字段</div><ul class="dgm-kv"><li>build(): 组装 Member</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberUtil (MemberUtil.java)</span><span class="s">singleParse("ip:port")</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">multiParse(Collection)</div><div class="dgm-note" style="border:none;background:none;padding:0;">calculateRaftPort()</div><div class="dgm-note" style="border:none;background:none;padding:0;">readServerConf(Collection</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy(newMember,old)</div><div class="dgm-note" style="border:none;background:none;padding:0;">simpleMembers()</div><div class="dgm-note" style="border:none;background:none;padding:0;">isBasicInfoChanged()</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Member (Member.java:40)</span><span class="s">implements Comparable, Cloneable, Serializable</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ip</span><span class="typ">: String                          ← 节点 IP 地址</span></li></ul><ul class="dgm-kv"><li><span class="fld">port</span><span class="typ">: int = -1                      ← 节点端口</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">volatile state: NodeState = UP      ← 健康状态</div><ul class="dgm-kv"><li><span class="fld">extendInfo</span><span class="typ">: Map&lt;String,Object&gt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">= Collections.synchronizedMap(new TreeMap&lt;&gt;())</div><div class="dgm-note" style="border:none;background:none;padding:0;">site / adWeight? weight / raftPort /</div><div class="dgm-note" style="border:none;background:none;padding:0;">readyToUpgrade ... (构造/解析时注入)</div><div class="dgm-note" style="border:none;background:none;padding:0;">grpcReportEnabled: boolean ← gRPC 上报能力</div><ul class="dgm-kv"><li><span class="fld">getAddress()</span><span class="typ">: "ip:port"             ← 节点坐标</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">setExtendVal/getExtendVal/delExtendVal ← 扩展读写</div><ul class="dgm-kv"><li><span class="fld">copy()</span><span class="typ">: 深拷贝                       ← Java 序列化深拷贝</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberBuilder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ip/port/state/</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">extendInfo 字段</div><ul class="dgm-kv"><li>build(): 组装 Member</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">MemberUtil (MemberUtil.java)</span><span class="s">singleParse("ip:port")</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">multiParse(Collection)</div><div class="dgm-note" style="border:none;background:none;padding:0;">calculateRaftPort()</div><div class="dgm-note" style="border:none;background:none;padding:0;">readServerConf(Collection</div><div class="dgm-note" style="border:none;background:none;padding:0;">copy(newMember,old)</div><div class="dgm-note" style="border:none;background:none;padding:0;">simpleMembers()</div><div class="dgm-note" style="border:none;background:none;padding:0;">isBasicInfoChanged()</div></div></div></div>
 
 图中关系说明：`Member` 通过 `builder()`（`Member.java:89`）与 `MemberBuilder` 协作完成实例构建；通过 `setState()` 触发 `NodeState` 状态流转；通过 `MemberUtil` 完成从地址字符串到对象的解析（`singleParse`）、端口偏移计算（`calculateRaftPort`）、成员集合扁平化（`simpleMembers`）等不归属对象职责的纯函数操作。序列化路径上，`Member` 依赖 `Serializable` 接口与 Java 原生序列化实现深拷贝（`copy()`），未引入独立 JSON 注解，跨协议传输时由上层模块负责字段映射。
 
@@ -810,7 +810,7 @@ private String address = "";                          // line 52
 private transient int failAccessCnt = 0;              // line 54, 不做序列化
 @Deprecated
 private ServerAbilities abilities = new ServerAbilities();  // line 57
-private volatile boolean grpcReportEnabled;           // line 59
+private boolean grpcReportEnabled;                    // line 59
 ```
 
 `extendInfo` 使用 `Collections.synchronizedMap(new TreeMap<>())`（`Member.java:50`），而非 `HashMap`。TreeMap 保证键的字典序，使 `toString()` 输出的扩展信息稳定可判；同步包装保证跨线程读写安全。`state` 声明为 `volatile`（`Member.java:48`），确保健康状态的多线程可见性；`failAccessCnt` 标记 `transient`（`Member.java:54`），不参与序列化，避免将本地访问失败计数传播到其他节点。
@@ -826,7 +826,7 @@ public String getAddress() {
 }
 ```
 
-`address` 字段存在缓存语义：首次调用时拼接 `ip:port` 并写入字段，后续直接返回。该设计使 `getAddress()` 在成员被反复用于 `equals`/`hashCode`/`compareTo`（`Member.java:158/194/200`）以及 `memberClientKey`（`"Cluster-"+address`）拼接时避免重复字符串拼接。
+`address` 字段存在缓存语义：首次调用时拼接 `ip:port` 并写入字段，后续直接返回。该设计使 `getAddress()` 在成员被反复用于 `equals`/`hashCode`/`compareTo`（`Member.java:162/184/189`）以及 `memberClientKey`（`"Cluster-"+address`）拼接时避免重复字符串拼接。
 
 **`setState(NodeState)`（Member.java:105-107）**为纯赋值，无额外状态机校验逻辑：
 
@@ -889,17 +889,17 @@ public enum NodeState {
     UP,           // 健康，可处理请求
     SUSPICIOUS,   // 可能崩溃（心跳超时但未确认）
     DOWN,         // 退出服务（异常已确认）
-    ISOLATION     // 节点被隔离
+    ISOLATION     // 预留值：2.5.3 无写入点，未被任何代码路径设置
 }
 ```
 
-主转换路径由健康检查驱动（详见 5.12 节心跳机制）：节点注册后进入 `UP`；连续心跳超时进入 `SUSPICIOUS`（疑似）；超时达到阈值或主动下线进入 `DOWN`；运维侧隔离时为 `ISOLATION`。`UP → SUSPICIOUS → DOWN` 的渐进式转换避免了心跳瞬时抖动导致的误下线，这也是 5.7.5 节权衡的核心背景。
+主转换路径由成员上报任务驱动（详见 5.12 节）：节点就绪后进入 `UP`；`MemberInfoReportTask` 探测失败进入 `SUSPICIOUS`（疑似）；失败计数超过 `nacos.core.member.fail-access-cnt`（默认 3）或连接被拒绝进入 `DOWN`；`ISOLATION` 在 2.5.3 中没有触发路径，仅为枚举预留。`UP → SUSPICIOUS → DOWN` 的渐进式转换避免了网络瞬时抖动导致的误下线，这也是 5.7.5 节权衡的核心背景。
 
 #### 5.7.4 设计模式分析
 
-**状态模式（State Pattern）**。`NodeState` 枚举将节点行为按状态显式分组（`NodeState.java:27-54`），`Member.setState()`（`Member.java:105-107`）作为状态变更入口。状态语义由消费方按枚举值分派：JRaft/Distro 在成员为 `UP` 时纳入共识与数据同步，`DOWN` 时从 serverList 剔除，`SUSPICIOUS` 时保留但降级参与。状态模式的收益是状态集合封闭（五态固定），状态流转路径显式，健康检查模块只产出目标状态，具体影响由各模块依状态分派。
+**状态模式（State Pattern）**。`NodeState` 枚举将节点行为按状态显式分组（`NodeState.java:27-54`），`Member.setState()`（`Member.java:105-107`）作为状态变更入口。状态语义由消费方按枚举值分派：JRaft/Distro 在成员为 `UP` 时纳入共识与数据同步，`DOWN` 时从健康集合 `memberAddressInfos` 摘除（`ServerMemberManager.java:275-277`），`serverList` 仍保留该成员，仅 `memberChange` 才会整体重建列表，`SUSPICIOUS` 时保留但降级参与。状态模式的收益是状态集合封闭（五态固定），状态流转路径显式，健康检查模块只产出目标状态，具体影响由各模块依状态分派。
 
-**模板方法 + 构建器复合模式**。`MemberBuilder`（`Member.java:214-252`）提供流式设置（`ip()`/`port()`/`state()`/`extendInfo()`）并由 `build()` 组装最终 `Member`。构建器将 8 个字段的构造参数从冗长的构造函数签名中剥离，避免参数顺序错误，且允许只设置必需字段（`ip`、`port`），其余字段取默认值。这是对 `Member` 这类多字段模型的构建约束方式——用类型化的链式调用表达"哪些参数是必填、哪些有默认值"。
+**模板方法 + 构建器复合模式**。`MemberBuilder`（`Member.java:214-263`）提供流式设置（`ip()`/`port()`/`state()`/`extendInfo()`）并由 `build()` 组装最终 `Member`。构建器将 4 个可链式设置字段（`ip`/`port`/`state`/`extendInfo`）的初始化从冗长的构造函数签名中剥离，避免参数顺序错误，且允许只设置必需字段（`ip`、`port`），其余字段取默认值。这是对 `Member` 这类多字段模型的构建约束方式——用类型化的链式调用表达"哪些参数是必填、哪些有默认值"。
 
 **适配器式扩展容器（Extension Container）**。`extendInfo` + `getExtendVal`/`setExtendVal`/`delExtendVal`（`Member.java:138-145`）构成键值扩展点，JRaft、地址服务器、多数据中心等模块以字符串键注入协议元数据，`Member` 本体不依赖这些模块的类型。该模式与策略模式的差异在于：策略通过多态替换行为，扩展容器通过键值关联携带数据——`Member` 不需要为每种协议元数据新增字段或访问器，开放键空间换取封闭对象结构。
 
@@ -1151,7 +1151,7 @@ private String getConfigInner(String tenant, String dataId, String group, long t
         configFilterChainManager.doFilter(null, cr);   // 后处理（解密等）
         return cr.getContent();
     } catch (NacosException ioe) {
-        // line 181: 无权限异常直接抛出，其余降级
+        // line 196: 无权限异常直接抛出，其余降级
         if (NacosException.NO_RIGHT == ioe.getErrCode()) { throw ioe; }
         LOGGER.warn("[{}] [get-config] get from server error, ...", ...);
     }
@@ -1501,7 +1501,7 @@ public void registerInstance(String serviceName, String groupName, Instance inst
 
 （`NacosNamingService.java:158-162`）
 
-`NamingUtils.checkInstanceIsLegal`（`api/src/main/java/com/alibaba/nacos/api/naming/utils/NamingUtils.java`）校验实例 IP、端口、权重等字段；`checkAndStripGroupNamePrefix`（`NacosNamingService.java:595-606`）处理 `NamingUtils.isServiceNameCompatibilityMode` 兼容场景——当 `instance.getServiceName()` 带分组前缀时，校验其与传入 `groupName` 一致，并在校验通过后剥离前缀，统一走"参数化 serviceName + groupName"的内部表示。最终 `clientProxy.registerService` 落入 `NamingClientProxyDelegate`，由其选择 gRPC/HTTP 通道完成 `InstanceRequest` 的组装与发送。与之对称的是 `deregisterInstance(String serviceName, String groupName, Instance instance)`（`NacosNamingService.java:211-214`），执行同样的校验与剥离后调用 `clientProxy.deregisterService`。批量版本 `batchRegisterInstance`（`NacosNamingService.java:169-174`）与 `batchDeregisterInstance`（`NacosNamingService.java:178-184`）复用同一批校验与剥离逻辑，降低单实例粒度 RPC 的次数。
+`NamingUtils.checkInstanceIsLegal`（`api/src/main/java/com/alibaba/nacos/api/naming/utils/NamingUtils.java`）校验实例 IP、端口、权重等字段；`checkAndStripGroupNamePrefix`（`NacosNamingService.java:574-585`）处理 `NamingUtils.isServiceNameCompatibilityMode` 兼容场景——当 `instance.getServiceName()` 带分组前缀时，校验其与传入 `groupName` 一致，并在校验通过后剥离前缀，统一走"参数化 serviceName + groupName"的内部表示。最终 `clientProxy.registerService` 落入 `NamingClientProxyDelegate`，由其选择 gRPC/HTTP 通道完成 `InstanceRequest` 的组装与发送。与之对称的是 `deregisterInstance(String serviceName, String groupName, Instance instance)`（`NacosNamingService.java:211-214`），执行同样的校验与剥离后调用 `clientProxy.deregisterService`。批量版本 `batchRegisterInstance`（`NacosNamingService.java:169-174`）与 `batchDeregisterInstance`（`NacosNamingService.java:178-184`）复用同一批校验与剥离逻辑，降低单实例粒度 RPC 的次数。
 
 ##### 5.11.3.3 subscribe()——订阅与服务端推送
 
@@ -1521,7 +1521,7 @@ private void doSubscribe(String serviceName, String groupName, String clusters,
 
 （`NacosNamingService.java:473-480`）
 
-`doSubscribe` 的执行顺序体现"先本地、后远程"的一致性策略：先 `changeNotifier.registerListener` 把监听器写入 `InstancesChangeNotifier` 订阅表；随后 `notifyIfSubscribed`（`NacosNamingService.java:609-622`）检查是否已对该服务订阅，若命中则复用当前缓存的 `ServiceInfo` 立即 `wrapper.notifyListener(event)` 通知监听器——此举用于避免重复订阅时丢失已发生的数据；最后才 `clientProxy.subscribe` 建立远程订阅。当服务端实例变更，`NamingPushRequestHandler` 将推送的 `ServiceInfo` 写入 `ServiceInfoHolder`，`ServiceInfoHolder` 对变更做差异计算后发布 `InstancesChangeEvent`，`InstancesChangeNotifier` 匹配作用域后将事件分发给对应 `EventListener`，形成"服务端推送 → 缓存更新 → 差异事件 → 监听器回调"的完整闭环。
+`doSubscribe` 的执行顺序体现"先本地、后远程"的一致性策略：先 `changeNotifier.registerListener` 把监听器写入 `InstancesChangeNotifier` 订阅表；随后 `notifyIfSubscribed`（`NacosNamingService.java:587-597`）检查是否已对该服务订阅，若命中则复用当前缓存的 `ServiceInfo` 立即 `wrapper.notifyListener(event)` 通知监听器——此举用于避免重复订阅时丢失已发生的数据；最后才 `clientProxy.subscribe` 建立远程订阅。当服务端实例变更，`NamingPushRequestHandler` 将推送的 `ServiceInfo` 写入 `ServiceInfoHolder`，`ServiceInfoHolder` 对变更做差异计算后发布 `InstancesChangeEvent`，`InstancesChangeNotifier` 匹配作用域后将事件分发给对应 `EventListener`，形成"服务端推送 → 缓存更新 → 差异事件 → 监听器回调"的完整闭环。
 
 `unsubscribe` 走 `doUnsubscribe`（`NacosNamingService.java:517-525`）：先 `changeNotifier.deregisterListener` 移除本地监听器，再判断 `!changeNotifier.isSubscribed(...)` 时才真正 `clientProxy.unsubscribe` 注销远程订阅，保证多个监听器共存时不会提前切断订阅。
 
@@ -1603,7 +1603,7 @@ private ServiceInfo getServiceInfo(String serviceName, String groupName, List<St
 
 图 5-12 呈现客户端心跳的完整链路。连接层与实例层分开，图自上而下依次是客户端连接层、服务端连接层处理器、实例心跳调度框架、SPI 判定器、事件传播。
 
-<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">：无 SPI 注册文件，Unhealthy/ExpiredInstanceChecker 由 InstanceBeatCheckTask 静态块内置，SPI 仅供外部扩展</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span><span class="typ">：SPI 缺省时回退内置 DefaultPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 图左侧另有一条"上报恢复"路径：客户端通过心跳接口上报 beat 后，`InstanceOperatorClientImpl` 构造 `ClientBeatProcessorV2` 提交执行，在其 `run()` 中更新实例最后心跳时间，若实例此前不健康则置回健康并发布事件——这与右侧的超时判定构成"双向闭环"。
 
@@ -1822,7 +1822,7 @@ Nacos 客户端的本地缓存快照是一种客户端侧容灾能力：当 Naco
 
 图 5-13 展示本地缓存快照机制的组件结构。配置侧与命名侧并行，图为便于聚焦，以命名侧为主、配置侧为辅呈现。
 
-<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">：无 SPI 注册文件，Unhealthy/ExpiredInstanceChecker 由 InstanceBeatCheckTask 静态块内置，SPI 仅供外部扩展</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span><span class="typ">：SPI 缺省时回退内置 DefaultPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 图中关键协作点：`FailoverReactor` 只依赖 `FailoverDataSource` 接口，数据源的选择由 SPI 决定；容灾开关（switch）与容灾数据（data）通过 `getSwitch`/`getFailoverData` 分开获取，`FailoverSwitchRefresher` 依据开关状态决定"装载容灾数据并广播实例变更"或"回切实时数据并清空容灾集合"。配置侧 `LocalConfigInfoProcessor` 则是纯静态、无状态的路径+IO 工具，其 snapshot 与 failover 两类文件分别对应"自动持久化"与"手动放置的强制替换"两种语义。
 
@@ -1844,7 +1844,7 @@ static {
 
 （`LocalConfigInfoProcessor.java:68-73`）
 
-根路径支持 `JM_SNAPSHOT_PATH` 环境变量覆盖，未配置时回落到 `user.home/nacos/config`。`getFailoverFile`（`LocalConfigInfoProcessor.java:177-189`）与 `getSnapshotFile`（`LocalConfigInfoProcessor.java:191-199`）分别计算两类文件路径：
+根路径支持 `JM_SNAPSHOT_PATH` 环境变量覆盖，未配置时回落到 `user.home/nacos/config`。`getFailoverFile`（`LocalConfigInfoProcessor.java:193-204`）与 `getSnapshotFile`（`LocalConfigInfoProcessor.java:206-217`）分别计算两类文件路径：
 
 ```java
 // client/src/.../impl/LocalConfigInfoProcessor.java:177-199（节选）
@@ -1861,7 +1861,7 @@ static File getFailoverFile(String serverName, String dataId, String group, Stri
 }
 ```
 
-（`LocalConfigInfoProcessor.java:177-189`）
+（`LocalConfigInfoProcessor.java:193-204`）
 
 读取侧 `getFailover`（`LocalConfigInfoProcessor.java:76-89`）与 `getSnapshot`（`LocalConfigInfoProcessor.java:93-105`）都先检查文件存在性再 `readFile`，后者引入 `SnapShotSwitch.getIsSnapShot()` 全局开关决定是否启用快照读取。写入侧 `saveSnapshot`（`LocalConfigInfoProcessor.java:128-158`）在 `config == null` 时删除对应快照文件，否则 `parentFile.mkdirs()` 建目录后写文件；文件 IO 在 `JvmUtil.isMultiInstance()` 时走 `ConcurrentDiskUtil`（多 JVM 共享文件的安全写），单实例则用 `IoUtils.writeStringToFile`（`LocalConfigInfoProcessor.java:148-157`）。`cleanAllSnapshot`/`cleanEnvSnapshot`（`LocalConfigInfoProcessor.java:161-175`）提供按环境清理能力，供快照开关关闭或环境失效时回收磁盘空间。快照的消费方是配置拉取链路：`NacosConfigService` 在获取配置时先 `getFailover` 后 `getSnapshot`（`NacosConfigService.java:174,203`），`CacheData` 同样按 failover→snapshot 顺序回源（`CacheData.java:532-533`），保证"强制替换文件优先于自动快照"的读取优先级。
 
@@ -2023,7 +2023,7 @@ public FailoverSwitch getSwitch() {
 
 #### 5.13.6 小结
 
-Nacos 客户端本地缓存快照以"配置 + 命名"两条线实现容灾。配置侧 `LocalConfigInfoProcessor` 以静态工具管理 snapshot（自动持久化）与 failover（手动放置的强制替换）两类文件，按"tenant→group→dataId"目录树落盘，消费端按 failover→snapshot 优先级回源（`LocalConfigInfoProcessor.java:177-199`，`NacosConfigService.java:174,203`）。命名侧 `FailoverReactor` 经 SPI 装载 `FailoverDataSource`（默认 `DiskFailoverDataSource`），由 `FailoverSwitchRefresher` 每 5s 轮询开关并在开启/回切时做实例差异计算与事件广播（`FailoverReactor.java:95-153`），`isFailoverSwitch` 以"开关开 + 快照非空"三重条件门控容灾读取。整体机制以"开关 + 差异事件 + 优先级回源"的协作，在服务端故障时保底读可用，同时通过条件广播与回切 diff 尽量抑制陈旧数据的污染与事件风暴。该机制与配置侧快照共同构成客户端不依赖服务端强可用性的最后一层防护。
+Nacos 客户端本地缓存快照以"配置 + 命名"两条线实现容灾。配置侧 `LocalConfigInfoProcessor` 以静态工具管理 snapshot（自动持久化）与 failover（手动放置的强制替换）两类文件，按"tenant→group→dataId"目录树落盘，消费端按 failover→snapshot 优先级回源（`LocalConfigInfoProcessor.java:193-217`，`NacosConfigService.java:174,203`）。命名侧 `FailoverReactor` 经 SPI 装载 `FailoverDataSource`（默认 `DiskFailoverDataSource`），由 `FailoverSwitchRefresher` 每 5s 轮询开关并在开启/回切时做实例差异计算与事件广播（`FailoverReactor.java:95-153`），`isFailoverSwitch` 以"开关开 + 快照非空"三重条件门控容灾读取。整体机制以"开关 + 差异事件 + 优先级回源"的协作，在服务端故障时保底读可用，同时通过条件广播与回切 diff 尽量抑制陈旧数据的污染与事件风暴。该机制与配置侧快照共同构成客户端不依赖服务端强可用性的最后一层防护。
 
 ### 5.14 NacosServiceLoader SPI 服务加载器
 
@@ -2039,11 +2039,11 @@ Nacos 依赖 Java 标准 SPI（Service Provider Interface，`java.util.ServiceLo
 
 图 5-14 展示 `NacosServiceLoader` 的加载流程与在插件体系中的位置。
 
-<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">：无 SPI 注册文件，Unhealthy/ExpiredInstanceChecker 由 InstanceBeatCheckTask 静态块内置，SPI 仅供外部扩展</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span><span class="typ">：SPI 缺省时回退内置 DefaultPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 各加载方如何消费该服务：
 
-<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">→ UnhealthyInstanceChecker / ExpiredInstanceChecker</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">5.14.2</span><span class="tt">NacosServiceLoader SPI 加载机制</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">NacosServiceLoader</span><span class="s">common 模块</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">SERVICES</span><span class="typ">: static final Map&lt;Class&lt;?&gt;, Collection&lt;Class&lt;?&gt;&gt;&gt; = new ConcurrentHashMap&lt;&gt;()</span></li><li><span class="fld">load(Class&lt;T&gt; service)</span><span class="typ">：SERVICES 已含 → newServiceInstances(service)；否则 → ServiceLoader.load(service) 遍历 → 存入缓存 → 返回</span></li><li><span class="fld">newServiceInstances(Class&lt;T&gt;)</span><span class="typ">：从缓存按 class 无参构造</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div><span class="lbl">首次 load：SPI 文件解析；再次 load：缓存实例化</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">META-INF/services/{接口全限定名}</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">…naming.healthcheck.heartbeat.InstanceBeatChecker</span><span class="typ">：无 SPI 注册文件，Unhealthy/ExpiredInstanceChecker 由 InstanceBeatCheckTask 静态块内置，SPI 仅供外部扩展</span></li><li><span class="fld">…client.naming.backups.FailoverDataSource</span><span class="typ">→ DiskFailoverDataSource</span></li><li><span class="fld">…common.paramcheck.AbstractParamChecker</span></li><li><span class="fld">…common.pathencoder.PathEncoder</span></li><li><span class="fld">…common.notify.EventPublisher</span><span class="typ">：SPI 缺省时回退内置 DefaultPublisher</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">扇出</span></div><div class="dgm-cols dgm-cols-3"><div class="dgm-card"><div class="h"><span class="t">返回 Collection</span></div><ul><li>LinkedHashSet 保序去重</li></ul></div><div class="dgm-card"><div class="h"><span class="t">SERVICES 缓存</span></div><ul><li>类解析一次</li><li>实例可反复创建</li></ul></div><div class="dgm-card"><div class="h"><span class="t">统一异常包装</span></div><ul><li>ServiceLoaderException（IllegalAccess / Instant）</li></ul></div></div></div>
 
 关系图揭示两点核心机制：其一，"类缓存（`SERVICES`）+ 实例化（`newServiceInstance`）"分离，接口只被 SPI 解析一次，后续加载直接构造缓存类；其二，返回集合用 `LinkedHashSet`，保证加载顺序稳定且元素唯一，这是排序与去重的基础（Nacos 未借用 `@Order`，顺序即配置文件中的声明顺序，见 5.14.3.4）。图中 `Consumer 使用示例` 一行表明，`load` 与 `newServiceInstances` 两个入口的语义差异（前者会触发 SPI 解析、后者仅缓存取值）被各组件按需选用。
 

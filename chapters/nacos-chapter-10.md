@@ -64,11 +64,11 @@ Nacos 2.0 引入 gRPC 协议后，部署架构中需要额外考虑 gRPC 端口�
 
 **2. JRaft 协议的 CP 模式**
 
-Nacos 2.5.3 通过 JRaft 协议实现 CP 模式下的数据一致性。在集群部署模式下，JRaft 集群节点的选举和日志复制需要网络互通。部署时需要确保 `cluster.conf` 中配置的节点 IP 和端口（默认 Raft port = 7848）在所有节点间可达。
+Nacos 2.5.3 通过 JRaft 协议实现 CP 模式下的数据一致性。在集群部署模式下，JRaft 集群节点的选举和日志复制需要网络互通。部署时需要确保 `cluster.conf` 写各节点的主端口（`192.168.1.101:8848`，或纯 IP 默认 8848）；Raft 端口由服务端自动推导为主端口-1000（8848→7848），无法在 `cluster.conf` 指定，需保证 8848/9848/9849/7848 在所有节点间可达。
 
 **3. Distro 协议的 AP 模式**
 
-Distro 协议用于 Naming 服务中的临时实例数据同步。在 AP 模式下，所有节点对等，数据通过异步复制同步。部署时无需额外配置，只需保证所有节点间 gRPC 通道互通。
+Distro 协议用于 Naming 服务中的临时实例数据同步。在 AP 模式下，所有节点对等，数据通过异步复制同步。部署时无需额外配置，只需保证所有节点间 Cluster gRPC（9849，server.port+1001）通道互通。
 
 ### Trade-off 分析
 
@@ -106,13 +106,13 @@ Distro 协议用于 Naming 服务中的临时实例数据同步。在 AP 模式�
 
 单机模式（Standalone）是 Nacos 2.5.3 最基础的部署模式。它面向开发环境、CI/CD 测试流水线和个人学习场景，以零外部依赖、一键启动为设计目标。核心实现依赖于嵌入式 Derby 数据库存储配置和持久化数据，无需预先安装和配置外部 MySQL 数据库。
 
-在 Nacos 2.5.3 中，单机模式的启动入口位于 `console/src/main/java/com/alibaba/nacos/Nacos.java`，通过解析启动参数 `-m standalone` 选择启动模式。核心启动流程绕过集群初始化步骤，直接启动单个 Nacos 节点，不加载 JRaft 选举模块、不初始化 gRPC 集群内部通信通道、仅使用 LocalDerby 数据源。
+在 Nacos 2.5.3 中，单机模式的启动入口位于 `console/src/main/java/com/alibaba/nacos/Nacos.java`。启动模式并非由 Nacos.java 解析 `-m` 参数决定，而是由 `startup.sh` 将 `-m standalone` 转换为 JVM 系统属性 `-Dnacos.standalone=true`；Spring 环境准备阶段由 `StandaloneProfileApplicationListener`（`core/src/main/java/com/alibaba/nacos/core/code/StandaloneProfileApplicationListener.java:50`）读取 `nacos.standalone` 属性并激活 standalone profile。核心启动流程绕过集群初始化步骤，直接启动单个 Nacos 节点，不加载 JRaft 选举模块、不初始化 gRPC 集群内部通信通道、仅使用嵌入式数据源实现 `LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:52`，内嵌 Derby）。
 
 Derby 是一个纯 Java 嵌入式关系数据库，Apache Derby 项目在 Nacos 中作为默认内嵌数据源使用。Derby 在 Nacos 2.5.3 中的配置通过 `application.properties` 中 `spring.datasource.platform=derby` 激活，默认数据库文件存储在 `$NACOS_HOME/data/derby/` 目录下。
 
 ### 核心架构关系图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 单机模式启动流程</span><span class="s">启动脚本 startup.sh(bat)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">MODE="standalone" → java -Dnacos.standalone=true</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos.java (Main Class)</span><span class="s">@SpringBootApplication</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. SpringApplication.run()</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. @EnableAutoConfiguration</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 扫描 @NacosPropertySource</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库自动初始化</span><span class="s">spring.datasource.platform=derby</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ LocalDerbyDataSource → $NACOS_HOME/data/derby/</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ schema.sql 创建 12 张表</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 服务端口绑定</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">gRPC</span><span class="typ">: 9848</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">K 内部通信)</div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 单机模式启动流程</span><span class="s">启动脚本 startup.sh(bat)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">MODE="standalone" → java -Dnacos.standalone=true</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos.java (Main Class)</span><span class="s">@SpringBootApplication</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. SpringApplication.run()</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. @EnableAutoConfiguration</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 扫描 @NacosPropertySource</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库自动初始化</span><span class="s">spring.datasource.platform=derby</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ LocalDataSourceServiceImpl → $NACOS_HOME/data/derby/</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ schema.sql 创建 12 张表</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 服务端口绑定</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">gRPC</span><span class="typ">: 9848</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">K 内部通信)</div></div></div></div></div></div>
 
 ### 部署步骤详解
 
@@ -208,9 +208,14 @@ curl http://127.0.0.1:8848/nacos/v1/console/server/state
 
 # 返回示例：
 {
-  "standalone_mode": "standalone",
-  "version": "2.5.3"
+  "startup_mode": "standalone",
+  "function_mode": "null",
+  "version": "2.5.3",
+  "server_port": "8848"
 }
+# 注：该接口（ServerStateController.serverState）直接返回扁平的模块状态 Map，
+# 键值均为字符串，未使用 RestResult 包装；未设置 function_mode 时值为字符串 "null"。
+# 其余键来自各模块（config/naming/core 等）的 ModuleState 状态聚合。
 ```
 
 浏览器访问 `http://127.0.0.1:8848/nacos`，默认用户名/密码：`nacos/nacos`。
@@ -233,7 +238,7 @@ ls -la /path/to/nacos/data/derby/
 
 Nacos 2.5.3 在单机模式下使用 Apache Derby 作为默认嵌入式数据库。Derby 的优势在于零配置、零外部依赖、进程内启动。但存在以下限制：
 
-**Derby 数据库 12 张核心表**：
+**Derby 数据库 13 张核心表**：
 
 | 表名 | 用途 | 关键字段 |
 |------|------|---------|
@@ -245,10 +250,11 @@ Nacos 2.5.3 在单机模式下使用 Apache Derby 作为默认嵌入式数据库
 | `group_capacity` | 分组容量 | `id`, `group_id` |
 | `his_config_info` | 配置历史版本 | `id`, `nid`, `data_id`, `group_id`, `content`, `op_type` |
 | `tenant_info` | 租户（命名空间）信息 | `id`, `tenant_id`, `tenant_name`, `tenant_desc` |
-| `user_info` | 用户表 | `id`, `username`, `password` |
+| `users` | 用户表 | `id`, `username`, `password` |
 | `roles` | 角色表 | `username`, `role` |
 | `permissions` | 权限表 | `role`, `resource`, `action` |
 | `tenant_capacity` | 租户容量 | `id`, `tenant_id` |
+| `config_info_gray` | 灰度配置信息（2.5.0 新增） | `id`, `data_id`, `group_id`, `gray_name`, `gray_rule` |
 
 **Derby 限制与注意事项**：
 
@@ -283,8 +289,8 @@ server.port=8848
 # Derby 数据库配置（单机模式默认，无需手动配置）
 spring.datasource.platform=derby
 
-# 日志目录
-nacos.logs.path=/path/to/nacos/logs
+# 日志目录：非 application.properties 配置项。
+# 通过 JVM 属性 -Dnacos.logs.path=/path/to/nacos/logs 指定（logback 读取该系统属性）
 
 # 控制台路径（默认 /nacos）
 nacos.console.ui.enabled=true
@@ -318,7 +324,7 @@ nacos.console.ui.enabled=true
 - Derby 数据库零配置但不能跨机访问、不支持远程连接，适合开发测试环境
 - 单机模式跳过所有集群初始化步骤（JRaft 选举、gRPC 集群通道、Distro 同步），启动速度极快（通常 < 10 秒）
 - 生产环境应避免使用单机模式，因为无高可用保障、数据无法自动恢复
-- Derby 数据库包含 12 张核心表，数据迁移至 MySQL 时需要导出 SQL 脚本并手动导入
+- Derby 数据库包含 13 张核心表，数据迁移至 MySQL 时需要导出 SQL 脚本并手动导入
 
 ---
 
@@ -334,7 +340,7 @@ nacos.console.ui.enabled=true
 3. **JRaft 集群**：3 节点间选举 Leader，保证 CP 模式数据一致性
 4. **Distro 同步**：AP 模式下 Naming 数据异步复制
 
-在 2.5.3 中，集群模式的关键变化是 gRPC 双通道架构。集群内部通信使用 gRPC（port 9848 + 7848 Raft port），而客户端 SDK 连接任意节点后，通过 gRPC Server Push 机制接收配置变更通知。这意味着负载均衡器需要同时代理 HTTP 8848（L7）和 gRPC 9848（L4/TCP stream）。
+在 2.5.3 中，集群模式的关键变化是 gRPC 双通道架构。集群内部通信使用 Cluster gRPC（9849，即 server.port+1001）+ Raft（7848，主端口-1000 自动推导），客户端 gRPC 为 9848（server.port+1000）；客户端 SDK 连接任意节点后，通过 gRPC Server Push 机制接收配置变更通知。这意味着负载均衡器需要同时代理 HTTP 8848（L7）和 gRPC 9848（L4/TCP stream），防火墙需放行 8848/9848/9849/7848。
 
 ### 核心架构关系图
 
@@ -342,7 +348,7 @@ nacos.console.ui.enabled=true
 
 ### 集群内 JRaft 通信拓扑
 
-<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">JRaft 集群拓扑（3 节点）</span><span class="s">Raft Log Replication (同步)</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">角色分配规则:</div><ul class="dgm-kv"><li>Leader 选举：term 最大者胜出</li><li>Leader 负责接收所有写请求，Follower 同步日志</li><li>Raft 心跳间隔：500ms（可配置）</li><li>选举超时：2s-4s 随机（避免多次选举冲突）</li></ul><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1 (Leader)</span><span class="s">192.168.1.101</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 3 (Follower</span><span class="s">192.168.1.103</span></div><div class="dgm-box-b"></div></div></div></div></div>
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">JRaft 集群拓扑（3 节点）</span><span class="s">Raft Log Replication (同步)</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">角色分配规则:</div><ul class="dgm-kv"><li>Leader 选举：term 最大者胜出</li><li>Leader 负责接收所有写请求，Follower 同步日志</li><li>选举超时默认 5000ms（nacos.core.protocol.raft.data.election_timeout_ms 可调，RaftSysConstants.DEFAULT_ELECTION_TIMEOUT）</li><li>心跳间隔由 sofa-jraft 按"选举超时/心跳因子"推导：默认心跳因子 10（DEFAULT_ELECTION_HEARTBEAT_FACTOR）→ 约 500ms，为 sofa-jraft 内部机制而非发行配置项</li></ul><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1 (Leader)</span><span class="s">192.168.1.101</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 3 (Follower</span><span class="s">192.168.1.103</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 ### 部署 4 步骤详解
 
@@ -376,7 +382,7 @@ Nacos 2.5.3 发行包中包含 `conf/mysql-schema.sql` 初始化脚本。执行�
 mysql -u nacos -p -h 192.168.1.200 -D nacos_config < /path/to/nacos/conf/mysql-schema.sql
 ```
 
-初始化脚本创建以下 12 张核心表：
+初始化脚本创建以下 13 张核心表：
 
 ```sql
 -- conf/mysql-schema.sql 核心建表语句（简化）
@@ -489,12 +495,12 @@ mysql -u nacos -p -h 192.168.1.200 -e "USE nacos_config; SHOW TABLES;"
 
 ```
 # cluster.conf - Nacos 集群节点配置（每行一个节点）
-# 格式：IP:PORT
-# PORT 是 Raft 通信端口（默认 7848，不要与 HTTP 8848 混淆）
+# 格式：IP:主端口（或纯 IP 默认 8848）
+# Raft 端口由服务端自动推导为主端口-1000（8848→7848），无法在 cluster.conf 指定
 
-192.168.1.101:7848
-192.168.1.102:7848
-192.168.1.103:7848
+192.168.1.101:8848
+192.168.1.102:8848
+192.168.1.103:8848
 ```
 
 **关键注意事项**：
@@ -502,7 +508,7 @@ mysql -u nacos -p -h 192.168.1.200 -e "USE nacos_config; SHOW TABLES;"
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
 | IP | 节点的真实 IP，不可使用 127.0.0.1 | 无默认值 |
-| PORT | Raft 内部通信端口，非 HTTP 8848 | 7848 |
+| PORT | 节点主端口（HTTP），Raft 端口由服务端自动推导为主端口-1000，不可在此指定 | 8848 |
 | 配置一致性 | 所有 3 个节点的 `cluster.conf` 内容必须完全一致 | 必须手动确保 |
 
 **在 Nacos 2.5.3 中 `cluster.conf` 的读取逻辑**：
@@ -568,15 +574,17 @@ db.user.0=nacos
 # MySQL 密码
 db.password.0=Nacos@2026
 
-# -------------------- Raft 端口 --------------------
-# Raft 内部通信端口（用于 JRaft 选举和日志复制）
-# 不要与 HTTP 8848 或 gRPC 9848 混淆！
-nacos.core.protocol.raft.port=7848
+# -------------------- Raft 配置 --------------------
+# Raft 端口无需配置：由服务端自动推导为主端口-1000（8848→7848）。
+# 可调项为 JRaft 数据/元数据参数，例如（缺省即可满足常规场景）：
+# nacos.core.protocol.raft.data.election_timeout_ms=5000
+# nacos.core.protocol.raft.data.snapshot_interval_secs=30
 
 # -------------------- 日志配置 --------------------
 # Nacos 日志根目录
 # 每个节点各自存储日志，不要使用共享存储
-nacos.logs.path=/path/to/nacos/logs
+# 注意：nacos.logs.path 非 application.properties 配置项，
+# 通过 JVM 属性 -Dnacos.logs.path=/path/to/nacos/logs 指定
 
 # -------------------- 访问控制 --------------------
 # 是否开启鉴权（集群模式建议开启）
@@ -636,11 +644,10 @@ bin/startup.sh -m cluster
 # 在 Node 1 上查看启动日志
 tail -f /path/to/nacos/logs/naming-server.log
 
-# 关键日志输出（成功加入集群）：
-# INFO [Cluster-Raft] Member [192.168.1.101:7848] is added to the leader node
-# INFO [Cluster-Raft] Member [192.168.1.102:7848] is added to the leader node
-# INFO [Cluster-Raft] Member [192.168.1.103:7848] is added to the leader node
-# INFO Nacos started successfully in cluster mode.
+# 关键日志输出（成功加入集群，nacos.log / cluster 日志）：
+# INFO Nacos started successfully in cluster mode. use external storage
+# 集群成员/Distro 同步日志请关注 [DISTRO] 关键字；
+# JRaft 选举与日志复制日志位于 logs/protocol-raft.log（含 raft 日志）。
 
 # 查看集群状态
 curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
@@ -652,7 +659,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
   "data": [
     {
       "ip": "192.168.1.101",
-      "port": 7848,
+      "port": 8848,
       "state": "UP",
       "extendInfo": {
         "lastRefreshTime": 1678901234567,
@@ -662,7 +669,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     },
     {
       "ip": "192.168.1.102",
-      "port": 7848,
+      "port": 8848,
       "state": "UP",
       "extendInfo": {
         "raftTerm": 1,
@@ -671,7 +678,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     },
     {
       "ip": "192.168.1.103",
-      "port": 7848,
+      "port": 8848,
       "state": "UP",
       "extendInfo": {
         "raftTerm": 1,
@@ -685,10 +692,12 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
 **4.3 Raft Leader 确认**：
 
 ```bash
-# 查询当前 Raft Leader 节点
-curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes?withLeader=true'
-
-# 返回示例中 extendInfo 包含 "leader": "true" 字段
+# /v1/core/cluster/nodes 无 withLeader 参数（NacosClusterController.listNodes 仅支持 keyword 过滤）
+# Leader 信息可通过各节点 /v1/core/cluster/self 的 raft 元数据对比确认：
+# extendInfo.raftMetaData.<raft_group>.leader 字段记录该节点视角的 Leader 地址（ip:raft端口）
+curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/self'
+curl -X GET 'http://192.168.1.102:8848/nacos/v1/core/cluster/self'
+# 多数节点一致报告的 leader 地址即为当前 Leader；也可结合 logs/protocol-raft.log 观察
 ```
 
 **4.4 Nacos 控制台验证**：
@@ -718,10 +727,9 @@ kill -9 $(pgrep -f nacos)
 # 在 Node 2 观察集群变化
 tail -f /path/to/nacos/logs/naming-server.log
 
-# 预期日志：
-# INFO [Cluster-Raft] Leader heartbeat timeout, starting election
-# INFO [Cluster-Raft] Member [192.168.1.101:7848] is dead
-# INFO [Cluster-Raft] New leader has been elected: [192.168.1.102:7848]
+# 预期日志（logs/protocol-raft.log，JRaft 选举日志）：
+# 关注 raft 选举/心跳超时关键字与 [DISTRO] 成员变化日志；
+# 选举完成后通过 /v1/core/cluster/nodes 确认新 Leader。
 
 # 验证新 Leader
 curl -X GET 'http://192.168.1.102:8848/nacos/v1/core/cluster/nodes'
@@ -765,8 +773,8 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
 
 - Nacos 2.5.3 3 节点集群是生产环境最低高可用标准部署，依赖 JRaft 协议实现 CP 模式下的一致性
 - 部署 4 步骤：MySQL 数据库初始化→cluster.conf→application.properties→启动验证
-- `cluster.conf` 配置 Raft 通信端口（7848），必须使用真实 IP 且所有节点一致
-- MySQL 数据库初始化包含 12 张核心持久化表（config_info 等），必须提前执行 `mysql-schema.sql`
+- `cluster.conf` 写各节点主端口（192.168.1.101:8848，或纯 IP 默认 8848），Raft 端口由服务端自动推导为主端口-1000（8848→7848），必须使用真实 IP 且所有节点一致
+- MySQL 数据库初始化包含 13 张核心持久化表（config_info、config_info_gray 等），必须提前执行 `mysql-schema.sql`
 - JRaft Leader 选举在 3 节点中需获得 ≥2 票（多数派），容忍 1 节点故障
 - gRPC 9848 端口需与 HTTP 8848 区分，负载均衡器必须使用 TCP Stream 代理 gRPC（L4），而非 HTTP 反向代理（L7）
 
@@ -1233,56 +1241,30 @@ Nginx 在此架构中体现多种设计模式：
 
 ---
 
-## 10.5 5 节点集群架构：3 Raft + 2 Learner 节点的读写分离优势
+## 10.5 5 节点集群架构与读写分离实践（接入层实现）
 
 ### 设计背景
 
 3 节点集群是 Nacos 生产环境的最低高可用标准——容忍 1 节点故障。但大规模微服务场景（>1000 服务实例）或对可用性要求极高的关键业务系统，3 节点的容错窗口（仅容忍 1 节点故障）可能不够：如果同时发生 2 节点宕机（例如滚动重启期间 1 节点意外宕机），集群将不可用。
 
-Nacos 2.5.3 基于 JRaft 协议，支持在标准 Raft 节点（Voter）之外增加 **Learner（学习者）** 节点。Learner 节点不参与 Leader 选举投票，不参与日志提交 quorum 计数，仅被动从 Leader 同步日志。这带来了关键架构优势：
-
-1. **提高容错能力**：5 节点 = 3 Voter + 2 Learner → 容忍 2 节点故障（如果故障的是 2 个 Learner，集群正常运行；如果故障的是 1 Voter + 1 Learner，仍然有 2/3 Voter 满足 quorum）
-2. **读写分离**：Learner 节点可承载只读请求（服务发现查询、配置查询），分流 Voter 节点的读压力
-3. **跨地域部署**：Learner 节点部署在异地数据中心，同步日志但不参与本地 Leader 选举（避免跨地域 Raft 选举延迟）
-4. **滚动重启安全**：5 节点集群在滚动重启时，可同时摘除 iatively 1 节点升级，仍有 4 节点运行（3 Voter + 1 Learner），比 3 节点集群（滚动重启时只剩 2 节点，处于 quorum 边界）更安全
-
-Nacos 2.5.3 在 `application.properties` 中通过 `nacos.core.member.weight` 和 `nacos.core.member.learner=true` 控制节点角色。
+**需要首先澄清**：Nacos 2.5.3 内核暂不提供 learner 角色配置——不存在 `nacos.core.member.learner=true` 之类的配置项，成员模型中也没有 voter/learner 角色字段。所有集群成员一律以对等 Raft Voter 参与。若业务需要"读写分离 + 额外冗余"，应在接入层（Nginx）实现：扩大集群为 5 个对等 Voter（quorum = ⌊5/2⌋+1 = 3，可容忍 2 节点故障），再由 Nginx 按权重把只读流量分摊到各节点，达到与 Learner 架构近似的读扩容与滚动重启安全收益。这一章按 5 Voter 集群 + Nginx 读写分离的方式组织。
 
 ### 核心架构关系图
 
-<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 5 节点集群：3 Raft Voter + 2 Learner 架构</span><span class="s">Raft Quorum: 3/5 = ⌊5/2⌋+1 = 3 → 需要至少 2 个 Voter 在线</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">(Learner 不参与 quorum 计数)</div><div class="dgm-note" style="border:none;background:none;padding:0;">读写分离策略：</div><ul class="dgm-kv"><li>Voter 节点：处理读写请求（写转发至 Leader）</li><li>Learner 节点：仅处理本地读请求（服务发现查询 / 配置查询）</li><li>gRPC 负载均衡：Least Connection → 自然分流</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">容错矩阵：</div><ul class="dgm-kv"><li>2 Learner 宕机：集群正常（3/3 Voter online）</li><li>1 Voter + 1 Learner 宕机：集群正常（2/3 Voter online ≥ quorum）</li><li>2 Voter 宕机：集群不可用（1/3 Voter &lt; quorum）</li><li>1 Voter (Leader) 宕机：触发 Leader 选举，新 Leader 产生</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-8：5 节点集群 3 Voter + 2 Learner 架构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx (VIP)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">HTTP</span><span class="typ">: 8848 / gRPC :9848</span></li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1</span><span class="s">Voter</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">◄</div></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li>元数据持久</li><li>所有节点共</li></ul></div></div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head dgm-panel-head"><span class="t">Nacos 5 节点集群：5 个对等 Raft Voter 架构</span><span class="s">Raft Quorum: ⌊5/2⌋+1 = 3 → 需要至少 3 个 Voter 在线</span></div><div class="dgm-panel-body"><div class="dgm-note" style="border:none;background:none;padding:0;">（2.5.3 内核无 learner 角色，读写分离在接入层实现）</div><div class="dgm-note" style="border:none;background:none;padding:0;">读写分离策略：</div><ul class="dgm-kv"><li>Voter 节点：处理读写请求（写转发至 Leader）</li><li>Nginx upstream：将只读请求分摊到全部 5 节点</li><li>gRPC 负载均衡：Least Connection → 自然分流</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">容错矩阵：</div><ul class="dgm-kv"><li>2 Voter 宕机：集群正常（3/5 Voter online ≥ quorum）</li><li>3 Voter 宕机：集群不可用（2/5 Voter &lt; quorum）</li><li>1 Voter (Leader) 宕机：触发 Leader 选举，新 Leader 产生</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">图 10-8：5 节点对等 Voter 架构</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx (VIP)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">HTTP</span><span class="typ">: 8848 / gRPC :9848</span></li></ul></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Node 1</span><span class="s">Voter</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">◄</div></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li>元数据持久</li><li>所有节点共</li></ul></div></div></div></div></div></div></div>
 
-### Learner 节点角色与工作机制
+### 读写分离在接入层（Nginx）实现
 
-#### Learner 与 Follower 的核心差异
+如前所述，Nacos 2.5.3 内核暂不提供 learner 角色配置。读扩容的正确做法是把集群扩为 5 个对等 Voter，由 Nginx upstream 承担分流：
 
-| 维度 | Voter (Follower) | Learner |
-|------|-----------------|--------|
-| 参与 Leader 选举 | ✅ 有投票权 | ❌ 无投票权 |
-| 参与 quorum 计数 | ✅ 计入多数派 | ❌ 不计入 |
-| 接受 Leader 日志复制 | ✅ 接受 | ✅ 接受 |
-| 提交日志 | ✅ 直接提交 | ✅ 收到 Leader commit 后提交 |
-| 可成为 Leader | ✅ 可被选为 Leader | ❌ 永远不能成为 Leader |
-| 处理读请求 | ✅ 本地读 | ✅ 本地读（最终一致） |
-| 处理写请求 | ✅ 转发至 Leader | ✅ 转发至 Leader |
-| 适用场景 | 核心节点（选举/提交） | 读写分离 / 异地灾备 |
+| 维度 | 内核集群（5 Voter） | 接入层（Nginx） |
+|------|---------------------|-----------------|
+| Leader 选举与 quorum | 5 节点均有投票权，quorum = 3 | 与内核无关 |
+| 读分流 | 每个节点都可本地读（最终一致） | `least_conn`/加权轮询把只读请求摊到全部节点 |
+| 写请求 | 由 SDK/接入层转发至任意节点，节点内部再转发 Leader | 可按 URI 将写接口路由到统一入口 |
+| 故障容错 | 最多容忍 2 节点故障 | Nginx 健康检查自动摘除故障节点 |
 
-#### Nacos 2.5.3 中 Learner 的 JRaft 实现
-
-在 JRaft 中，Learner 节点的核心行为由 `Replicator` 类控制。Leader 向 Voter 和 Learner 发送日志复制的逻辑相同，区别在于 Leader 提交日志时只等待 Voter 的 quorum 确认，不等待 Learner：
-
-源码位置：`consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftProtocol.java`
-
-```java
-// JRaft 节点角色枚举
-public enum PeerRole {
-    LEADER,      // Leader 节点
-    FOLLOWER,    // Voter 节点（有投票权）
-    LEARNER      // Learner 节点（无投票权）
-}
-```
-
-在 Raft 共识算法中，Leader 提交日志条目需获得多数 Voter 节点的确认（quorum = ⌊N_Voter/2⌋ + 1）。Learner 不参与此 quorum 计数，但 Leader 仍会向 Learner 发送日志条目以保持数据同步。
+在 Raft 共识算法中，Leader 提交日志条目需获得多数 Voter 节点的确认（quorum = ⌊N/2⌋ + 1）。5 Voter 集群的容错与读写分流完全由内核多数派协议与 Nginx upstream 协同完成，无需（也无法）配置 learner 角色。
 
 ### 5 节点集群部署配置
 
@@ -1308,16 +1290,16 @@ FLUSH PRIVILEGES;
 
 #### Step 2：cluster.conf 配置
 
-`cluster.conf` 列出所有 5 个节点的 IP 和 Raft 通信端口（7848）：
+`cluster.conf` 列出所有 5 个节点的 IP 和主端口：
 
 ```
 # cluster.conf（每个节点的 ${NACOS_HOME}/conf/cluster.conf 内容相同）
-# 格式：IP:PORT（PORT 是 Raft 通信端口，默认 7848）
-192.168.1.101:7848
-192.168.1.102:7848
-192.168.1.103:7848
-192.168.1.104:7848
-192.168.1.105:7848
+# 格式：IP:主端口（或纯 IP 默认 8848）；Raft 端口由服务端自动推导为主端口-1000（8848→7848），无法在此指定
+192.168.1.101:8848
+192.168.1.102:8848
+192.168.1.103:8848
+192.168.1.104:8848
+192.168.1.105:8848
 ```
 
 #### Step 3：application.properties 配置
@@ -1340,65 +1322,39 @@ db.url.0=jdbc:mysql://192.168.1.100:3306/nacos_config?useSSL=false&allowPublicKe
 db.user.0=nacos
 db.password.0=Nacos@2025
 
-# Raft 端口
-nacos.core.member.raft.port=7848
+# Raft 端口无需配置：由服务端自动推导为主端口-1000（8848→7848）
 ```
 
-**Learner 节点配置（Node 4-5，以 Node 4 为例）**：
+**Node 4-5 配置**：与 Node 1-3 完全一致（均为对等 Voter，2.5.3 内核暂不提供 learner 角色配置，无需任何角色标记）。唯一可选的差异是节点权重，用于 Nginx upstream 加权轮询的元数据：
 
 ```properties
-# ============================================================
-# Learner 节点配置（Node 4: 192.168.1.104）
-# nacos/conf/application.properties
-# ============================================================
-
-# HTTP 端口
-server.port=8848
-
-# MySQL 数据源配置（与 Voter 相同，共享同一数据库）
-spring.datasource.platform=mysql
-db.num=1
-db.url.0=jdbc:mysql://192.168.1.100:3306/nacos_config?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
-db.user.0=nacos
-db.password.0=Nacos@2025
-
-# Raft 端口
-nacos.core.member.raft.port=7848
-
-# ==================================================================
-# Learner 节点关键配置
-# ==================================================================
-# 标记为 Learner 节点（Voter 无需配置此项或设置为 false）
-nacos.core.member.learner=true
-
-# 节点权重（可选，默认 1.0）
-# 权重可用于 Nginx upstream 的加权轮询
-nacos.core.member.weight=0.8
+# 节点元数据权重（可选，默认 1.0），可被 Nginx upstream 加权轮询消费
+nacos.core.member.meta.weight=0.8
 ```
 
 #### Step 4：启动 5 节点集群
 
 ```bash
 # ====================================================
-# 启动顺序建议：先启动 3 个 Voter 节点，再启动 2 个 Learner
+# 启动顺序建议：5 节点为对等 Voter，先启动 3 个形成多数派，再启动其余 2 个
 # ====================================================
 
-# Node 1 (Voter) - 192.168.1.101
+# Node 1 - 192.168.1.101
 ssh 192.168.1.101 "cd /opt/nacos && bash bin/startup.sh"
 
-# Node 2 (Voter) - 192.168.1.102
+# Node 2 - 192.168.1.102
 ssh 192.168.1.102 "cd /opt/nacos && bash bin/startup.sh"
 
-# Node 3 (Voter) - 192.168.1.103
+# Node 3 - 192.168.1.103
 ssh 192.168.1.103 "cd /opt/nacos && bash bin/startup.sh"
 
-# 等待 Voter 集群形成 Leader
+# 等待集群形成 Leader
 sleep 15
 
-# Node 4 (Learner) - 192.168.1.104
+# Node 4 - 192.168.1.104
 ssh 192.168.1.104 "cd /opt/nacos && bash bin/startup.sh"
 
-# Node 5 (Learner) - 192.168.1.105
+# Node 5 - 192.168.1.105
 ssh 192.168.1.105 "cd /opt/nacos && bash bin/startup.sh"
 
 # 验证集群状态
@@ -1414,9 +1370,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     "port": 8848,
     "state": "UP",
     "extendInfo": {
-      "raftPort": "7848",
-      "role": "LEADER",
-      "learner": "false"
+      "raftPort": "7848"
     }
   },
   {
@@ -1424,9 +1378,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     "port": 8848,
     "state": "UP",
     "extendInfo": {
-      "raftPort": "7848",
-      "role": "FOLLOWER",
-      "learner": "false"
+      "raftPort": "7848"
     }
   },
   {
@@ -1434,9 +1386,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     "port": 8848,
     "state": "UP",
     "extendInfo": {
-      "raftPort": "7848",
-      "role": "FOLLOWER",
-      "learner": "false"
+      "raftPort": "7848"
     }
   },
   {
@@ -1444,9 +1394,7 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     "port": 8848,
     "state": "UP",
     "extendInfo": {
-      "raftPort": "7848",
-      "role": "FOLLOWER",
-      "learner": "true"
+      "raftPort": "7848"
     }
   },
   {
@@ -1454,93 +1402,87 @@ curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
     "port": 8848,
     "state": "UP",
     "extendInfo": {
-      "raftPort": "7848",
-      "role": "FOLLOWER",
-      "learner": "true"
+      "raftPort": "7848"
     }
   }
 ]
 ```
 
+> 注：2.5.3 成员模型的 `extendInfo` 中不存在 `role`/`learner` 字段，`raftPort` 由服务端按主端口-1000 自动推导填充。Leader 归属可通过 `/v1/core/cluster/nodes` 与 `protocol-raft.log` 观察，而非成员元数据字段。
+
 ### 故障转移场景验证
 
-#### 场景 1：两个 Learner 节点同时宕机
+#### 场景 1：两个节点同时宕机（非 Leader）
 
 ```bash
-# 停止 Node 4 + Node 5（两个 Learner）
+# 停止 Node 4 + Node 5
 ssh 192.168.1.104 "kill -STOP \$(pgrep -f nacos)"
 ssh 192.168.1.105 "kill -STOP \$(pgrep -f nacos)"
 
-# 验证：3 个 Voter 仍然在线，集群正常运行
+# 验证：Node 1/2/3 仍然在线，quorum = 3/5 成立，集群正常运行
 curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
 # 预期：Node 4/5 显示 DOWN，Node 1/2/3 显示 UP，集群可用
 ```
 
-#### 场景 2：1 Voter + 1 Learner 同时宕机
+#### 场景 2：第三个节点宕机（仍满足 quorum 边界）
 
 ```bash
-# 停止 Node ierp3 (Voter) + Node 4 (Learner)
+# 再停止 Node 3
 ssh 192.168.1.103 "kill -STOP \$(pgrep -f nacos)"
-# （Node 4 已在场景 1 中停止）
 
-# 验证：仍有 2/3 Voter 在线 ≥ quorum (⌊3/2⌋+1=2)，集群仍可用
+# 验证：仅剩 2/5 Voter 在线 < quorum (3)，集群不可用
 curl -X GET 'http://192.168.1.101:8848/nacos/v1/core/cluster/nodes'
-# 预期：集群在线，Leader 仍是 Node 1
+# 预期：集群不可用（这是 5 Voter 集群的硬性边界）
 ```
 
-#### 场景 3：Leader Voter 宕机（触发选举）
+#### 场景 3：Leader 宕机（触发选举）
 
 ```bash
 # 停止 Node 1（当前 Leader）
 ssh 192.168.1.101 "kill -STOP \$(pgrep -f nacos)"
 
-# 观察 Node 2 日志：触发 Leader 选举
-ssh 192.168.1.102 "tail -30 /opt/nacos/logs/nacos-cluster.log | grep -E 'Leader|election'"
-# 预期日志：
-# INFO [JRaft] Leader heartbeat timeout, starting election
-# INFO [JRaft] New leader has been elected: [192.168.1.102:7848]
+# 观察 Node 2 日志：触发 Leader 选举（logs/protocol-raft.log 中的 raft 日志）
+ssh 192.168.1.102 "tail -30 /opt/nacos/logs/protocol-raft.log | grep -iE 'election|leader'"
 
 # 验证新 Leader
 curl -X GET 'http://192.168.1.102:8848/nacos/v1/core/cluster/nodes'
-# 预期：Node 2 (Voter) 成为新 Leader
+# 预期：Node 2/3/4/5 之一成为新 Leader
 ```
 
 ### Trade-off 分析
 
-**3 节点 vs 5 节点（3 Voter + 2 Learner）对比**：
+**3 节点 vs 5 节点（全对等 Voter + 接入层读写分离）对比**：
 
-| 维度 | 3 节点 | 5 节点（3 Voter + 2 Learner） | 分析 |
-|------|--------|-------------------------------|------|
-| 最大容错 | 1 节点故障 | 2 节点故障（若故障的是 2 Learner 或 1 Voter+1 Learner） | 5 节点容错窗口更大 |
-| Voter 容错 | 1/3 Voter 故障 | 3 节点模式下相同（Voter 仍只有 3 个） | Voter 容错未增加 |
+| 维度 | 3 节点 | 5 节点（5 Voter） | 分析 |
+|------|--------|-------------------|------|
+| 最大容错 | 1 节点故障 | 2 节点故障 | 5 节点 quorum = 3，容错窗口更大 |
 | 滚动重启安全 | 仅剩 2 节点（quorum 边界） | 仍有 4 节点（安全冗余） | 5 节点滚动重启更安全 |
 | 硬件成本 | 3 台服务器 | 5 台服务器（+66%） | 成本与容错能力线性增长 |
 | MySQL 连接数 | 3 × 连接池 | 5 × 连接池 | 5 节点对 MySQL 压力增大 66% |
-| 日志复制开销 | Leader → 2 Follower | Leader → 4 节点（2 Voter + 2 Learner） | 5 节点网络开销更大 |
-| 读吞吐量 | 所有节点处理读 | Learner 分担读请求 | 5 节点整体读吞吐更高 |
+| 日志复制开销 | Leader → 2 Follower | Leader → 4 Follower | 5 节点网络开销更大 |
+| 读吞吐量 | 所有节点处理读 | Nginx 将只读流量分摊到全部 5 节点 | 接入层实现读扩容 |
 | 适用场景 | 中小规模（<500 服务） | 大规模（>1000 服务）或关键业务 | 根据规模和可用性需求选择 |
 
-**Learner 模式的适用边界**：
+**5 Voter 集群的适用边界**：
 
-1. **不适合替代 Voter 数量不足**：如果 Raft 集群只有 丛 个 Voter（总共 2 个 Voter + 1 Learner），Learner 不参与 quorum，实际容错能力与 2 Voter 相同——任何 1 个 Voter 宕机集群即不可用
-2. **跨地域部署注意网络延迟**：Learner 部署在异地数据中心时，日志复制的网络延迟增大（Leader → Learner RTT），但 Learner 不参与 quorum，不会拖慢日志提交
-3. **Learner 读到的数据可能滞后**：Leader 向 Learner 发送日志条目与 Leader 提交日志之间存在时间窗口，Learner 可能读到尚未提交的日志（若 Learner 应用日志比 commit 快）；生产环境若需要强一致读，应读 Leader 或配置 `readIndex` 安全读
+1. **容错边界是硬性的**：5 Voter 的 quorum = 3，同时宕机 3 节点集群即不可用；没有 learner 角色可以"豁免"部分节点
+2. **跨地域部署需谨慎**：异地节点的日志复制 RTT 会拖慢 Raft 提交；如必须跨地域，建议按地域拆分独立集群而非共组一个 Raft 组
+3. **读数据可能滞后**：非 Leader 节点本地读为最终一致；需要强一致读时应读 Leader 或使用线性一致读能力
 
 ### 设计模式分析
 
-1. **读写分离模式（Read/Write Splitting）**：Voter 节点处理读写请求（写转发至 Leader），Learner 节点专门承载只读请求——将读流量从 Voter 分流，降低 Voter 节点的 CPU/内存压力。这是 CQRS（Command Query Responsibility Segregation）模式在集群拓扑层面的应用。
+1. **读写分离模式（Read/Write Splitting）**：内核保持对等 Voter，接入层（Nginx upstream）承载只读请求分流——将读流量从统一入口摊平到各节点。这是 CQRS（Command Query Responsibility Segregation）模式在接入层面的应用。
 
-2. **观察者模式（Observer Pattern）**：Learner 节点在 Raft 协议中扮演 Observer 角色——被动接收 Leader 日志复制但不参与决策（投票）。类似 ZooKeeper 中的 Observer 节点（ZooKeeper 的 Learner 同样不参与投票）。
+2. **多数派容错模式（Quorum）**：quorum = ⌊N/2⌋+1 的多数派协议使 5 Voter 集群容忍 2 节点故障，写可用性与节点数线性权衡。
 
-3. **代理模式（Proxy Pattern）**：Nginx 作为所有节点的统一入口，将读写请求路由至合适的节点（Voter for write，Learner for read），隐藏后端拓扑复杂性。
+3. **代理模式（Proxy Pattern）**：Nginx 作为所有节点的统一入口，将读写请求路由至合适的节点，隐藏后端拓扑复杂性。
 
 ### 小结
 
-- Nacos 2.5.3 支持 5 节点集群：3 Voter + 2 Learner，Learner 通过 `nacos.core.member.learner=true` 声明
-- Learner 不参与 Leader 选举和 quorum 计数，仅被动同步 Leader 日志，适用于读写分离和跨地域部署
-- Voter quorum 仍为 3/5（⌊3/2⌋+1=2），Learner 不计入 quorum——2 Voter 宕机仍导致集群不可用
-- 5 节点相比 3 节点优势：(1) 滚动重启安全(2) 最多容忍 2 节点故障（若故障节点是 2 Learner 或 1 Voter+1 Learner）(3) Learner 分担读流量
-- 局限性：(1) Voter 容错未增加（仍为 3 个 Voter）(2) 硬件成本 +66% (3) MySQL 连接压力增大
+- Nacos 2.5.3 内核暂不提供 learner 角色配置，5 节点集群为 5 个对等 Raft Voter；如需读写分离，应在接入层（Nginx upstream）实现
+- Leader 选举与 quorum 由多数派协议保证：quorum = ⌊5/2⌋+1 = 3，最多容忍 2 节点故障
+- 5 节点相比 3 节点优势：(1) 滚动重启安全(2) 最多容忍 2 节点故障(3) 接入层可把只读流量分摊到全部节点
+- 局限性：(1) 硬件成本 +66% (2) MySQL 连接压力增大 (3) 日志复制网络开销增大
 
 ---
 
@@ -1606,8 +1548,7 @@ data:
     db.user.0=nacos
     db.password.0=Nacos@2025
 
-    # Raft 端口
-    nacos.core.member.raft.port=7848
+    # Raft 端口无需配置：由服务端自动推导为主端口-1000（8848→7848）
 
     # 鉴权配置（生产环境建议开启）
     nacos.core.auth.enabled=true
@@ -1619,9 +1560,9 @@ data:
   # 使用 Headless Service DNS 域名确保 Pod 重启后成员关系稳定
   # ===================================================================
   cluster.conf: |
-    nacos-0.nacos-headless.nacos.svc.cluster.local:7848
-    nacos-1.nacos-headless.nacos.svc.cluster.local:7848
-    nacos-2.nacos-headless.nacos.svc.cluster.local:7848
+    nacos-0.nacos-headless.nacos.svc.cluster.local:8848
+    nacos-1.nacos-headless.nacos.svc.cluster.local:8848
+    nacos-2.nacos-headless.nacos.svc.cluster.local:8848
 ```
 
 **DNS 域名说明**：`<pod-name>.<headless-service>.<namespace>.svc.cluster.local`
@@ -2164,8 +2105,8 @@ kubectl -n nacos logs nacos-0 > nacos-0.log
 # 1. 更新 ConfigMap 中的 cluster.conf，添加 nacos-3 和 nacos-4
 kubectl edit configmap nacos-config -n nacos
 # 在 cluster.conf 中添加：
-#   nacos-3.nacos-headless.nacos.svc.cluster.local:7848
-#   nacos-4.nacos-headless.nacos.svc.cluster.local:7848
+#   nacos-3.nacos-headless.nacos.svc.cluster.local:8848
+#   nacos-4.nacos-headless.nacos.svc.cluster.local:8848
 
 # 2. 扩容 StatefulSet 到 5 个副本
 kubectl scale statefulset nacos -n nacos --replicas=5

@@ -3,7 +3,7 @@
 """生成 Nacos 2.5.3 深度研究 HTML 总索引页"""
 import re, os, html
 
-REPO = "/home/sandbox/.openclaw/workspace/repo"
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 OUT  = os.path.join(REPO, "chapter-html")
 
 # 章节元数据：(文件号, 显示章号, 标题, 分组)

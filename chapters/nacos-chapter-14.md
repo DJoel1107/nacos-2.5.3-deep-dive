@@ -30,7 +30,7 @@ Nacos Server 启动失败是运维中最先遇到、也最频繁的一类故障�
 Nacos 2.5.3 的启动入口定义在 `console` 模块：
 
 ```java
-// console/src/main/java/com/alibaba/nacos/Nacos.java:23-51 (Nacos 2.5.3)
+// console/src/main/java/com/alibaba/nacos/Nacos.java:37-48 (Nacos 2.5.3)
 @SpringBootApplication
 @ComponentScan(basePackages = "com.alibaba.nacos", excludeFilters = {
         @Filter(type = FilterType.CUSTOM, classes = {NacosTypeExcludeFilter.class}),
@@ -118,33 +118,24 @@ Nacos 默认在关键依赖（数据库、核心配置）缺失时采取"快速�
 
 ### 源码走读：NacosApplicationListener 与启动事件驱动
 
-`NacosApplicationListener`（`core/src/main/java/com/alibaba/nacos/core/listener/NacosApplicationListener.java`）是理解 Nacos 启动失败根因的另一个关键入口。它实现了 Spring 的 `SpringApplicationRunListener` 接口，通过监听启动事件在不同阶段执行 Nacos 特有初始化：
+`NacosApplicationListener`（`core/src/main/java/com/alibaba/nacos/core/listener/NacosApplicationListener.java:29-85`）是理解 Nacos 启动失败根因的另一个关键入口。它是 Nacos 自定义的启动监听器**接口**（以 default 方法提供各启动阶段的钩子），真正的实现者是 `StartingApplicationListener`（同包，`:55` 起），通过监听 Spring Boot 启动事件在不同阶段执行 Nacos 特有初始化：
 
 ```java
-// core/src/main/java/com/alibaba/nacos/core/listener/NacosApplicationListener.java (Nacos 2.5.3, 节选)
-public class NacosApplicationListener implements SpringApplicationRunListener {
+// core/src/main/java/com/alibaba/nacos/core/listener/StartingApplicationListener.java (Nacos 2.5.3, 节选)
+public class StartingApplicationListener implements NacosApplicationListener {
     
     @Override
     public void environmentPrepared(ConfigurableEnvironment environment) {
-        // 环境准备阶段：注入 nacos.home、日志路径等配置
-        String home = System.getProperty(Constants.NACOS_HOME);
-        if (StringUtils.isBlank(home)) {
-            home = EnvironmentUtil.getNacosHome();
-        }
-        System.setProperty(Constants.NACOS_HOME, home);
-        LogUtil.setUuid();
+        // 环境准备阶段：解析并注入 nacos.home 等属性
+        System.setProperty(Constants.NACOS_HOME, EnvironmentUtil.getNacosHome());
+        // 注入日志路径等系统属性
     }
     
-    @Override
-    public void contextPrepared(ConfigurableApplicationContext context) {
-        // 容器准备阶段：注册 Nacos 专用的工具 Bean
-    }
+    // 后续阶段（contextPrepared / started 等）按需执行初始化
 }
 ```
 
-该监听器的 `environmentPrepared()` 在环境准备阶段完成 `nacos.home` 的解析与注入。**这解释了启动失败点 5 的一个常见诱因**：若 `nacos.home` 指向的目录不可写或不存在，此处初始化即失败，且错误可能在日志中并不显眼。因此排查启动失败时，应确认该系统属性与目录确实就绪。
-
-`environmentPrepared()` 还会调用 `LogUtil.setUuid()` 为本次启动生成 UUID，便于在多节点集群中按启动批次关联日志。若此处抛异常，日志系统可能未完全初始化，导致后续异常堆栈打印不完整——这也是定位失败点 3 时"日志不完整"现象的潜在根因。
+实现者 `StartingApplicationListener` 的 `environmentPrepared()` 在环境准备阶段完成 `nacos.home` 的解析与注入。**这解释了启动失败点 5 的一个常见诱因**：若 `nacos.home` 指向的目录不可写或不存在，此处初始化即失败，且错误可能在日志中并不显眼。因此排查启动失败时，应确认该系统属性与目录确实就绪。
 
 ### 生产案例：一次 "-Xms 超限" 与 "端口残留" 的组合故障
 
@@ -367,12 +358,12 @@ cat ~/.nacos/config/DEFAULT_GROUP/application.properties 2>/dev/null | md5sum
 判定：两者 MD5 不一致说明客户端缓存是旧值，尚未同步——进入步骤 4 查长轮询链路。
 
 **步骤 4：检查长轮询是否触发变更通知。**
-在 `config-server.log` 中检索长轮询与变更日志：
+长轮询命中记录走客户端请求日志 `config-client-request.log`（`LogUtil.CLIENT_LOG`，`LongPollingService.java:180-186`）：
 ```bash
-# 变更通知日志
-grep "notify config change" ${nacos.home}/logs/config-server.log | tail
-# 长轮询超时记录（约每 30s 一轮）
-grep "long polling timeout" ${nacos.home}/logs/config-server.log | tail
+# 长轮询命中/轮询记录
+grep "polling" ${nacos.home}/logs/config-client-request.log | tail
+# 配置发布失败排查（服务端处理日志）
+grep "ConfigPublishRequestHandler" ${nacos.home}/logs/config-server.log | tail
 ```
 `CacheData`（`client/.../CacheData.java`）的本地缓存标识 `isUseLocalConfig`（第 140 行）尤为关键——当客户端配置了本地快照且服务端不可达时，会读取本地缓存并标记为 `isUseLocalConfig=true`，此时即使服务端有新值也不会拉取：
 
@@ -384,7 +375,7 @@ private volatile boolean isUseLocalConfig = false;
 
 ### 源码走读：长轮询变更检测
 
-客户端 `ClientWorker` 通过后台拉取任务周期性携带所有订阅项的 MD5 向服务端 `config/v1/cs/configs/listener` 发起长轮询：
+客户端 2.5.3 的配置监听走 **gRPC** 通道：`ClientWorker` 内部的 `ConfigRpcTransportClient`（`ClientWorker.java:611`）将所有订阅项的 MD5 汇总后经 `RpcClient` 发送 `ConfigBatchListenRequest`（`ClientWorker.java:1233-1253`），服务端变更即经 gRPC 通知客户端。HTTP `/v1/cs/configs/listener` 长轮询仅服务于 1.x HTTP 客户端。服务端对应的挂起逻辑如下：
 
 ```java
 // config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:171-215 (Nacos 2.5.3)
@@ -457,12 +448,12 @@ spring.cloud.nacos.config.name=application.properties  # dataId
 
 **本地缓存干扰**：客户端默认将拉取到的配置快照落盘（`~/.nacos/config/{namespace}/{group}/{dataId}`），用于服务端不可达时的降级读取。若此快照恰好存在且客户端处于"读取本地缓存"状态（`isUseLocalConfig=true`），即使服务端有新值也不会主动拉取。排查时清理该缓存目录并重启客户端，可排除此干扰因素。
 
-### 源码走读：ClientWorker 长轮询拉取循环
+### 源码走读：ClientWorker 监听拉取循环
 
-客户端 `ClientWorker` 是长轮询的执行主体，其内部维护一个后台线程池，定时对每个订阅的 `CacheData` 执行配置监听检查。核心方法 `executeConfigListen()` 决定哪些订阅项需要参与长轮询请求：
+客户端 `ClientWorker` 是配置监听的执行主体，其内部维护一个后台线程池，定时对每个订阅的 `CacheData` 执行配置监听检查。核心方法 `executeConfigListen()` 决定哪些订阅项需要参与本轮 gRPC 监听请求：
 
 ```java
-// client/src/main/java/com/alibaba/nacos/client/config/impl/ClientWorker.java:853-891 (Nacos 2.5.3, 节选)
+// client/src/main/java/com/alibaba/nacos/client/config/impl/ClientWorker.java:838-890 (Nacos 2.5.3, 节选)
 public void executeConfigListen() throws NacosException {
     Map<String, List<CacheData>> listenCachesMap = new HashMap<>(16);
     long now = System.currentTimeMillis();
@@ -511,7 +502,7 @@ public void executeConfigListen() throws NacosException {
 | 1 | 发布端配置存在性 | 控制台/`curl /v1/cs/configs` | 配置存在且 MD5 正确 | 发布失败 / 发布错 env |
 | 2 | 客户端订阅 | 检查是否调用 `getConfig`/加监听 | 已订阅对应 dataId | 未订阅 |
 | 3 | MD5 对比 | 对比服务端与 `~/.nacos/config` 快照 | 服务端新值 ≠ 本地快照 | 本地缓存优先（`isUseLocalConfig`） |
-| 4a | 长轮询链路 | `config-server.log` 查变更/轮询日志 | 有 `notify config change` 但客户端未变 | 推送/拉取链路断 |
+| 4a | 长轮询链路 | `config-client-request.log` 查 `polling` 日志 | 有轮询命中记录但客户端未变 | 推送/拉取链路断 |
 | 4b | 命名空间隔离 | 核对客户端 `namespace/group/dataId` | 三元组与发布端一致 | 多环境配置混淆 |
 | 4c | 本地快照干扰 | 清理 `~/.nacos/config` 缓存目录 | 清理后重启能拉到新值 | 本地快照优先 |
 
@@ -540,10 +531,7 @@ Nacos Config 的长轮询机制（详见 14.3）依赖客户端 `ClientWorker` �
 ### 长轮询超时的两类根因
 
 **根因 A：客户端 `configLongPollTimeout` 配置过小。**
-Nacos 客户端允许通过 `LongPollingTimeout` 或系统属性 `configLongPollTimeout` 设置长轮询超时（默认约 30s）。若将其调得过小（如 5s），客户端在服务端尚未返回任何变更时即超时，导致反复发起无意义的长轮询请求，既增加服务端压力又可能因频繁重建连接而丢变更。典型日志：
-```
-[ClientWorker] longPolling timeout, re-poll... dataId=DEFAULT_GROUP@@application.properties
-```
+Nacos 客户端允许通过 JVM 属性 `-DconfigLongPollTimeout=30000`（`PropertyKeyConst.java:76`，`ClientWorker.java:539` 读取，默认约 30s）设置长轮询超时——**不存在** `nacos.config.long-polling.timeout` 之类的键。若将其调得过小（如 5s），客户端在服务端尚未返回任何变更时即超时，导致反复发起无意义的监听请求，既增加服务端压力又可能因频繁重建请求而丢变更。超时并不会打印"longPolling timeout"之类的日志——表现为请求静默重试，可在客户端 DEBUG 日志或抓包观察重新发起的 `ConfigBatchListenRequest`。
 
 **根因 B：服务端 `LongPollingService` 挂起任务调度延迟。**
 当服务端长轮询线程池（`ConfigExecutor.executeLongPolling`）饱和或 `ClientLongPolling` 挂起时间过长时，变更通知无法及时送达。此时客户端表现为"配置已发布但迟迟不生效"，`clientWorker` 线程长期位于等待状态。
@@ -792,25 +780,24 @@ public void run() {
 
 ### 源码走读：健康检查与超时判定
 
-`ClientBeatCheckTaskV2`（`naming/.../healthcheck/heartbeat/ClientBeatCheckTaskV2.java`）是判定实例健康与否的核心定时任务：
+`ClientBeatCheckTaskV2`（`naming/.../healthcheck/heartbeat/ClientBeatCheckTaskV2.java`）是判定实例健康与否的核心定时任务。其 `run()` 仅委托 `doHealthCheck()`（`:79-81`）：
 
 ```java
 // naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java (Nacos 2.5.3, 节选)
 @Override
 public void run() {
-    // 遍历该连接下所有发布的服务
-    client.getAllPublishedService().forEach(service -> {
-        // 检查每个临时实例的 lastHeartBeatTime 是否超龄
-        if (out of threshold(instance.getLastHeartBeatTime())) {
-            // 心跳超时 → 视为不健康或移除
-            Loggers.SRV_LOG.warn("client beat {} expired, removing...", ipPort);
-            // 从注册表中移除实例并广播变更
-        }
-    });
+    doHealthCheck();
+}
+
+private void doHealthCheck() {
+    // 遍历该客户端发布的所有服务，逐个交给拦截器链处理
+    for (Service each : client.getAllPublishedService()) {
+        doHealthCheckOnService(each);  // → InstanceBeatCheckTaskInterceptorChain.doInterceptor(...)
+    }
 }
 ```
 
-**超时判定基准**：`lastHeartBeatTime` 由 `ClientBeatProcessorV2` 每次心跳刷新。`ClientBeatCheckTaskV2` 周期性（默认约 5 秒一个检查周期）对比该时间与当前时间，超过心跳间隔的倍数阈值即判定超时。若客户端心跳因网络抖动、GC 停顿短暂中断超过阈值，健康实例可能被误摘除——这也是"注册成功突然变不健康再恢复"的常见原因，排查时需结合网络与 GC 情况综合判断。
+**超时判定发生在拦截器链中**（`:65-75`）：`UnhealthyInstanceChecker` 按实例元数据 `preserved.heart.beat.timeout`（默认 15s）判断是否标记不健康；`ExpiredInstanceChecker` 按 `preserved.ip.delete.timeout`（默认 30s）判断是否剔除实例。实际日志关键字为 **`{IP-DISABLED}`**（写入 `naming-event.log`，格式 `EVT_LOG {POS} {IP-DISABLED} valid: ... msg: client last beat: {}`，`UnhealthyInstanceChecker.java:75-78`）——源码中不存在 "client beat expired, removing" 这条日志。若客户端心跳因网络抖动、GC 停顿短暂中断超过阈值，健康实例可能被误摘除——这也是"注册成功突然变不健康再恢复"的常见原因，排查时需结合网络与 GC 情况综合判断。
 
 ### 注册异常的容量与配置维度
 
@@ -863,21 +850,15 @@ public class ClientBeatCheckTaskV2 implements Runnable {
     
     @Override
     public void run() {
-        // 遍历该连接下所有临时实例
-        client.getAllPublishedService().forEach(service -> {
-            List<Instance> instances = client.getInstancePublishInfo(service).getAllInstance();
-            // 判定条件: 当前时间 - lastHeartBeatTime > 心跳超时阈值
-            boolean healthy = isHealthy(instance);
-            if (!healthy) {
-                // 移除不健康实例或标记
-                handleUnhealthyInstance(service, instance);
-            }
-        });
+        doHealthCheck();  // 遍历已发布服务 → 拦截器链执行检查
+        // 拦截器链：UnhealthyInstanceChecker（15s 标记不健康）
+        //         → ExpiredInstanceChecker（30s 剔除实例）
+        // 实际日志关键字 {IP-DISABLED}（naming-event.log）
     }
 }
 ```
 
-**心跳超时阈值**源自心跳间隔。Nacos 临时实例的 `clientBeatInterval` 默认约 5000ms（5 秒），服务端按心跳间隔的倍数（约 3 倍，即 15 秒）判定超时。若客户端因 GC 停顿、网络中断、线程阻塞导致心跳延迟超过阈值，实例即被标记不健康。
+**心跳超时阈值**来自实例元数据而非固定倍数：`preserved.heart.beat.timeout`（默认 15 秒）触发"不健康"标记，`preserved.ip.delete.timeout`（默认 30 秒）触发剔除。若客户端因 GC 停顿、网络中断、线程阻塞导致心跳延迟超过阈值，实例即被标记不健康。
 
 ### 手动心跳检测代码
 
@@ -948,12 +929,12 @@ Nacos 2.x 客户端与服务端的注册/心跳全部承载于 **gRPC 双向流�
 
 **断线重连**：当 gRPC 连接意外断开（网络闪断、服务端重启、GC 停顿超时），客户端会触发重连逻辑，重新建立双向流并**重放已注册实例的心跳**。若重连失败持续累积，客户端本地缓存的服务注册信息会逐渐失效，最终导致服务端实例被判定不健康并摘除。
 
-**排查命令**：`remote-server.log` 记录 gRPC 连接的全生命周期，是排查心跳/连接问题的核心日志：
+**排查命令**：`remote-core.log` 记录 gRPC 连接的注册/注销等核心事件，`remote-digest.log` 记录摘要级日志，是排查心跳/连接问题的核心日志（2.5.3 无 `remote-server.log`，日志文件见 nacos.xml 中 remote 相关 appender）：
 ```bash
 # 检索连接建立/断开记录
-grep -E "new gRPC bi-stream|connection established|connection disconnect" ${nacos.home}/logs/remote-server.log | tail -30
-# 检索断线重连
-grep -iE "reconnect|retry" ${nacos.home}/logs/remote-server.log | tail -20
+grep -E "new gRPC bi-stream|connection established|connection disconnect|unregistered" ${nacos.home}/logs/remote-core.log | tail -30
+# 检索断线重连与摘要信息
+grep -iE "reconnect|retry" ${nacos.home}/logs/remote-core.log ${nacos.home}/logs/remote-digest.log | tail -20
 ```
 
 ### 心跳异常的日志与排查要点整理
@@ -964,13 +945,13 @@ grep -iE "reconnect|retry" ${nacos.home}/logs/remote-server.log | tail -20
 
 | 排查维度 | 检查内容 | 检查日志/命令 | 典型结论 |
 |---------|---------|--------------|---------|
-| 连接是否建立 | gRPC 双向流是否建立 | `remote-server.log` 查 `new gRPC bi-stream` | 连接未建立 → gRPC 端口/网络问题 |
+| 连接是否建立 | gRPC 双向流是否建立 | `remote-core.log` 查 `new gRPC bi-stream` | 连接未建立 → gRPC 端口/网络问题 |
 | 心跳是否到达 | 服务端是否收到 Beat | `naming-server.log` 查 `beat` | 无 beat → 客户端心跳线程问题 |
-| 超时判定阈值 | `lastHeartBeatTime` 是否刷新 | 健康检查相关日志 | 时间戳不更新 → 心跳被截断 |
-| 网络抖动 | gRPC 连接是否频繁断开 | `remote-server.log` 查 disconnect | 频繁断开 → 网络不稳定或 GC 停顿 |
+| 超时判定阈值 | `lastHeartBeatTime` 是否刷新 | 健康检查相关日志（naming-event.log 查 `{IP-DISABLED}`） | 时间戳不更新 → 心跳被截断 |
+| 网络抖动 | gRPC 连接是否频繁断开 | `remote-core.log` 查 disconnect | 频繁断开 → 网络不稳定或 GC 停顿 |
 | 客户端线程 | 心跳线程是否阻塞 | 客户端 `jstack` 定位心跳线程 | 线程 WAITING/BLOCKED → 线程池问题 |
 
-**核心排查原则**：先确认 gRPC 连接健康（`remote-server.log`），再确认心跳是否到达（`naming-server.log`），最后结合超时判定逻辑判断是"未收到"还是"未刷新"。这两份日志的交叉比对，可快速定位断点发生在客户端发送、网络传输还是服务端处理环节。
+**核心排查原则**：先确认 gRPC 连接健康（`remote-core.log`），再确认心跳是否到达（`naming-server.log`），最后结合超时判定逻辑判断是"未收到"还是"未刷新"。这两份日志的交叉比对，可快速定位断点发生在客户端发送、网络传输还是服务端处理环节。
 
 ### 设计模式分析
 
@@ -978,7 +959,7 @@ gRPC 长连接心跳链路体现了**生产者-消费者模式**：客户端作�
 
 ### 小结
 
-客户端心跳是临时实例保活的底层机制，链路为"gRPC 长连接发送 Beat → ClientBeatProcessorV2 刷新 lastHeartBeatTime → ClientBeatCheckTaskV2 超时判定"。排查心跳异常的关键是**区分服务端不接收（服务端问题）与客户端不发送（网络/线程问题）**，手动心跳检测代码可有效验证服务端接收能力。同时需结合 `remote-server.log` 的 gRPC 连接记录与 `naming-server.log` 的心跳记录交叉比对，并理解长连接保活与断线重连机制，才能完整覆盖心跳异常的各类根因。
+客户端心跳是临时实例保活的底层机制，链路为"gRPC 长连接发送 Beat → ClientBeatProcessorV2 刷新 lastHeartBeatTime → ClientBeatCheckTaskV2 超时判定"。排查心跳异常的关键是**区分服务端不接收（服务端问题）与客户端不发送（网络/线程问题）**，手动心跳检测代码可有效验证服务端接收能力。同时需结合 `remote-core.log` 的 gRPC 连接记录与 `naming-server.log` 的心跳记录交叉比对，并理解长连接保活与断线重连机制，才能完整覆盖心跳异常的各类根因。
 
 
 ---
@@ -1012,17 +993,19 @@ curl -s 'http://localhost:8848/nacos/v1/core/cluster/nodes' | jq '.nodes'
 ```
 判定：脑裂的典型特征是**不同节点返回的节点列表不一致**——分区 A 的节点看不到分区 B 的节点，或看到对方状态为 DOWN。若各节点视图一致且全 UP，则基础连通性正常。
 
-**步骤 2：`raft/leader` 检查 Leader 一致性。**
+**步骤 2：`cluster/node/self` 检查节点状态与 Leader。**
 ```bash
-# 查询各 Raft 组的 Leader
-curl -s 'http://localhost:8848/nacos/v1/core/raft/leader' | jq
+# 查看节点状态与元数据（Nacos 无 /core/raft/leader 端点，用 cluster 节点接口 + raft 日志判断）
+curl -s 'http://localhost:8848/nacos/v1/core/cluster/node/self' | jq
+# 结合 protocol-raft.log 判断各 Raft 组的 Leader：
+grep -E "leader|Leader" ${nacos.home}/logs/protocol-raft.log | tail -20
 ```
-判定：在正常单分区集群中，每个节点查询应返回**同一个 Leader**。若不同节点返回不同的 Leader（尤其当这些节点之间网络不可达时），即确认发生脑裂。这是最直接的多 Leader 判据。
+判定：在正常单分区集群中，各节点的 `protocol-raft.log` 应指向**同一个 Leader**。若不同节点的日志显示不同的 Leader（尤其当这些节点之间网络不可达时），即确认发生脑裂。这是最直接的多 Leader 判据。
 
 **步骤 3：`DistroVerify` 检查临时数据一致性。**
 ```bash
 # 观察 Distro 数据校验日志（是否频繁 verify fail）
-grep -E "DISTRO-FAILED|verify data" ${nacos.home}/logs/nacos-cluster.log | tail -20
+grep "[DISTRO-FAILED]" ${nacos.home}/logs/naming-distro.log ${nacos.home}/logs/protocol-distro.log | tail -20
 ```
 判定：`DistroVerifyExecuteTask`（`core/.../distro/task/verify/DistroVerifyExecuteTask.java`）周期校验各节点临时数据是否一致。若出现大量 `[DISTRO-FAILED] verify data ... failed`，说明节点间临时实例数据无法同步，是脑裂在数据层的体现。
 
@@ -1043,17 +1026,18 @@ curl -s 'http://nodeB:8848/nacos/v1/core/cluster/nodes' | jq '.nodes[].address'
 
 **步骤 2 输出示例**（多 Leader 判据）：
 ```bash
-# 节点 A 查询 Leader
-curl -s 'http://nodeA:8848/nacos/v1/core/raft/leader' | jq
-# 节点 C 查询 Leader（若脑裂，二者指向不同地址）
-curl -s 'http://nodeC:8848/nacos/v1/core/raft/leader' | jq
+# 节点 A 查看自身状态与元数据
+curl -s 'http://nodeA:8848/nacos/v1/core/cluster/node/self' | jq
+# 节点 C 查看自身状态与元数据（若脑裂，两分区各自选出不同 Leader）
+curl -s 'http://nodeC:8848/nacos/v1/core/cluster/node/self' | jq
+# 再对比两节点的 protocol-raft.log 中的 Leader 记录
 ```
-正常情况两个节点应返回相同 Leader 地址；返回不同地址即确认脑裂。
+正常情况各节点 Raft 日志应指向相同 Leader 地址；指向不同地址即确认脑裂。
 
 **步骤 3 输出示例**（Distro 校验失败）：
 ```bash
-grep "DISTRO-FAILED" ${nacos.home}/logs/nacos-cluster.log | tail -5
-# 形如: [DISTRO-FAILED] verify data for type ephermeralInstance to nodeC failed
+grep "[DISTRO-FAILED]" ${nacos.home}/logs/naming-distro.log ${nacos.home}/logs/protocol-distro.log | tail -5
+# 形如: [DISTRO-FAILED] verify data for type ephemeralInstance to nodeC failed
 ```
 
 ### 源码走读：Raft 选举状态机与 Leader 切换
@@ -1240,10 +1224,14 @@ void registerSelfToCluster(String groupId, PeerId selfIp, Configuration conf) {
 
 ```java
 // core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftMaintainService.java (Nacos 2.5.3, 节选)
-public CompletableFuture<Response> execute(Processor processor) {
+public RestResult<String> execute(String[] args) {   // :43
     // 处理成员变更操作: 添加节点 / 移除节点 / 配置重装
-    // 通过 JRaftOps 分发到具体的 Raft 操作处理器
-    return JRaftOps.transfer(processor, raftServer);
+    return execute(JRaftOps.sourceOf(args));         // 解析命令后统一走 Map 版本
+}
+
+public RestResult<String> execute(Map<String, String> args) {  // :53
+    // 经 JRaftOps 分发到对应 Raft 组的具体运维操作处理器
+    return JRaftOps.sourceOf(command).execute(cliService, groupId, node, args);  // JRaftMaintainService.java:78-82
 }
 ```
 
@@ -1294,12 +1282,12 @@ Nacos 设计上优先依赖 Raft 的自愈能力（多数派协商、断点重�
 for n in nodeA nodeB nodeC; do curl -s "http://$n:8848/nacos/v1/core/cluster/nodes" | jq '.nodes|length'; done
 # 期望: 三个节点都返回 3
 
-# 2. Leader 唯一性: 所有节点查询同一 group 应返回同一 Leader
-for n in nodeA nodeB nodeC; do curl -s "http://$n:8848/nacos/v1/core/raft/leader" | jq -r 'to_entries[].value.leader'; done
-# 期望: 三个查询结果指向同一地址
+# 2. Leader 唯一性: 各节点 protocol-raft.log 中 Leader 记录应指向同一地址
+for n in nodeA nodeB nodeC; do ssh $n "grep -E 'leader' ${nacos.home}/logs/protocol-raft.log | tail -3"; done
+# 期望: 三份日志指向同一 Leader
 
 # 3. 临时数据一致: Distro 校验应不再失败
-grep -c "DISTRO-FAILED" ${nacos.home}/logs/nacos-cluster.log
+grep -c "[DISTRO-FAILED]" ${nacos.home}/logs/naming-distro.log ${nacos.home}/logs/protocol-distro.log
 # 期望: 恢复后不再新增 FAILED 记录
 ```
 
@@ -1324,8 +1312,8 @@ grep -c "DISTRO-FAILED" ${nacos.home}/logs/nacos-cluster.log
 
 ```bash
 # 新增一条监控: 检测 Leader 唯一性（任一 group 出现多个 Leader 即告警）
-curl -s 'http://localhost:8848/nacos/v1/core/raft/leader' | jq 'to_entries | length'
-# 期望: 等于 Raft 组数量，每个组一个 Leader
+grep -E "leader" ${nacos.home}/logs/protocol-raft.log | tail -20
+# 期望: 每个 Raft 组仅一个 Leader，无频繁切换记录
 ```
 
 同时建议建立脑裂专项告警与应急预案文档，明确：
@@ -1519,12 +1507,16 @@ public Connection getConnection(String connectionId) {
     return connections.get(connectionId);
 }
 
-public void remove(String connectionId) {
-    connections.remove(connectionId);
+public synchronized void unregister(String connectionId) {  // :147-162
+    Connection connection = connections.remove(connectionId);
+    if (connection != null) {
+        // 递减该 IP 连接计数、发布 ConnectionDisconnectedEvent
+        Loggers.REMOTE.info("[{}]Connection unregistered successfully.", connectionId);  // :159
+    }
 }
 ```
 
-**关键点**：`connections` 是一个以 `connectionId` 为 key 的 Map。正常情况下，客户端断连后服务端会通过连接关闭流程调用 `remove` 移除该连接。**若客户端异常退出（进程被 kill -9、网络闪断）而未触发关闭回调，对应的 `Connection` 对象就永久滞留在 Map 中**——随着时间推移，Map 中的无效连接越积越多，Old Gen 被持续撑大，最终 OOM。
+**关键点**：`connections` 是一个以 `connectionId` 为 key 的 Map。正常情况下，客户端断连后服务端会通过连接关闭流程调用 `unregister` 移除该连接（并递减 IP 计数、触发断连事件）。**若客户端异常退出（进程被 kill -9、网络闪断）而未触发关闭回调，对应的 `Connection` 对象就永久滞留在 Map 中**——随着时间推移，Map 中的无效连接越积越多，Old Gen 被持续撑大，最终 OOM。
 
 **排查印证**：在 MAT 中对 `Connection` 对象执行 `Path to GC Roots`，若引用链显示"被 `ConnectionManager.connections` 持有、且对应客户端已不在线"，即可确认该连接为泄漏对象。此时解决的思路是补全异常断开的清理逻辑：可结合连接健康检测与定期扫描，将长时间无心跳的陈旧连接从 `connections` 中移除。
 

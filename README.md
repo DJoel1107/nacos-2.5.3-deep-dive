@@ -44,10 +44,10 @@
 
 | 章号 | 文件 | 内容 | 状态 |
 |------|------|------|------|
-| 第13章 | `nacos-chapter-13.md` | 监控运维：Prometheus + Grafana、日志分析、告警配置 | ⬜ |
-| 第14章 | `nacos-chapter-14.md` | 故障排查指南：常见故障诊断流程、日志分析工具 | ⬜ |
-| 第15章 | — | Spring Cloud Alibaba 集成最佳实践 | ⬜ |
-| 第16章 | — | 附录：术语表、配置速查表、API 参考 | ⬜ |
+| 第13章 | `nacos-chapter-13.md` | 监控运维：Prometheus + Grafana、日志分析、告警配置 | ✅ |
+| 第14章 | `nacos-chapter-14.md` | 故障排查指南：常见故障诊断流程、日志分析工具 | ✅ |
+| 第15章 | `nacos-chapter-15.md` | Spring Cloud Alibaba 集成最佳实践 | ✅ |
+| 第16章 | `nacos-chapter-16.md` | 附录：API/SQL 速查、运维命令、迁移与 FAQ | ✅ |
 
 > **编号说明**：章节编号与 `nacos-doc-outline.md` 新大纲一致。由于旧版大纲将部分章节拆分（如认证安全/控制台分开），新大纲合并后章节总数从 15 章变为 16 章。文件编号沿用旧版序号，因此第6章和第8章的文件编号与内容章节号交叉（`nacos-chapter-06.md` = 持久化层第8章，`nacos-chapter-08.md` = 插件体系第6章）。
 
@@ -86,15 +86,20 @@
 │   ├── nacos-chapter-09.md      ✅ 第9章 全量配置项详解
 │   ├── nacos-chapter-10.md      ✅ 第10章 生产部署架构
 │   ├── nacos-chapter-11.md      ✅ 第11章 高可用架构设计
-│   └── nacos-chapter-12.md      ✅ 第12章 性能调优
-├── chapter-html/                 # HTML 格式输出（16 章全量）
-│   ├── index.html                ✅ 总目录页（含章节导航与字数统计）
+│   ├── nacos-chapter-12.md      ✅ 第12章 性能调优
+│   ├── nacos-chapter-13.md      ✅ 第13章 监控运维
+│   ├── nacos-chapter-14.md      ✅ 第14章 故障排查指南
+│   ├── nacos-chapter-15.md      ✅ 第15章 Spring Cloud Alibaba 集成
+│   └── nacos-chapter-16.md      ✅ 第16章 附录
+├── chapter-html/                 # HTML 格式输出（16 章全量，Wiki 三栏阅读站点）
+│   ├── index.html                ✅ 总目录页（含搜索与章节导航）
 │   ├── nacos-chapter-01.html     ✅ Swiss Style 排版
 │   └── nacos-chapter-01~16.html  ✅ 全 16 章
 ├── analysis/                     # 分析报告
-│   └── nacos-2.2.3-to-2.5.3-diff.md
-├── upstream/                    # 上游源码
-│   └── nacos-2.5.3/             # Nacos 2.5.3 源码（2,460 Java 文件）
+│   ├── nacos-2.2.3-to-2.5.3-diff.md
+│   └── 源码一致性核查修复报告.md   # 16 章正文 vs 源码核查与修复记录
+├── src/                         # 源码
+│   └── nacos-2.5.3-src/         # Nacos 2.5.3 源码（2,460 Java 文件）
 ├── build/                       # 构建 / 导出脚本
 │   ├── build-html.sh            ✅ MD → HTML 批量转换（pandoc + Swiss Style 模板）
 │   ├── pandoc-swiss-template.html  ✅ pandoc HTML 模板（Swiss Style CSS）
@@ -115,14 +120,16 @@
 ### 重新生成
 
 ```bash
-# 1. 批量转换 16 章 MD → HTML
-bash build/build-html.sh
+# 一键构建：MD → HTML（pandoc）→ 总目录页 → Wiki 站点（三栏布局 + 搜索索引）
+bash build/build-wiki.sh
 
-# 2. 生成总目录页
-python3 build/gen-index.py
+# 或分步执行：
+bash build/build-html.sh      # 1. 批量转换 16 章 MD → HTML
+python3 build/gen-index.py    # 2. 生成总目录页 index.html
+python3 build/build-wiki.py   # 3. 注入 Wiki 壳（侧栏/面包屑/搜索/pager）
 ```
 
-依赖：`pandoc`（3.6.2 已验证）。
+依赖：`pandoc`（3.6.2+ 已验证）。
 
 ## 📝 文档特点
 

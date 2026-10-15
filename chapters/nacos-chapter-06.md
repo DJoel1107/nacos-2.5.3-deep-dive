@@ -2,11 +2,11 @@
 
 ### 6.1.1 设计背景
 
-Nacos 2.5.3 将持久化层从 `config` 模块中独立抽取为 `persistence/` 独立模块（72 个 Java 文件），这是 2.5.x 相比 2.2.x 最重大的架构变更之一。在 2.2.x 中，数据库操作散落在 `config` 模块的 `ExternalDataSourceServiceImpl` 和嵌入式 Derby 相关类中，缺乏统一的数据源抽象和 SQL 构造规范。2.5.3 的 `persistence/` 模块提供：
+Nacos 2.5.3 将持久化层从 `config` 模块中独立抽取为 `persistence/` 独立模块（72 个 Java 文件——37 个主代码 + 35 个测试），这是 2.5.x 相比 2.2.x 最重大的架构变更之一。在 2.2.x 中，数据库操作散落在 `config` 模块的 `ExternalDataSourceServiceImpl` 和嵌入式 Derby 相关类中，缺乏统一的数据源抽象和 SQL 构造规范。2.5.3 的 `persistence/` 模块提供：
 
 1. **统一数据源抽象**：`DataSourceService` 接口定义 `JdbcTemplate`、`TransactionTemplate`、健康检查等核心能力，`LocalDataSourceServiceImpl`（嵌入式 Derby）和 `ExternalDataSourceServiceImpl`（外部 MySQL）两种实现。
-2. **条件注入机制**：通过 `@ConditionOnEmbeddedStorage`/`@ConditionOnExternalStorage` 等条件注解，根据配置自动选择嵌入式或外部存储实现。
-3. **SQL 构造模型**：`ModifyRequest`/`SelectRequest`/`QueryType` 提供类型安全的 SQL 构造 DSL。
+2. **条件选择机制**：`DatasourceConfiguration`（`ApplicationContextInitializer`）在容器启动前读取 `platform` 配置置位静态标志——`ConditionOnEmbeddedStorage` 等 `Condition` 实现类据此判断——`DynamicDataSource` 按标志选择嵌入式或外部存储实现。
+3. **SQL 构造模型**：`ModifyRequest`/`SelectRequest`/`QueryType` 提供 SQL + 参数数组的可序列化构造模型。
 4. **分页助手**：`EmbeddedPaginationHelperImpl`（嵌入式 Derby 分页）和 `ExternalStoragePaginationHelperImpl`（外部 MySQL 分页）。
 5. **事件体系**：`DerbyImportEvent`/`DerbyLoadEvent`/`RaftDbErrorEvent` 支持 CP 一致性快照的导入导出。
 
@@ -14,27 +14,27 @@ Nacos 2.5.3 将持久化层从 `config` 模块中独立抽取为 `persistence/` 
 
 ### 6.1.2 核心类关系图
 
-图 6-1 展示了 `persistence/` 模块的顶层架构——`DataSourceService` 接口及其两大实现（`LocalDataSourceServiceImpl`/`ExternalDataSourceServiceImpl`），`DatasourceConfiguration` 通过条件注入选择实现，`PaginationHelper` 分页抽象，`ModifyRequest`/`SelectRequest` SQL 构造模型：
+图 6-1 展示了 `persistence/` 模块的顶层架构——`DataSourceService` 接口及其两大实现（`LocalDataSourceServiceImpl`/`ExternalDataSourceServiceImpl`），`DatasourceConfiguration` 通过静态标志 + `Condition` 实现类选择实现，`PaginationHelper` 分页抽象，`ModifyRequest`/`SelectRequest` SQL 构造模型：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence/ 模块顶层架构</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">@ConditionOnEmbeddedStorage → LocalDataSource</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnExternalStorage → ExternalDataSource</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionStandaloneEmbedStorage → Local+External</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionDistributedEmbedStorage → External</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(Derby 嵌入式)           (</div><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: 初始化</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Derby 数据库</div><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: 重载</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth()</div><div class="dgm-note" style="border:none;background:none;padding:0;">PaginationHelper&lt;T&gt; (a</div><div class="dgm-note" style="border:none;background:none;padding:0;">paginate(pageNo, pa</div><div class="dgm-note" style="border:none;background:none;padding:0;">findAll(criteria):</div><div class="dgm-note" style="border:none;background:none;padding:0;">findOne(criteria):</div><div class="dgm-note" style="border:none;background:none;padding:0;">count(criteria): in</div><div class="dgm-note" style="border:none;background:none;padding:0;">insert(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">update(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">delete(entity): Boo</div><div class="dgm-note" style="border:none;background:none;padding:0;">△</div><div class="dgm-note" style="border:none;background:none;padding:0;">EmbeddedPagination</div><div class="dgm-note" style="border:none;background:none;padding:0;">HelperImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">(Derby LIMIT</div><div class="dgm-note" style="border:none;background:none;padding:0;">OFFSET 语法)</div></div></div><div class="dgm-note">SQL 构造模型:</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest → INSERT/UPDATE/DELETE</span><span class="s">SelectRequest → SELECT + WHERE + ORDER BY + LIMIT</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">QueryType → 枚举（INSERT/UPDATE/DELETE/SELECT）</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">persistence/ 模块顶层架构</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">ApplicationContextInitializer</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">读 platform → 置静态标志 useExternalDB/embeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionOnEmbeddedStorage → matches(): isEmbeddedStorage()</div><div class="dgm-note" style="border:none;background:none;padding:0;">ConditionDistributedEmbedStorage / ConditionStandaloneEmbedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">DynamicDataSource 按 isEmbeddedStorage() 手动选择实现</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">(Derby 嵌入式)</div><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: 初始化</span></li><li><span class="fld">reload()</span><span class="typ">: 重载 derby-schema.sql</span></li><li><span class="fld">getHealth()</span><span class="typ">: 返回 healthStatus 字段</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">PaginationHelper&lt;E&gt; (interface)</div><div class="dgm-note" style="border:none;background:none;padding:0;">fetchPage × 2 / fetchPageLimit × 4</div><div class="dgm-note" style="border:none;background:none;padding:0;">updateLimit</div><div class="dgm-note" style="border:none;background:none;padding:0;">△</div><div class="dgm-note" style="border:none;background:none;padding:0;">EmbeddedPagination</div><div class="dgm-note" style="border:none;background:none;padding:0;">HelperImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">(持有 DatabaseOperate)</div></div></div><div class="dgm-note">SQL 构造模型:</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest → sql + args + rollBackOnUpdateFail</span><span class="s">SelectRequest → queryType(byte) + sql + args + className</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">QueryType → 常量类（byte 常量 0-5，对应 JdbcTemplate 方法）</div></div></div></div>
 
 ### 6.1.3 源码走读
 
 #### 6.1.3.1 模块边界与依赖
 
-`persistence/` 模块位于 `pom.xml` 中声明为独立 Maven 模块，不依赖 `naming`/`config`/`core` 等业务模块。模块内部仅依赖 Spring JDBC（`spring-jdbc`）、HikariCP（连接池）、Derby（嵌入式数据库）和 MySQL Connector（外部存储驱动）。
+`persistence/` 模块位于 `pom.xml` 中声明为独立 Maven 模块，不依赖 `naming`/`config`/`core` 等业务模块。模块内部除依赖 Spring JDBC（`spring-jdbc`）、HikariCP（连接池）、Derby（嵌入式数据库）和 MySQL Connector（外部存储驱动）外——还依赖 `nacos-sys`（`EnvUtil` 环境工具）、`nacos-consistency`、`nacos-datasource-plugin`（方言 SQL 生成）以及 `micrometer-core`（指标采集）——见 `persistence/pom.xml:33-70`。
 
 `DataSourceService`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourceService.java:30-87`）定义持久化层的统一契约——`init()` 初始化数据源、`getJdbcTemplate()` 获取 Spring `JdbcTemplate`、`getTransactionTemplate()` 获取事务模板、`getHealth()` 健康检查、`reload()` 重载配置。
 
-`DynamicDataSource`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DynamicDataSource.java:30-64`）继承 Spring `AbstractRoutingDataSource`，根据 `LookupKey` 上下文动态切换数据源（读写分离场景）。
+`DynamicDataSource`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DynamicDataSource.java:26-64`）并非 Spring `AbstractRoutingDataSource` 的子类——而是一个普通单例（私有构造 + `INSTANCE` 静态字段）：`getDataSource()`（`:40-62`）按 `DatasourceConfiguration.isEmbeddedStorage()` 静态标志在 `LocalDataSourceServiceImpl`（嵌入式 Derby）与 `ExternalDataSourceServiceImpl`（外部 MySQL）之间二选一——首次调用时惰性创建并调用 `init()`——之后返回同一实例。它不涉及 `LookupKey` 上下文，也不存在读写分离的主从数据源路由。
 
 ### 6.1.4 设计模式分析
 
-1. **策略模式（Strategy）**：`DataSourceService` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourceService.java:30-87`）定义统一契约——`init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`。`LocalDataSourceServiceImpl`（嵌入式 Derby）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP）两种策略实现——运行时通过 `@ConditionOnEmbeddedStorage`/`@ConditionOnExternalStorage` 等条件注解（`persistence/configuration/DatasourceConfiguration.java:30-89`）动态选择。策略模式使切换数据库仅需修改 `spring.datasource.platform` 配置项——无需修改任何 Java 代码。
+1. **策略模式（Strategy）**：`DataSourceService` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourceService.java:30-87`）定义统一契约——`init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`。`LocalDataSourceServiceImpl`（嵌入式 Derby）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP）两种策略实现——选择逻辑不在 Spring 条件注解中，而是由 `DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`，实现 `ApplicationContextInitializer`）在容器启动前读取 `platform` 配置置位静态标志 `useExternalDB`/`embeddedStorage`——`DynamicDataSource` 再按标志手动选择实现。切换数据库仅需修改 `spring.sql.init.platform`（或旧键 `spring.datasource.platform`）配置项——无需修改任何 Java 代码。
 
-2. **模板方法模式（Template Method）**：`PaginationHelper<T>` 抽象基类（`persistence/repository/PaginationHelper.java:28-80`）定义 `paginate()`/`findAll()`/`insert()`/`update()`/`delete()` 统一分页 CRUD 模板方法——`EmbeddedPaginationHelperImpl`（Derby `OFFSET...FETCH NEXT`）和 `ExternalStoragePaginationHelperImpl`（MySQL `LIMIT OFFSET`）各自实现 `generateLimitSql()` SQL 方言差异——子类仅覆盖分页 SQL 方言，其余 CRUD 逻辑由基类统一实现。
+2. **接口抽象模式（Interface Abstraction）**：`PaginationHelper<E>` 是接口（`persistence/repository/PaginationHelper.java:29-50`）——仅定义 `fetchPage()`×2、`fetchPageLimit()`×4 与 `updateLimit()` 分页契约——`EmbeddedPaginationHelperImpl`（嵌入式 Derby）和 `ExternalStoragePaginationHelperImpl`（外部 MySQL）各自实现该接口——方言分页 SQL 由 `nacos-datasource-plugin` 的 Mapper 生成后透传执行，实现类内部不拼接分页子句。
 
-3. **条件注入模式（Conditional Injection）**：`@ConditionOnEmbeddedStorage`/`@ConditionOnExternalStorage`/`@ConditionDistributedEmbedStorage`/`@ConditionStandaloneEmbedStorage` 四种条件注解（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45` 等）根据 `spring.datasource.platform` 配置项自动注入对应的 `DataSourceService` 实现——`DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`）通过 `@Bean` + 条件注解注册具体实现——无需手动切换。新增部署模式仅需新增一对条件注解 + `@Bean` 方法。
+3. **条件选择模式（Conditional Selection）**：`ConditionOnEmbeddedStorage`/`ConditionOnExternalStorage`/`ConditionDistributedEmbedStorage`/`ConditionStandaloneEmbedStorage` 是四个普通 Spring `Condition` 实现类（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35` 等）——而非 `@Conditional` 组合注解——其 `matches()` 仅读取 `DatasourceConfiguration` 的静态标志（`isEmbeddedStorage()`/`isUseExternalDB()` 及 standalone 判断）——静态标志由 `ApplicationContextInitializer` 在容器刷新前根据 `platform` 配置置定。新增部署模式仅需新增一个 `Condition` 实现类 + 对应的 `@Conditional` 引用点。
 
 ### 6.1.5 Trade-off 分析
 
@@ -44,33 +44,29 @@ Nacos 2.5.3 将持久化层从 `config` 模块中独立抽取为 `persistence/` 
 |---------|-----------------------------|---------------------------|--------------------------|
 | **模块边界** | ✅ 清晰独立——`persistence/` 零依赖 `config`/`naming`/`core` | ❌ 与 Config 业务耦合——数据库操作散落各处 | ✅ 完全物理隔离——独立版本管理 |
 | **数据源抽象** | ✅ `DataSourceService` 统一契约——`LocalDataSourceServiceImpl` + `ExternalDataSourceServiceImpl` | ❌ 无统一抽象——每个 DAO 各自管理 `DataSource` | ✅ 可独立定义更强抽象 |
-| **SQL 构造** | ✅ `ModifyRequest`/`SelectRequest` Builder DSL——类型安全 + SQL 注入防护 | ❌ 拼字符串 SQL——SQL 注入风险 + 维护困难 | ✅ 可独立演进 SQL DSL |
+| **SQL 构造** | ✅ `ModifyRequest`/`SelectRequest` SQL 构造模型——SQL + 参数化绑定，杜绝 SQL 注入 | ❌ 拼字符串 SQL——SQL 注入风险 + 维护困难 | ✅ 可独立演进 SQL DSL |
 | **条件注入** | ✅ `@Condition` 自动选择实现——修改配置即可切换数据库 | ❌ 手动 `if/else` 判断——切换数据库需修改代码 | ✅ 可独立设计更灵活的条件注入 |
-| **测试覆盖** | ✅ 72 个测试文件——`persistence/src/test/` 独立测试 | ❌ 分散在各业务模块测试中——测试不集中 | ✅ 独立测试仓库——CI/CD 独立运行 |
+| **测试覆盖** | ✅ 35 个测试文件——`persistence/src/test/` 独立测试 | ❌ 分散在各业务模块测试中——测试不集中 | ✅ 独立测试仓库——CI/CD 独立运行 |
 | **版本管理** | ✅ 与 Nacos 主仓库统一版本——`<version>2.5.3</version>` | ❌ 版本与 Config 模块耦合 | ⚠️ 需独立版本管理 + 跨仓库依赖协调 |
 
 Nacos 2.5.3 选择独立 Maven 模块而非完全分离 Git 仓库：`persistence/` 仍需依赖 `common` 模块（`NacosServiceLoader`/`NotifyCenter`/`EnvUtil`）——完全分离需复制 `common` 模块导致版本分裂。独立 Maven 模块在保持统一版本管理前提下获得模块边界清晰、独立测试、零业务依赖三重收益。代价是 `persistence/` 需跟随 Nacos 主版本发布节奏——无法独立发布 hotfix。
 
 ### 6.1.6 小结
 
-Nacos 2.5.3 将持久化层从 `config` 模块独立抽取为 `persistence/` 独立 Maven 模块（72 个 Java 文件 + 72 个测试文件）——提供 `DataSourceService` 统一数据源抽象（`persistence/datasource/DataSourceService.java:30-87`）、`@ConditionOnEmbeddedStorage`/`@ConditionOnExternalStorage` 等四种条件注解（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）、`PaginationHelper<T>` 模板方法分页抽象（`persistence/repository/PaginationHelper.java:28-80`）、`ModifyRequest`/`SelectRequest` Builder DSL SQL 构造（`persistence/repository/embedded/sql/ModifyRequest.java:30-126`）。`LocalDataSourceServiceImpl`（嵌入式 Derby，`persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP，`persistence/datasource/ExternalDataSourceServiceImpl.java:50-306`）两种策略实现——通过 `DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`）四种条件注解覆盖单机/集群/分布式三种部署模式。
+Nacos 2.5.3 将持久化层从 `config` 模块独立抽取为 `persistence/` 独立 Maven 模块（72 个 Java 文件：37 主代码 + 35 测试）——提供 `DataSourceService` 统一数据源抽象（`persistence/datasource/DataSourceService.java:30-87`）、四个 `Condition` 实现类（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35` 等）、`PaginationHelper<E>` 分页接口（`persistence/repository/PaginationHelper.java:29-50`）、`ModifyRequest`/`SelectRequest` SQL 构造模型（`persistence/repository/embedded/sql/ModifyRequest.java:28-83`）。`LocalDataSourceServiceImpl`（嵌入式 Derby，`persistence/datasource/LocalDataSourceServiceImpl.java:52-270`）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP，`persistence/datasource/ExternalDataSourceServiceImpl.java:50-306`）两种策略实现——通过 `DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`，`ApplicationContextInitializer`）在容器启动前置位静态标志——覆盖单机/集群嵌入式/集群外部库三种部署模式。
 ### 6.2.1 设计背景
 
-`DatasourceConfiguration`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/DatasourceConfiguration.java:30-89`）是 `persistence/` 模块的配置入口——通过 Spring `@Condition` 条件注解机制，根据 `spring.datasource.platform` 配置项自动选择嵌入式 Derby（`LocalDataSourceServiceImpl`）或外部 MySQL（`ExternalDataSourceServiceImpl`）数据源实现。四种条件注解覆盖四种部署模式：
+`DatasourceConfiguration`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/DatasourceConfiguration.java:30-89`）是 `persistence/` 模块的配置入口——但它既不是 `@Configuration` 配置类，也不定义任何 `@Bean` 方法——而是实现 Spring 的 `ApplicationContextInitializer<ConfigurableApplicationContext>`。它在 Spring 容器刷新前的极早期阶段被回调——`initialize()`（`:85-88`）调用 `loadDatasourceConfiguration()`（`:58-83`）读取数据源平台配置并置位两个静态标志——`useExternalDB` 与 `embeddedStorage`（后者初值取 `EnvUtil.getStandaloneMode()`，`:40`）。选择机制分三步：
 
-1. **`@ConditionOnEmbeddedStorage`**（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）：嵌入式存储——Derby。`EmbeddedStorageCondition.matches()` 读取 `spring.datasource.platform`——为空字符串或 `"derby"` 时返回 `true`——适用于单机和集群模式使用嵌入式 Derby。
-2. **`@ConditionOnExternalStorage`**（`persistence/configuration/condition/ConditionOnExternalStorage.java:25-45`）：外部存储——MySQL。`ExternalStorageCondition.matches()` 读取 `spring.datasource.platform=mysql` 时返回 `true`——适用于集群模式使用外部 MySQL + HikariCP 连接池。
-3. **`@ConditionDistributedEmbedStorage`**：分布式嵌入式存储——CP 一致性快照存储。需同时满足 `spring.datasource.platform=derby` AND `spring.nacos.cluster=true`——嵌入式 Derby + 外部 MySQL 双写——JRaft 快照持久化场景——Leader 使用嵌入式 Derby 存储快照 + 外部 MySQL 存储业务数据。
-4. **`@ConditionStandaloneEmbedStorage`**：单机嵌入式存储——仅嵌入式 Derby。`spring.datasource.platform` 未配置时的默认 fallback——单机模式——无 MySQL 外部依赖——零运维、零配置。
-
-`DatasourceConfiguration` 通过 `@Bean` + 条件注解注册对应的 `DataSourceService` 实现——`localDataSourceService()`（:`40-55`）返回 `LocalDataSourceServiceImpl`——`externalDataSourceService()`（:`60-75`）返回 `ExternalDataSourceServiceImpl`。条件注入模式将部署模式选择逻辑集中在条件注解的实现类中——切换部署模式仅需修改 `application.properties` 中的一个配置项——无需修改任何 Java 代码。
+1. **置标志**：`loadDatasourceConfiguration()` 经 `DatasourcePlatformUtil.getDatasourcePlatform("")` 读取 `spring.sql.init.platform`（旧键 `spring.datasource.platform` 兜底）——平台非空且非 `derby`（如 `mysql`）→ `useExternalDB=true`；否则进入嵌入式分支——`embeddedStorage` 在 standalone 初值基础上叠加 `-DembeddedStorage=true` 系统属性——若最终未开启嵌入式存储则自动升级为 `useExternalDB=true`（`:71-81`，集群模式下 platform 为空或 derby 时自动切外部数据源的兼容逻辑）。
+2. **读标志**：四个普通 `Condition` 实现类（非注解）评估静态标志——`ConditionOnEmbeddedStorage.matches()` 仅返回 `DatasourceConfiguration.isEmbeddedStorage()`（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35`）；`ConditionDistributedEmbedStorage` 为 `isEmbeddedStorage() && !getStandaloneMode()`（集群 + 嵌入式 JRaft 场景）；`ConditionStandaloneEmbedStorage` 为 `isEmbeddedStorage() && getStandaloneMode()`；`ConditionOnExternalStorage` 对应外部数据库分支。
+3. **选实现**：`DynamicDataSource.getInstance().getDataSource()`（`DynamicDataSource.java:40-62`）按 `isEmbeddedStorage()` 手动 `new LocalDataSourceServiceImpl` 或 `new ExternalDataSourceServiceImpl` 并调用 `init()`——两个 `ServiceImpl` 均无 `@Service`/`@Conditional` 注解，不走 Spring Bean 装配；`Condition` 类则被 `@Conditional` 引用（如 `StandaloneDatabaseOperateImpl.java:53` 的 `@Conditional(ConditionStandaloneEmbedStorage.class)`）。
 
 ### 6.2.2 核心类关系图
-### 6.2.2 核心类关系图
 
-图 6-2 展示了 `DatasourceConfiguration` 通过 `@Condition` 条件注解自动选择数据源实现的机制：
+图 6-2 展示了 `DatasourceConfiguration` 通过静态标志 + `Condition` 实现类选择数据源实现的机制：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">@Bean</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnEmbeddedStorage</div><ul class="dgm-kv"><li><span class="fld">localDataSourceService()</span><span class="typ">: LocalDataSourceServiceImpl</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">@Bean</div><div class="dgm-note" style="border:none;background:none;padding:0;">@ConditionOnExternalStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">externalDataSourceService(): ExternalDataSourceService</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Condition 条件注解映射表</span><span class="s">配置项: spring.datasource.platform</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">"" (空)         → @ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"derby"          → @ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"mysql"          → @ConditionOnExternalStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">"distributed"    → @ConditionDistributedEmbed</div><div class="dgm-note" style="border:none;background:none;padding:0;">未配置(standalone)→ @ConditionStandaloneEmbed</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DatasourceConfiguration</span><span class="s">implements ApplicationContextInitializer</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">initialize() → loadDatasourceConfiguration()</div><div class="dgm-note" style="border:none;background:none;padding:0;">读 platform（spring.sql.init.platform → spring.datasource.platform）</div><div class="dgm-note" style="border:none;background:none;padding:0;">静态标志: useExternalDB / embeddedStorage(初值 = standalone)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Condition 实现类映射表</span><span class="s">matches() 读静态标志</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">platform 非空且非 derby → useExternalDB=true</div><div class="dgm-note" style="border:none;background:none;padding:0;">platform 空/derby + standalone → embeddedStorage=true</div><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage()          → ConditionOnEmbeddedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage()+standalone → ConditionStandaloneEmbedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage()+!standalone→ ConditionDistributedEmbedStorage</div><div class="dgm-note" style="border:none;background:none;padding:0;">!useExternalDB=false 分支     → ConditionOnExternalStorage</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DynamicDataSource (单例)</span><span class="s">getDataSource() 惰性选择</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage()=true  → new LocalDataSourceServiceImpl().init()</div><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage()=false → new ExternalDataSourceServiceImpl().init()</div></div></div></div>
 
 ### 6.2.3 源码走读
 
@@ -79,86 +75,94 @@ Nacos 2.5.3 将持久化层从 `config` 模块独立抽取为 `persistence/` 独
 `DatasourceConfiguration`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/DatasourceConfiguration.java:30-89`）：
 
 ```java
-@Configuration
-public class DatasourceConfiguration {
+public class DatasourceConfiguration implements ApplicationContextInitializer<ConfigurableApplicationContext> {
     
-    // line 40-55: 嵌入式存储（Derby）——单机/集群默认
-    @Bean
-    @ConditionOnEmbeddedStorage
-    public DataSourceService localDataSourceService() {
-        return new LocalDataSourceServiceImpl();
-    }
+    // line 35-40: 两个静态标志——embeddedStorage 初值 = ${nacos.standalone}
+    public static boolean useExternalDB = false;
+    public static boolean embeddedStorage = EnvUtil.getStandaloneMode();
     
-    // line 60-75: 外部存储（MySQL）——集群模式使用外部 MySQL
-    @Bean
-    @ConditionOnExternalStorage
-    public DataSourceService externalDataSourceService() {
-        return new ExternalDataSourceServiceImpl();
-    }
-}
-```
-
-#### 6.2.3.2 ConditionOnEmbeddedStorage 条件注解
-
-`ConditionOnEmbeddedStorage`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）：
-
-```java
-@Conditional(ConditionOnEmbeddedStorage.EmbeddedStorageCondition.class)
-public @interface ConditionOnEmbeddedStorage {
-    
-    class EmbeddedStorageCondition implements Condition {
-        @Override
-        public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
-            // line 35: 读取 spring.datasource.platform 配置
-            String platform = context.getEnvironment()
-                .getProperty("spring.datasource.platform", "");
-            // line 40: 空字符串 或 "derby" → 使用嵌入式存储
-            return StringUtils.isBlank(platform) || "derby".equalsIgnoreCase(platform);
+    // line 58-83: 容器刷新前读取 platform 配置并置位标志
+    private void loadDatasourceConfiguration() {
+        // 外部数据源在集群模式下默认使用
+        String platform = DatasourcePlatformUtil.getDatasourcePlatform("");
+        boolean useExternalStorage =
+                !PersistenceConstant.EMPTY_DATASOURCE_PLATFORM.equalsIgnoreCase(platform) && !PersistenceConstant.DERBY
+                        .equalsIgnoreCase(platform);
+        setUseExternalDB(useExternalStorage);
+        
+        if (isUseExternalDB()) {
+            setEmbeddedStorage(false);
+        } else {
+            boolean embeddedStorage = isEmbeddedStorage() || Boolean.getBoolean(PersistenceConstant.EMBEDDED_STORAGE);
+            setEmbeddedStorage(embeddedStorage);
+            // 若未开启嵌入式数据源存储，则自动升级为外部数据源存储（兼容集群模式 platform 为空/derby）
+            if (!embeddedStorage) {
+                setUseExternalDB(true);
+            }
         }
     }
+    
+    @Override
+    public void initialize(final ConfigurableApplicationContext applicationContext) {
+        loadDatasourceConfiguration();
+    }
 }
 ```
 
-**`ConditionOnExternalStorage`**（`persistence/.../condition/ConditionOnExternalStorage.java`）：当 `spring.datasource.platform=mysql` 时注入 `ExternalDataSourceServiceImpl`。
+#### 6.2.3.2 ConditionOnEmbeddedStorage 条件类
+
+`ConditionOnEmbeddedStorage`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35`）是普通 `Condition` 实现类——不是 `@Conditional` 组合注解：
+
+```java
+public class ConditionOnEmbeddedStorage implements Condition {
+    
+    @Override
+    public boolean matches(ConditionContext context, AnnotatedTypeMetadata metadata) {
+        // line 33: 仅读取 DatasourceConfiguration 静态标志
+        return DatasourceConfiguration.isEmbeddedStorage();
+    }
+}
+```
+
+platform 的判定不在 `matches()` 中——而是在更早的 `DatasourceConfiguration.loadDatasourceConfiguration()`（经 `DatasourcePlatformUtil`，`persistence/utils/DatasourcePlatformUtil.java:36-42`）完成。**`ConditionOnExternalStorage`**（`persistence/.../condition/ConditionOnExternalStorage.java`）：同样仅读取静态标志——外部数据库分支时返回 `true`，供 `@Conditional` 引用点（如数据库操作实现类）评估。
 
 ### 6.2.4 设计模式分析
 
-1. **条件注入模式（Conditional Injection）**：Spring `@Conditional` 机制 + 自定义 `Condition` 实现（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45` 等）——`DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`）在每个 `@Bean` 方法上标注 `@ConditionOnXxx`——Spring 容器启动时评估 `matches(ConditionContext, AnnotatedTypeMetadata)` 返回值——返回 `true` 时创建对应的 `DataSourceService` Bean——返回 `false` 时跳过该 Bean 的创建。条件注入将部署模式选择逻辑集中在条件注解的实现类中——切换部署模式仅需修改 `application.properties` 中的一个配置项——无需修改任何 Java 代码——实现了配置驱动（Configuration-Driven）的依赖注入。
+1. **条件注入模式（Conditional Injection）**：Spring `@Conditional` 机制 + 自定义 `Condition` 实现（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35` 等）——区别于常见做法的是：Nacos 把"配置读取"前移到 `ApplicationContextInitializer`（`DatasourceConfiguration.java:30-89`）——容器刷新前即完成静态标志置位——各 `Condition.matches()` 只做标志读取，避免条件评估阶段重复解析环境配置。`@Conditional` 引用点（如 `StandaloneDatabaseOperateImpl.java:53` 的 `@Conditional(ConditionStandaloneEmbedStorage.class)`）在 Bean 注册阶段评估——返回 `false` 时跳过对应 Bean 的创建。
 
-2. **工厂模式（Factory）**：`DatasourceConfiguration` 作为工厂类——通过 `@Bean` 注解生产 `DataSourceService` Bean——`localDataSourceService()`（`:40-55`）返回 `LocalDataSourceServiceImpl`——`externalDataSourceService()`（`:60-75`）返回 `ExternalDataSourceServiceImpl`。工厂模式封装了 `DataSourceService` 的创建逻辑——调用方（`EmbeddedPaginationHelperImpl`/`ExternalStoragePaginationHelperImpl`）通过 `@Autowired` 注入 `DataSourceService`——无需了解具体是 `LocalDataSourceServiceImpl` 还是 `ExternalDataSourceServiceImpl`——工厂自动根据配置选择正确的实现。
+2. **工厂模式（Factory）**：`DynamicDataSource`（`persistence/.../datasource/DynamicDataSource.java:26-64`）作为单例工厂——按 `isEmbeddedStorage()` 标志手动 `new` 出 `LocalDataSourceServiceImpl` 或 `ExternalDataSourceServiceImpl` 并惰性调用 `init()`。两个 `ServiceImpl` 不是 Spring Bean——调用方（如 `StandaloneDatabaseOperateImpl` 的 `@PostConstruct`）通过 `DynamicDataSource.getInstance().getDataSource()` 获取——工厂封装了具体实现的创建与初始化时序。
 
-3. **策略模式（Strategy）**：`DataSourceService` 接口（`persistence/datasource/DataSourceService.java:30-87`）定义统一契约——`init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`——`LocalDataSourceServiceImpl`（嵌入式 Derby）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP）两种策略实现——通过 `@ConditionOnEmbeddedStorage`/`@ConditionOnExternalStorage` 条件注解动态选择——运行时无需 `if/else` 判断——新增第三数据库（如 PostgreSQL）仅需新增一对条件注解 + `@Bean` 方法——符合开闭原则（Open-Closed Principle）——对扩展开放——对修改关闭。
+3. **策略模式（Strategy）**：`DataSourceService` 接口（`persistence/datasource/DataSourceService.java:30-87`）定义统一契约——`init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`——`LocalDataSourceServiceImpl`（嵌入式 Derby）和 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP）两种策略实现——切换部署模式仅需修改 `spring.sql.init.platform`（或旧键 `spring.datasource.platform`）配置项——符合开闭原则（Open-Closed Principle）——对扩展开放——对修改关闭。
 
 ### 6.2.5 Trade-off 分析
 
-**表 6.2：条件注入 vs 手动切换 trade-off**
+**表 6.2：静态标志 + Condition vs 手动切换 trade-off**
 
-| 权衡维度 | @Condition 条件注入（Nacos 2.5.3 选择） | 手动 if/else 切换 | Spring Profiles |
+| 权衡维度 | ApplicationContextInitializer + Condition（Nacos 2.5.3 选择） | 手动 if/else 切换 | Spring Profiles |
 |---------|---------------------|-------------------|----------------|
-| **扩展性** | ✅ 新增部署模式只需新增 Condition + Bean——无需修改现有 `DatasourceConfiguration.java:30-89` | ❌ 需修改所有切换判断点——改动散落各处 | ⚠️ 新增 `application-{profile}.properties` |
-| **配置灵活性** | ✅ 通过 `spring.datasource.platform` 配置切换——零代码改动 | ❌ 需修改代码硬编码 `if/else` 分支 | ✅ 通过 `spring.profiles.active` 配置切换 |
-| **测试隔离** | ✅ 每个 Condition 可独立单元测试——Mock 掉其他条件注解 | ❌ 需模拟所有分支——初始化全部 DatasourceConfiguration | ✅ Profile-by-profile 隔离测试 |
-| **复合条件** | ✅ `matches()` 可评估多条件 AND/OR——`@ConditionDistributedEmbedStorage` = `platform=derby` AND `cluster=true` | ❌ 手动嵌套 `if/else`——可读性差 | ❌ 单一 `spring.profiles.active` 值——无法表达复合条件 |
-| **可读性** | ✅ 条件注解名称自文档化（`@ConditionOnEmbeddedStorage` 明确表达意图） | ❌ `if/else` 散落各处——需阅读所有工厂方法 | ⚠️ Profile 命名需约定规范（无编译期检查） |
-| **编译期安全** | ✅ 条件注解在 Spring 容器启动时评估——`matches()=false` 时不创建 Bean | ❌ 运行时 `if/else` 判断——编译期零安全保障 | ✅ 同 `@Condition` |
+| **扩展性** | ✅ 新增部署模式只需新增 Condition 实现类 + `@Conditional` 引用——无需修改 `DatasourceConfiguration.java:30-89` 标志逻辑 | ❌ 需修改所有切换判断点——改动散落各处 | ⚠️ 新增 `application-{profile}.properties` |
+| **配置灵活性** | ✅ 通过 `spring.sql.init.platform`（旧键 `spring.datasource.platform` 兜底）配置切换——零代码改动 | ❌ 需修改代码硬编码 `if/else` 分支 | ✅ 通过 `spring.profiles.active` 配置切换 |
+| **时序确定性** | ✅ 标志在容器刷新前置位——条件评估阶段（`matches()`）读静态标志零开销、结果确定 | ❌ 运行时逐点判断——各处时序不一致 | ⚠️ Profile 依赖 Environment 就绪时机 |
+| **复合条件** | ✅ `Condition` 实现类可组合静态标志（如 `isEmbeddedStorage() && !getStandaloneMode()`）表达复合场景 | ❌ 手动嵌套 `if/else`——可读性差 | ❌ 单一 `spring.profiles.active` 值——无法表达复合条件 |
+| **可读性** | ✅ 条件类名称自文档化（`ConditionOnEmbeddedStorage` 明确表达意图） | ❌ `if/else` 散落各处——需阅读所有工厂方法 | ⚠️ Profile 命名需约定规范（无编译期检查） |
+| **编译期安全** | ✅ 条件在 Spring 容器启动时评估——`matches()=false` 时不创建 Bean | ❌ 运行时 `if/else` 判断——编译期零安全保障 | ✅ 同 `@Conditional` 机制 |
 
-Nacos 2.5.3 选择 `@Condition` 而非 Spring Profiles：`@Condition.matches()` 可在运行时动态评估多个条件组合——Spring Profiles 仅支持单一 `spring.profiles.active` 值——无法表达复合条件。`DatasourceConfiguration`（`:30-89`）通过四种 `@Condition` 注解集中管理所有 `@Bean` 工厂方法——条件逻辑与 Bean 创建物理分离——修改条件逻辑无需修改 Bean 创建代码。
+Nacos 2.5.3 选择 `ApplicationContextInitializer` + 静态标志而非 Spring Profiles：数据源选择必须在容器刷新前确定（`LocalDataSourceServiceImpl` 等类在非 Bean 上下文中被手动创建）——`ApplicationContextInitializer` 恰好提供这一极早回调时机。`DatasourceConfiguration`（`:30-89`）将 platform 解析逻辑集中在一处——`Condition` 实现类只做标志读取——条件逻辑与标志置定物理分离——修改条件逻辑无需触碰配置解析代码。
 
 ### 6.2.6 小结
 
-`DatasourceConfiguration`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/DatasourceConfiguration.java:30-89`）通过 Spring `@Condition` 条件注解机制——根据 `spring.datasource.platform`（由 `DatasourcePlatformUtil.getDatasourcePlatform()`，`persistence/utils/DatasourcePlatformUtil.java:36-46` 读取）动态注入 `LocalDataSourceServiceImpl`（嵌入式 Derby）或 `ExternalDataSourceServiceImpl`（外部 MySQL + HikariCP）。四种条件注解——`@ConditionOnEmbeddedStorage`（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）/`@ConditionOnExternalStorage`（`persistence/configuration/condition/ConditionOnExternalStorage.java:25-45`）/`@ConditionDistributedEmbedStorage`/`@ConditionStandaloneEmbedStorage`——覆盖单机/集群/分布式三种部署模式——实现数据源选择与业务逻辑的完全解耦。`DatasourceConfiguration` 通过策略模式切换 `DataSourceService` 实现——`localDataSourceService()`（`:40-55`）返回 `LocalDataSourceServiceImpl`——`externalDataSourceService()`（`:60-75`）返回 `ExternalDataSourceServiceImpl`——条件注解的 `matches()` 方法在 Spring 容器启动时评估——返回 `false` 时不创建对应的 Bean——节省内存开销。
+`DatasourceConfiguration`（`persistence/src/main/java/com/alibaba/nacos/persistence/configuration/DatasourceConfiguration.java:30-89`）实现 `ApplicationContextInitializer`——容器刷新前经 `loadDatasourceConfiguration()` 读取 `spring.sql.init.platform`（由 `DatasourcePlatformUtil.getDatasourcePlatform()`，`persistence/utils/DatasourcePlatformUtil.java:36-42` 读取，旧键 `spring.datasource.platform` 兜底）并置位静态标志 `useExternalDB`/`embeddedStorage`——集群模式下 platform 为空或 derby 时自动升级为外部数据源（`:71-81`）。四个 `Condition` 实现类——`ConditionOnEmbeddedStorage`（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:29-35`，仅返回 `isEmbeddedStorage()`）/`ConditionOnExternalStorage`/`ConditionDistributedEmbedStorage`（`isEmbeddedStorage() && !getStandaloneMode()`）/`ConditionStandaloneEmbedStorage`（`isEmbeddedStorage() && getStandaloneMode()`）——供 `@Conditional` 引用点评估，覆盖单机嵌入式/集群嵌入式/集群外部库三种部署模式。`DynamicDataSource`（单例）按标志手动 `new` 并初始化 `LocalDataSourceServiceImpl` 或 `ExternalDataSourceServiceImpl`——两个实现均非 Spring Bean——实现数据源选择与业务逻辑的完全解耦。
 
 
 ### 6.3.1 设计背景
 
-`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）是 `DataSourceService` 接口的嵌入式 Derby 实现——适用于单机模式和测试环境。嵌入式 Derby 数据库存储在 `$NACOS_HOME/data/derby/` 目录——无需用户安装和配置独立数据库服务器——实现零配置内嵌数据库。`init()`（:`70-180`）通过 Apache Derby API 的 `EmbeddedDataSourceFactory` 创建 `BasicEmbeddedDataSource40` 实例（`derby-10.14.2.0.jar`）——构造函数指定数据库名称（`nacos/config`）和创建策略（`create=true`——首次启动自动创建数据库文件）——随后执行 DDL 建表脚本（`persistence/src/main/resources/META-INF/schema.sql`）自动创建 `config_info`/`config_tags_relation`/`his_config_info` 等业务表。`getHealth()`（:`190-200`）通过 `SELECT 1` 执行健康检查——探测嵌入式 Derby 数据库连接可用性。`reload()`（:`230-250`）关闭旧 `BasicEmbeddedDataSource40` + 重新调用 `init()`——支持运行时动态重载数据源配置（如切换 Derby 数据库文件路径）。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal<EmbeddedStorageContext>` 持有嵌入式存储上下文——包含当前线程的 `DataSource`/`JdbcTemplate`/`TransactionTemplate`——保证 Web 请求线程安全。通过 `@ConditionOnEmbeddedStorage` 条件注解（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）在 `spring.datasource.platform` 为空或 `derby` 时自动注入。
+`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:52-270`）是 `DataSourceService` 接口的嵌入式 Derby 实现——适用于单机模式和测试环境。嵌入式 Derby 数据库存储在 `$NACOS_HOME/data/derby-data/` 目录（`PersistenceConstant.DERBY_BASE_DIR`，`PersistenceConstant.java:46`）——无需用户安装和配置独立数据库服务器——实现零配置内嵌数据库。`init()`（`:78-89`）拼接 `jdbc:derby:${nacos.home}/data/derby-data;create=true` 的 JDBC URL（`create=true`——首次启动自动创建数据库文件）——经 `DataSourcePoolProperties.build()`（`:149-155`）构建 `HikariDataSource` 连接池（驱动 `org.apache.derby.jdbc.EmbeddedDriver`、用户名/密码均为 `nacos`）——`initialize()` 末尾调用 `reload()`（`:170`）执行 DDL 建表脚本 `derby-schema.sql` 自动创建 `config_info`/`config_tags_relation`/`his_config_info` 等业务表。`getHealth()`（`:193-196`）仅返回 `healthStatus` 字段（初始 `"UP"`）——不做实时探测。`reload()`（`:91-105`）重新执行 derby-schema.sql 建表脚本——幂等地补齐缺失表结构。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过 `ThreadLocal<ArrayList<ModifyRequest>>`（`SQL_CONTEXT`）与 `ThreadLocal<Map<String, String>>`（`EXTEND_INFO_CONTEXT`）按线程累积待执行的 SQL 与扩展信息——供 `blockUpdate()` 一次性提交。`LocalDataSourceServiceImpl` 不通过 `@Conditional` 注入为 Spring Bean——而是由 `DynamicDataSource.getInstance().getDataSource()` 在 `isEmbeddedStorage()` 为 true 时惰性创建（`DynamicDataSource.java:46-51`）。
 
-### 6.3.2 核心类关系图
 ### 6.3.2 核心类关系图
 
 图 6-3 展示了 `DataSourceService` 接口与 `DynamicDataSource` 的关系：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">jdbcTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">transactionTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">Derby JDBC 连接</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">重载 Derby 配置</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">Derby 连接健康检查</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DynamicDataS</span><span class="s">extends AbstractRoutingD</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">determineCurrentLooku</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ LookupContextHolde</div><ul class="dgm-kv"><li><span class="fld">masterDataSource</span><span class="typ">: Dat</span></li></ul><ul class="dgm-kv"><li><span class="fld">slaveDataSource</span><span class="typ">: Data</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">afterPropertiesSet():</div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">init()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">reload()</span><span class="typ">: void</span></li></ul><ul class="dgm-kv"><li><span class="fld">checkMasterWritable()</span><span class="typ">: boolean</span></li></ul><ul class="dgm-kv"><li><span class="fld">getJdbcTemplate()</span><span class="typ">: JdbcTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getTransactionTemplate()</span><span class="typ">: TransactionTemplate</span></li></ul><ul class="dgm-kv"><li><span class="fld">getCurrentDbUrl()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getHealth()</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">getDataSourceType()</span><span class="typ">: String</span></li></ul></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSource</span><span class="s">ServiceImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">jdbcTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">transactionTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">HikariDataSource(Derby)</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">重执行 derby-schema.sql</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">返回 healthStatus 字段</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">DynamicDataSource</span><span class="s">普通单例（私有构造 + INSTANCE）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">getDataSource():</div><div class="dgm-note" style="border:none;background:none;padding:0;">isEmbeddedStorage() ?</div><div class="dgm-note" style="border:none;background:none;padding:0;">new LocalDataSourceServiceImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">: new ExternalDataSourceServiceImpl</div><div class="dgm-note" style="border:none;background:none;padding:0;">惰性创建 + init()</div></div></div></div></div></div>
 
 ### 6.3.3 源码走读
 
@@ -166,50 +170,63 @@ Nacos 2.5.3 选择 `@Condition` 而非 Spring Profiles：`@Condition.matches()` 
 
 `DataSourceService`（`persistence/.../datasource/DataSourceService.java:30-87`）定义统一数据源抽象：
 
-- `init()`：初始化数据源（Derby JDBC 连接 or HikariCP 连接池）
-- `reload()`：重载配置（连接池参数变更时重新初始化）
-- `checkMasterWritable()`：检查主库是否可写（读写分离场景）
+- `init()`：初始化数据源（Derby 嵌入式 or HikariCP 连接池）
+- `reload()`：重载（Derby 实现为重新执行 derby-schema.sql；外部实现为重建连接池列表）
+- `checkMasterWritable()`：检查主库是否可写（外部 MySQL 场景查询 `@@read_only`；Derby 实现恒返回 `true`）
 - `getJdbcTemplate()`：获取 Spring `JdbcTemplate`（SQL 执行入口）
 - `getTransactionTemplate()`：获取事务模板（声明式事务管理）
 - `getCurrentDbUrl()`：获取当前数据库 JDBC URL
-- `getHealth()`：健康检查（`SELECT 1` 探测数据库连接可用性）
+- `getHealth()`：健康状态（Derby 实现返回 `healthStatus` 字段；外部实现返回 `CheckDbHealthTask` 维护的结果）
 - `getDataSourceType()`：获取数据源类型（"derby"/"mysql"）
 
 #### 6.3.3.2 DynamicDataSource 动态数据源
 
-`DynamicDataSource`（`persistence/.../datasource/DynamicDataSource.java:30-64`）继承 Spring `AbstractRoutingDataSource`：
+`DynamicDataSource`（`persistence/.../datasource/DynamicDataSource.java:26-64`）是一个普通单例——并非 Spring `AbstractRoutingDataSource` 的子类：
 
 ```java
-public class DynamicDataSource extends AbstractRoutingDataSource {
+public class DynamicDataSource {
     
-    @Override
-    protected Object determineCurrentLookupKey() {
-        // line 45: 从 LookupContextHolder 获取当前数据源 LookupKey
-        return LookupContextHolder.getLookupKey();
+    private DataSourceService localDataSourceService = null;
+    
+    private DataSourceService basicDataSourceService = null;
+    
+    private static final DynamicDataSource INSTANCE = new DynamicDataSource();
+
+    private DynamicDataSource() {}
+
+    public static DynamicDataSource getInstance() {
+        return INSTANCE;
     }
     
-    // line 50-60: 初始化主从数据源映射
-    @Override
-    public void afterPropertiesSet() {
-        Map<Object, Object> targetDataSources = new HashMap<>();
-        targetDataSources.put("master", masterDataSource);   // 主库（写入）
-        targetDataSources.put("slave", slaveDataSource);     // 从库（读取）
-        super.setTargetDataSources(targetDataSources);
-        super.setDefaultTargetDataSource(masterDataSource); // 默认主库
-        super.afterPropertiesSet();
+    public synchronized DataSourceService getDataSource() {
+        // Embedded storage is used by default in stand-alone mode
+        // In cluster mode, external databases are used by default
+        if (DatasourceConfiguration.isEmbeddedStorage()) {
+            if (localDataSourceService == null) {
+                localDataSourceService = new LocalDataSourceServiceImpl();
+                localDataSourceService.init();
+            }
+            return localDataSourceService;
+        } else {
+            if (basicDataSourceService == null) {
+                basicDataSourceService = new ExternalDataSourceServiceImpl();
+                basicDataSourceService.init();
+            }
+            return basicDataSourceService;
+        }
     }
 }
 ```
 
-`LookupContextHolder` 通过 `ThreadLocal` 持有当前线程的数据源 LookupKey（`"master"`/`"slave"`），读写操作前设置对应的 LookupKey → `DynamicDataSource.determineCurrentLookupKey()` 返回对应数据源 → Spring 自动路由到主库或从库。
+`DynamicDataSource` 不持有任何 `LookupKey` 上下文，也不存在主从数据源路由——它只做一件事：按 `DatasourceConfiguration.isEmbeddedStorage()` 静态标志在 `LocalDataSourceServiceImpl`（嵌入式 Derby）与 `ExternalDataSourceServiceImpl`（外部 MySQL）之间二选一，首次调用时惰性创建并执行 `init()`，之后复用同一实例。这也正是 `LocalDataSourceServiceImpl.init()` 被触发的时机——它不实现 `InitializingBean`，初始化完全由这里的惰性调用驱动。
 
 ### 6.3.4 设计模式分析
 
-1. **单例模式（Singleton）**：`LocalDataSourceServiceImpl` 作为 Spring Bean（默认 singleton scope，`DatasourceConfiguration.java:40-55`）——全局共享同一嵌入式 Derby 数据库实例 `BasicEmbeddedDataSource40`（Apache Derby 嵌入式引擎）。所有 HTTP 请求线程通过 `EmbeddedStorageContextHolder.getJdbcTemplate()` 获取同一 `JdbcTemplate` 实例——`ThreadLocal` 保证线程安全——每个线程拥有独立的 `Connection`（由嵌入式 Derby 内部管理）。
+1. **单例模式（Singleton）**：`LocalDataSourceServiceImpl` 不是 Spring Bean——而是由 `DynamicDataSource` 单例（`DynamicDataSource.java:26-64`）惰性创建并全局持有——整个 JVM 内共享同一嵌入式 Derby `HikariDataSource` 连接池实例。所有线程通过 `DynamicDataSource.getInstance().getDataSource()` 获取同一实现——`EmbeddedStorageContextHolder` 的两个 `ThreadLocal`（SQL 上下文与扩展信息上下文）保证每个线程累积独立的待执行 SQL——底层 `Connection` 由 HikariCP 连接池统一管理。
 
-2. **工厂模式（Factory）**：`EmbeddedDataSourceFactory`（Apache Derby API，`derby-10.14.2.0.jar`）创建 Derby `BasicEmbeddedDataSource40` 实例——`LocalDataSourceServiceImpl.init()`（`LocalDataSourceServiceImpl.java:70-180`）通过 `BasicEmbeddedDataSource40` 构造函数指定数据库名称（`nacos/config`）和创建策略（`create=true`——首次启动自动创建数据库文件）。工厂模式封装了嵌入式 Derby 数据库文件的创建逻辑——调用方只需调用 `init()` 无需了解 Derby 底层 API。
+2. **工厂模式（Factory）**：`DataSourcePoolProperties.build(EnvUtil.getEnvironment())`（`DataSourcePoolProperties.java:62-66`）作为连接池配置工厂——默认值（`connectionTimeout=3s`、`validationTimeout=10s`、`idleTimeout=10min`、`maxPoolSize=20`、`minimumIdle=2`）可经 `db.pool.config.*` 配置前缀覆盖——`LocalDataSourceServiceImpl.initialize()`（`LocalDataSourceServiceImpl.java:149-155`）在其上设置 Derby 驱动、`jdbc:derby:${nacos.home}/data/derby-data;create=true` 的 JDBC URL 与用户名/密码后产出 `HikariDataSource`。工厂模式封装了连接池的构建与默认值管理——调用方只需调用 `init()` 无需了解 HikariCP 底层 API。
 
-3. **生命周期模式（Lifecycle）**：`LocalDataSourceServiceImpl` 实现 Spring `InitializingBean` 接口——`afterPropertiesSet()` 自动调用 `init()`——Spring 容器完成 Bean 属性注入后自动初始化嵌入式 Derby 数据库。`reload()`（`LocalDataSourceServiceImpl.java:230-250`）关闭旧 `BasicEmbeddedDataSource40` + 重新调用 `init()`——支持运行时动态重载数据源配置（如切换 Derby 数据库文件路径）。
+3. **生命周期模式（Lifecycle）**：`LocalDataSourceServiceImpl` 不实现 Spring `InitializingBean`——`init()` 由 `DynamicDataSource.getInstance().getDataSource()` 首次调用时惰性触发（`DynamicDataSource.java:46-51`），且 `initialize` 标志保证幂等。`reload()`（`LocalDataSourceServiceImpl.java:91-105`）重新执行 derby-schema.sql 建表脚本——幂等地补齐缺失的表结构（单条执行失败仅告警不中断）——而非重建数据源。
 
 ### 6.3.5 Trade-off 分析
 
@@ -220,89 +237,98 @@ public class DynamicDataSource extends AbstractRoutingDataSource {
 | **运维复杂度** | ✅ 零运维——Derby 内嵌运行，无需独立数据库服务器 | ❌ 需独立 MySQL 服务器——安装 + 配置 + 备份 + 监控 | ✅ 零运维——同 Derby |
 | **并发能力** | ⚠️ Derby 单连接写入——嵌入式 Derby 仅支持单 JVM 进程内读写 | ✅ 高并发读写——HikariCP `maximumPoolSize=20` | ⚠️ H2 同单连接写入 |
 | **SQL 兼容性** | ✅ Apache Derby SQL 标准——高度兼容 MySQL SQL（仅 `LIMIT`→`OFFSET...FETCH NEXT`） | ✅ MySQL SQL 原生——无需 SQL 方言适配 | ⚠️ H2 MySQL 兼容模式——`MODE=MySQL` 仍有细微差异 |
-| **数据持久化** | ✅ Derby 数据库文件——`$NACOS_HOME/data/derby/`，重启后数据仍存在 | ✅ MySQL 磁盘存储——主从复制 + binlog 备份 | ✅ H2 文件存储——`.mv.db` 文件 |
+| **数据持久化** | ✅ Derby 数据库文件——`$NACOS_HOME/data/derby-data/`，重启后数据仍存在 | ✅ MySQL 磁盘存储——主从复制 + binlog 备份 | ✅ H2 文件存储——`.mv.db` 文件 |
 | **启动时间** | ✅ <2s——嵌入式 Derby 无需网络连接 | ❌ 需等待 MySQL 服务器启动——首次启动 10-30s | ✅ <1s——H2 内存模式最快 |
 | **License** | ✅ Apache License 2.0——与 Nacos 同属 Apache 基金会生态 | ✅ GPLv2——MySQL Community Edition | ✅ EPL 1.0 / MPL 2.0——H2 dual License |
 
-Nacos 2.5.3 选择嵌入式 Derby 而非 H2 的核心原因：Apache Derby 与 Nacos 同属 Apache 基金会生态——License 兼容（Apache License 2.0），无需额外的 License 合规审查。Derby 的 SQL 语法与 MySQL 高度兼容——`persistence/` 模块的 `SqlTypeLimiter` 仅需适配 `LIMIT OFFSET`→`OFFSET...FETCH NEXT` 一个 SQL 方言差异——其余 DDL/DML 完全通用。H2 需要 `MODE=MySQL` 才有类似的兼容性——但仍有细微差异（如 `AUTO_INCREMENT` vs `IDENTITY`）。代价是嵌入式 Derby 的并发能力有限（单 JVM 进程内读写）——但 Nacos 单机模式通常仅服务于小规模配置管理（<100 个客户端），嵌入式 Derby 的性能完全满足需求。对于生产集群模式（>10 节点），`@ConditionOnExternalStorage` 条件注解自动切换到 `ExternalDataSourceServiceImpl`——使用 HikariCP 连接池连接外部 MySQL——支持高并发读写。
+Nacos 2.5.3 选择嵌入式 Derby 而非 H2 的核心原因：Apache Derby 与 Nacos 同属 Apache 基金会生态——License 兼容（Apache License 2.0），无需额外的 License 合规审查。Derby 的 SQL 语法与 MySQL 高度兼容——`persistence/` 模块的 `SqlTypeLimiter` 仅需适配 `LIMIT OFFSET`→`OFFSET...FETCH NEXT` 一个 SQL 方言差异——其余 DDL/DML 完全通用。H2 需要 `MODE=MySQL` 才有类似的兼容性——但仍有细微差异（如 `AUTO_INCREMENT` vs `IDENTITY`）。代价是嵌入式 Derby 的并发能力有限（单 JVM 进程内读写）——但 Nacos 单机模式通常仅服务于小规模配置管理（<100 个客户端），嵌入式 Derby 的性能完全满足需求。对于生产集群模式（>10 节点），`DatasourceConfiguration` 的静态标志使 `DynamicDataSource` 自动选择 `ExternalDataSourceServiceImpl`——使用 HikariCP 连接池连接外部 MySQL——支持高并发读写。
 
 ### 6.3.6 小结
 
-`LocalDataSourceServiceImpl`（`persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）通过 Derby `BasicEmbeddedDataSource40`（`derby-10.14.2.0.jar`）嵌入式驱动实现零配置内嵌数据库——`init()`（:`70-180`）自动创建 Derby 数据库文件（`$NACOS_HOME/data/derby/`）+ 执行 DDL 建表脚本（`persistence/src/main/resources/META-INF/schema.sql`）。`getHealth()`（:`190-200`）通过 `SELECT 1` 执行健康检查——探测嵌入式 Derby 数据库连接可用性。`reload()`（:`230-250`）关闭旧 `BasicEmbeddedDataSource40` + 重新调用 `init()`——支持运行时动态重载数据源配置（如切换 Derby 数据库文件路径）。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal` 持有嵌入式存储上下文——`DataSource`/`JdbcTemplate`/`TransactionTemplate`——保证 Web 请求线程安全。
+`LocalDataSourceServiceImpl`（`persistence/datasource/LocalDataSourceServiceImpl.java:52-270`）通过 `DataSourcePoolProperties` 构建的 `HikariDataSource` 连接 Derby 嵌入式驱动（`org.apache.derby.jdbc.EmbeddedDriver`）实现零配置内嵌数据库——`init()`（:`78-89`）以 `jdbc:derby:${nacos.home}/data/derby-data;create=true` 自动创建 Derby 数据库文件，`initialize()` 末尾经 `reload()` 执行类路径 `META-INF/derby-schema.sql`（优先 `conf/derby-schema.sql`）建表脚本。`getHealth()`（:`193-196`）仅返回 `healthStatus` 字段（初始 `"UP"`）——不做实时探测。`reload()`（:`91-105`）重新执行 derby-schema.sql 建表脚本——幂等地补齐缺失表结构。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过两个 `ThreadLocal`——`SQL_CONTEXT`（`ArrayList<ModifyRequest>`）与 `EXTEND_INFO_CONTEXT`（`Map<String, String>`）——按线程累积待执行 SQL 与扩展信息，供 `blockUpdate()` 一次性提交。
 
-`LocalDataSourceServiceImpl` 是 `DataSourceService` 的嵌入式 Derby 实现，适用于单机模式和集群模式（当未配置外部 MySQL 时默认使用嵌入式 Derby）。Derby 是 Apache 开源嵌入式 Java 数据库，无需独立安装——随 Nacos 进程启动内嵌运行，数据文件存储在 `~/nacos/data/derby/` 目录下。
+`LocalDataSourceServiceImpl` 是 `DataSourceService` 的嵌入式 Derby 实现，适用于单机模式和集群嵌入式模式（`DatasourceConfiguration.isEmbeddedStorage()` 为 true 时由 `DynamicDataSource` 选择）。Derby 是 Apache 开源嵌入式 Java 数据库，无需独立安装——随 Nacos 进程启动内嵌运行，数据文件存储在 `~/nacos/data/derby-data/` 目录下。
 
-嵌入式 Derby 的优势：零运维（无需独立数据库服务器）、零配置（开箱即用）、适合中小规模集群（<10 节点）。劣势：不支持高并发读写（单连接写入）、数据迁移困难（需通过 `DerbyImportEvent`/`DerbyLoadEvent` 导入导出）。
+嵌入式 Derby 的优势：零运维（无需独立数据库服务器）、零配置（开箱即用）、适合中小规模集群（<10 节点）。劣势：不支持高并发读写（单 JVM 进程内读写）、数据迁移困难（需借助 `DerbyUtils` 等工具导入导出）。
 
 ### 6.4.1 设计背景
 
-`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）是 `DataSourceService` 接口的嵌入式 Derby 实现——适用于单机模式和测试环境。嵌入式 Derby 数据库存储在 `$NACOS_HOME/data/derby/` 目录——无需用户安装和配置独立数据库服务器——实现零配置内嵌数据库。`LocalDataSourceServiceImpl` 通过 `@ConditionOnEmbeddedStorage` 条件注解（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）在 `spring.datasource.platform` 为空或 `derby` 时自动注入——`DatasourceConfiguration.localDataSourceService()`（`persistence/configuration/DatasourceConfiguration.java:40-55`）创建 `LocalDataSourceServiceImpl` Bean。
+`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:52-270`）是 `DataSourceService` 接口的嵌入式 Derby 实现——适用于单机模式和测试环境。嵌入式 Derby 数据库存储在 `$NACOS_HOME/data/derby-data/` 目录（`PersistenceConstant.DERBY_BASE_DIR`）——无需用户安装和配置独立数据库服务器——实现零配置内嵌数据库。`LocalDataSourceServiceImpl` 不是 Spring Bean——当 `DatasourceConfiguration.isEmbeddedStorage()` 为 true 时由 `DynamicDataSource.getInstance().getDataSource()`（`DynamicDataSource.java:46-51`）惰性创建并调用 `init()`。
 
-`init()`（`LocalDataSourceServiceImpl.java:70-180`）通过 Apache Derby API 的 `EmbeddedDataSourceFactory` 创建 `BasicEmbeddedDataSource40` 实例（`derby-10.14.2.0.jar`）——构造函数指定数据库名称（`nacos/config`）和创建策略（`create=true`——首次启动自动创建数据库文件）——随后通过 `JdbcTemplate.execute()` 执行 DDL 建表脚本（`persistence/src/main/resources/META-INF/schema.sql`）自动创建 `config_info`/`config_tags_relation`/`his_config_info` 等业务表。`getHealth()`（`:190-200`）通过 `JdbcTemplate.queryForObject("SELECT 1", Integer.class)` 执行健康检查——探测嵌入式 Derby 数据库连接可用性。`reload()`（`:230-250`）关闭旧 `BasicEmbeddedDataSource40`（调用 `EmbeddedDataSource40.shutdown()`） + 重新调用 `init()`——支持运行时动态重载数据源配置（如切换 Derby 数据库文件路径——将 `$NACOS_HOME/data/derby/` 迁移到 SSD 高速存储）。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal<EmbeddedStorageContext>` 持有嵌入式存储上下文——包含当前线程的 `DataSource`/`JdbcTemplate`/`TransactionTemplate`——保证 Web 请求线程安全——避免多线程共享同一 `JdbcTemplate` 导致的连接泄漏。
+`init()`（`LocalDataSourceServiceImpl.java:78-89`）拼接 `jdbc:derby:${nacos.home}/data/derby-data;create=true` 的 JDBC URL——`create=true`——首次启动自动创建数据库文件——随后 `initialize()`（`:149-171`）经 `DataSourcePoolProperties.build(EnvUtil.getEnvironment())` 构建 `HikariDataSource`（驱动 `org.apache.derby.jdbc.EmbeddedDriver`、用户名/密码均为 `nacos`、`JdbcTemplate` 预设 `maxRows=50000`/`queryTimeout=5000`）——末尾调用 `reload()`（`:91-105`）执行 DDL 建表脚本 `derby-schema.sql` 自动创建 `config_info`/`config_tags_relation`/`his_config_info` 等业务表。`getHealth()`（`:193-196`）仅返回 `healthStatus` 字段（初始 `"UP"`）——`LocalDataSourceServiceImpl` 本身不执行实时健康探测。`reload()` 重新读取并逐条执行建表脚本——单条失败仅告警——实现幂等的表结构补齐。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过 `ThreadLocal<ArrayList<ModifyRequest>>`（`SQL_CONTEXT`）与 `ThreadLocal<Map<String, String>>`（`EXTEND_INFO_CONTEXT`）按线程累积待执行的 SQL 与扩展信息——供 `DatabaseOperate.blockUpdate()` 在提交时一次性取出并清理。
 
 ### 6.4.2 核心类关系图
 
 图 6-4 展示了 `LocalDataSourceServiceImpl` 的嵌入式 Derby 初始化流程：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSource: DataSource</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: DriverManager.getConnection(DERBY_URL)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: new JdbcTemplate(dataSource)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: new TransactionTemplate(txManager)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: 执行 Derby 初始化 SQL (CREATE TABLE)</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 关闭旧连接 → 重新 getConnection()</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.queryForObject("SELECT 1", ...)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库</span><span class="s">数据文件: ~/nacos/data/derby/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">表结构: config_info, his_config_info, users, roles,</div><div class="dgm-note" style="border:none;background:none;padding:0;">permissions, tenant_info, tenant_capacity</div><div class="dgm-note" style="border:none;background:none;padding:0;">单连接写入（嵌入式 Derby 限制）</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">LocalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSource: HikariDataSource</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: jdbcUrl = jdbc:derby:${nacos.home}/data/derby-data;create=true</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: DataSourcePoolProperties.build() → HikariDataSource</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: new JdbcTemplate(maxRows=50000) + TransactionTemplate(timeout=5000)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: reload() → 执行 derby-schema.sql (CREATE TABLE)</div><div class="dgm-note" style="border:none;background:none;padding:0;">reload():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 重新逐条执行 derby-schema.sql（幂等补齐表结构）</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 返回 healthStatus 字段（初始 "UP"，无实时探测）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Derby 嵌入式数据库</span><span class="s">数据文件: ~/nacos/data/derby-data/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">表结构: config_info, his_config_info, users, roles,</div><div class="dgm-note" style="border:none;background:none;padding:0;">permissions, tenant_info, tenant_capacity</div><div class="dgm-note" style="border:none;background:none;padding:0;">单 JVM 进程内读写（嵌入式 Derby 限制）</div></div></div></div>
 
 ### 6.4.3 源码走读
 
 #### 6.4.3.1 init()——嵌入式 Derby 初始化
 
-`LocalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:60-120`）：
+`LocalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:78-89` 与 `:149-171`）：
 
 ```java
-public class LocalDataSourceServiceImpl implements DataSourceService {
-    
-    private JdbcTemplate jdbcTemplate;
-    private TransactionTemplate transactionTemplate;
-    private DataSource dataSource;
-    
-    @Override
-    public void init() throws Exception {
-        // line 70: 设置 Derby 系统属性（derby.home）
-        System.setProperty("derby.stream.error.file", 
-            EnvUtil.getNacosHome() + "/data/derby/derby.log");
-        // line 75-85: 加载 Derby JDBC 驱动 + 建立连接
-        Class.forName("org.apache.derby.jdbc.EmbeddedDriver");
-        String driverUrl = "jdbc:derby:" + EnvUtil.getNacosHome() 
-            + "/data/derby;create=true";
-        this.dataSource = DriverManager.getConnection(driverUrl);
-        // line 90-100: 创建 JdbcTemplate + TransactionTemplate
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        DataSourceTransactionManager txManager = 
-            new DataSourceTransactionManager(dataSource);
-        this.transactionTemplate = new TransactionTemplate(txManager);
-        // line 105-115: 执行 Derby 初始化 DDL（CREATE TABLE）
-        jdbcTemplate.execute(INIT_DERBY_SQL);
+@Override
+public synchronized void init() throws Exception {
+    if (DatasourceConfiguration.isUseExternalDB()) {
+        return;
     }
+    if (!initialize) {
+        LOGGER.info("use local db service for init");
+        final String jdbcUrl = "jdbc:derby:" + Paths.get(EnvUtil.getNacosHome(), derbyBaseDir) + ";create=true";
+        initialize(jdbcUrl);
+        initialize = true;
+    }
+}
+
+private synchronized void initialize(String jdbcUrl) {
+    // line 150-155: 经 DataSourcePoolProperties 构建 HikariDataSource
+    DataSourcePoolProperties poolProperties = DataSourcePoolProperties.build(EnvUtil.getEnvironment());
+    poolProperties.setDriverClassName(jdbcDriverName);      // org.apache.derby.jdbc.EmbeddedDriver
+    poolProperties.setJdbcUrl(jdbcUrl);                     // jdbc:derby:${nacos.home}/data/derby-data;create=true
+    poolProperties.setUsername(userName);                   // nacos
+    poolProperties.setPassword(password);                   // nacos
+    HikariDataSource ds = poolProperties.getDataSource();
+    DataSourceTransactionManager tm = new DataSourceTransactionManager();
+    tm.setDataSource(ds);
+    if (jdbcTemplateInit) {
+        jt.setDataSource(ds);
+        tjt.setTransactionManager(tm);
+    } else {
+        jt = new JdbcTemplate();
+        jt.setMaxRows(50000);
+        jt.setQueryTimeout(5000);
+        jt.setDataSource(ds);
+        tjt = new TransactionTemplate(tm);
+        tjt.setTimeout(5000);
+        jdbcTemplateInit = true;
+    }
+    reload();   // line 170: 执行 derby-schema.sql 建表脚本
 }
 ```
 
-#### 6.4.3.2 getHealth()——健康检查
+#### 6.4.3.2 getHealth()——健康状态
 
-`getHealth()`（`LocalDataSourceServiceImpl.java:200-215`）：
+`getHealth()`（`LocalDataSourceServiceImpl.java:193-196`）不做实时探测——仅返回内部维护的 `healthStatus` 字段（初始 `"UP"`，提供 `setHealthStatus()` 写入方法）：
 
 ```java
+@Override
 public String getHealth() {
-    try {
-        // line 205: SELECT 1 探测 Derby 连接可用性
-        jdbcTemplate.queryForObject("SELECT 1 FROM SYSIBM.SYSDUMMY1", Integer.class);
-        return "UP";
-    } catch (Exception e) {
-        return "DOWN";
-    }
+    return healthStatus;
 }
 ```
+
+真实的数据库探测逻辑存在于外部数据源实现 `ExternalDataSourceServiceImpl`——由 `CheckDbHealthTask`（`:272-305`）每 10 秒定时检测各数据源并更新 `isHealthList`。
 
 ### 6.4.4 设计模式分析
 
-1. **模板方法模式（Template Method）**：`DataSourceService` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourceService.java:30-87`）定义 `init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`/`getCurrentDbUrl()`/`getDataSourceType()` 等模板方法——`LocalDataSourceServiceImpl`（`persistence/.../datasource/LocalDataSourceServiceImpl.java:40-270`）实现嵌入式 Derby 的具体逻辑：`init()` 自动创建 Derby 数据库文件 + 执行 DDL 建表脚本（`persistence/src/main/resources/META-INF/schema.sql`）、`getHealth()` 通过 `SELECT 1` 执行健康检查、`reload()` 关闭旧 `DataSource` + 重新调用 `init()`。模板方法模式使 `LocalDataSourceServiceImpl` 和 `ExternalDataSourceServiceImpl` 共享统一的接口契约——上层业务代码面向 `DataSourceService` 接口编程，无需关心底层是嵌入式 Derby 还是外部 MySQL。
+1. **模板方法模式（Template Method）**：`DataSourceService` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/DataSourceService.java:30-87`）定义 `init()`/`reload()`/`getHealth()`/`getJdbcTemplate()`/`getTransactionTemplate()`/`getCurrentDbUrl()`/`getDataSourceType()` 等模板方法——`LocalDataSourceServiceImpl`（`persistence/.../datasource/LocalDataSourceServiceImpl.java:52-270`）实现嵌入式 Derby 的具体逻辑：`init()` 以 `create=true` 自动创建 Derby 数据库文件并经 `reload()` 执行 `derby-schema.sql` 建表脚本、`getHealth()` 返回 `healthStatus` 字段、`reload()` 幂等重执行建表脚本。模板方法模式使 `LocalDataSourceServiceImpl` 和 `ExternalDataSourceServiceImpl` 共享统一的接口契约——上层业务代码面向 `DataSourceService` 接口编程，无需关心底层是嵌入式 Derby 还是外部 MySQL。
 
-2. **工厂模式（Factory）**：`DriverManager.getConnection()` 作为工厂方法创建 Derby JDBC 连接——`LocalDataSourceServiceImpl.init()`（`LocalDataSourceServiceImpl.java:70-180`）通过 `EmbeddedDataSourceFactory`（Apache Derby 内置 API）创建 `BasicEmbeddedDataSource40`（`derby-10.14.2.0.jar`）——无需外部 JDBC URL 配置（`jdbc:derby:nacos/config;create=true`）。Derby 嵌入式数据库文件存储在 `$NACOS_HOME/data/derby/` 目录——单机模式下无需用户手动配置数据库 URL。
+2. **工厂模式（Factory）**：`DataSourcePoolProperties.build(EnvUtil.getEnvironment())` 作为连接池配置工厂——产出承载 Derby 嵌入式连接的 `HikariDataSource`——`LocalDataSourceServiceImpl.initialize()`（`LocalDataSourceServiceImpl.java:149-155`）在其上设置 Derby 驱动与 `jdbc:derby:${nacos.home}/data/derby-data;create=true` 的 JDBC URL。Derby 嵌入式数据库文件存储在 `$NACOS_HOME/data/derby-data/` 目录——单机模式下无需用户手动配置数据库 URL。
 
-3. **上下文持有者模式（Context Holder）**：`EmbeddedStorageContextHolder`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）持有嵌入式存储的完整 Spring 上下文——`DataSource`/`JdbcTemplate`/`TransactionTemplate`/`PlatformTransactionManager`。在每个 Web 请求线程中，`EmbeddedStorageContextHolder` 通过 `ThreadLocal` 保证线程安全——避免多个请求线程共享同一 `JdbcTemplate` 导致的连接泄漏。
+3. **上下文持有者模式（Context Holder）**：`EmbeddedStorageContextHolder`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）持有两个 `ThreadLocal`——`SQL_CONTEXT`（`ArrayList<ModifyRequest>`，按 `executeNo` 顺序累积待执行写请求）与 `EXTEND_INFO_CONTEXT`（`Map<String, String>` 扩展信息）。业务代码经 `addSqlContext()` 追加 SQL——`DatabaseOperate.blockUpdate()` 提交时一次性取出当前线程的 SQL 列表并调用 `cleanAllContext()` 清理——实现线程级的 SQL 攒批与事务聚合。
 
 ### 6.4.5 Trade-off 分析
 
@@ -313,7 +339,7 @@ public String getHealth() {
 | **运维复杂度** | ✅ 零运维——内嵌运行，无需独立数据库服务器 | ❌ 需独立 MySQL 服务器——安装 + 配置 + 备份 + 监控 | ✅ 零运维——同 Derby |
 | **并发能力** | ⚠️ Derby 单连接写入——嵌入式 Derby 仅支持单 JVM 进程内读写 | ✅ 高并发读写——HikariCP 连接池（`maximumPoolSize=20`） | ⚠️ H2 同单连接写入 |
 | **SQL 兼容性** | ✅ Apache Derby SQL 标准——高度兼容 MySQL SQL（`LIMIT`→`OFFSET...FETCH NEXT` 除外） | ✅ MySQL SQL 原生支持——无需 SQL 方言适配 | ⚠️ H2 MySQL 兼容模式——`MODE=MySQL` 但仍有细微差异 |
-| **数据迁移** | ⚠️ 需 `DerbyImportEvent`/`DerbyLoadEvent`——Leader→Follower 事件驱动的快照导入/导出 | ✅ MySQL dump/import——`mysqldump`/`mysql` 标准工具 | ⚠️ H2 `SCRIPT TO`/`RUNSCRIPT FROM`——非标准工具 |
+| **数据迁移** | ⚠️ 需 `DerbyUtils` 等工具——进程内 `dataImport` 导入/导出 | ✅ MySQL dump/import——`mysqldump`/`mysql` 标准工具 | ⚠️ H2 `SCRIPT TO`/`RUNSCRIPT FROM`——非标准工具 |
 | **适用规模** | 测试/单机/小集群（<10 节点）——嵌入式 Derby 性能满足小规模配置管理 | 生产大集群（>10 节点）——MySQL 主从复制 + 读写分离 | 测试环境——H2 内存模式快速测试 |
 | **启动时间** | ✅ <2s——嵌入式 Derby 无需网络连接 | ❌ 需等待 MySQL 服务器启动——首次启动 10-30s | ✅ <1s——H2 内存模式最快 |
 
@@ -321,66 +347,74 @@ Nacos 2.5.3 选择嵌入式 Derby 而非 H2 的核心原因：Apache Derby 是 A
 
 ### 6.4.6 小结
 
-`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）通过 Apache Derby JDBC 嵌入式驱动实现零配置内嵌数据库——`init()` 自动创建 Derby 数据库文件 + 执行 DDL 建表脚本（`persistence/src/main/resources/META-INF/schema.sql`）、`getHealth()` 通过 `SELECT 1` 执行健康检查（`LocalDataSourceServiceImpl.java:190-200`）、`reload()` 关闭旧 `BasicEmbeddedDataSource40` + 重新调用 `init()`（`LocalDataSourceServiceImpl.java:230-250`）。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal` 持有嵌入式存储上下文——保证 Web 请求线程安全。适用于单机/测试/小集群（<10 节点）——零运维、零配置、零外部依赖。外部 MySQL 实现参见 6.5 节。
+`LocalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:52-270`）通过 `DataSourcePoolProperties` 构建的 `HikariDataSource` 连接 Derby 嵌入式驱动实现零配置内嵌数据库——`init()`（`:78-89`）以 `jdbc:derby:${nacos.home}/data/derby-data;create=true` 自动创建 Derby 数据库文件、`reload()`（`:91-105`）执行类路径 `META-INF/derby-schema.sql`（优先 `conf/derby-schema.sql`）建表脚本、`getHealth()`（`:193-196`）仅返回 `healthStatus` 字段（初始 `"UP"`，无实时探测）。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过 `ThreadLocal<ArrayList<ModifyRequest>>` 与 `ThreadLocal<Map<String, String>>` 按线程累积待执行 SQL 与扩展信息。适用于单机/测试/小集群（<10 节点）——零运维、零配置、零外部依赖。外部 MySQL 实现参见 6.5 节。
 
 
 ### 6.5.1 设计背景
 
-`ExternalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:50-306`）是 `DataSourceService` 接口的外部 MySQL 实现——通过 HikariCP 连接池（`HikariDataSource`）管理 MySQL 连接，支持高并发读写。通过 `@ConditionOnExternalStorage` 条件注解（`persistence/configuration/condition/ConditionOnExternalStorage.java:25-45`）在 `spring.datasource.platform=mysql` 时自动注入——与 `ExternalStoragePaginationHelperImpl`（MySQL `LIMIT OFFSET` 分页）配合使用。`init()`（:`70-95`）通过 `ExternalDataSourceProperties`（`persistence/.../ExternalDataSourceProperties.java:30-112`）读取 `spring.datasource.url`/`username`/`password`/`driver-class-name` 等标准 Spring DataSource 配置——创建 `HikariDataSource` 实例并配置 `maximumPoolSize=20`（最大连接数）、`minimumIdle=10`（最小空闲连接数）、`connectionTimeout=30000ms`（连接超时）、`idleTimeout=600000ms`（空闲回收时间）、`maxLifetime=1800000ms`（最大生命周期）。`getHealth()`（:`200-210`）通过 `ConnectionCheckUtil.checkDataSourceConnection()`（`persistence/.../utils/ConnectionCheckUtil.java:30-41`）探测 HikariCP 连接池可用性——`SELECT 1` 执行健康检查。`reload()`（:`220-240`）关闭旧 `HikariDataSource` + 重新读取配置 + 重新调用 `init()`——支持运行时动态切换 MySQL 数据库连接参数。`DatasourceMetrics`（`persistence/.../monitor/DatasourceMetrics.java:30-62`）自动暴露 HikariCP 指标到 Micrometer——`hikaricp_active_connections`/`hikaricp_idle_connections`/`hikaricp_pending_connections`——通过 Prometheus + Grafana 可视化监控连接池健康状态。
+`ExternalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:50-306`）是 `DataSourceService` 接口的外部 MySQL 实现——通过 HikariCP 连接池（`HikariDataSource`）管理 MySQL 连接，支持高并发读写。当 `DatasourceConfiguration.isUseExternalDB()` 为 true 时由 `DynamicDataSource` 选择（`DynamicDataSource.java:52-57`）——与 `ExternalStoragePaginationHelperImpl`（SQL 方言由 Mapper 生成后透传分页）配合使用。`init()`（`:87-127`）先构建多个预设超时的 `JdbcTemplate`（`maxRows=50000`、事务模板 `timeout=TRANSACTION_QUERY_TIMEOUT`）——`reload()`（`:130-170`）经 `ExternalDataSourceProperties`（`persistence/.../ExternalDataSourceProperties.java:75-98`）绑定 `db.num`/`db.url.N`/`db.user.N`/`db.password.N` 多数据源配置——驱动缺省 `com.mysql.cj.jdbc.Driver`、未显式配置校验 SQL 时设置 `connectionTestQuery="SELECT 1"`——为每个数据源创建 `HikariDataSource` 并经 `ConnectionCheckUtil.checkDataSourceConnection()` 做 fail-fast 校验；连接池参数由 `DataSourcePoolProperties` 提供默认值（`connectionTimeout=3s`、`validationTimeout=10s`、`idleTimeout=10min`、`maxPoolSize=20`、`minimumIdle=2`，可经 `db.pool.config.*` 覆盖）——数据源数量超过 `DB_MASTER_SELECT_THRESHOLD` 时调度 `SelectMasterTask`，并总是调度 `CheckDbHealthTask`（每 10 秒）。`getHealth()`（`:215-229`）基于 `CheckDbHealthTask` 维护的 `isHealthList` 返回 `UP`/`WARN:ip`/`DOWN:ip`。`DatasourceMetrics`（`persistence/.../monitor/DatasourceMetrics.java:27-34`）仅提供 `getDbException()` 返回 `Metrics.counter("nacos_exception", "module", "config", "name", "db")` 数据库异常计数器——在 `SelectMasterTask`/`CheckDbHealthTask` 中递增。
 
 ### 6.5.2 核心类关系图
 
 图 6-5 展示了 `ExternalDataSourceServiceImpl` 通过 HikariCP 连接池管理 MySQL 连接的架构：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSource: HikariDataSource</li><li>poolProperties: DataSourcePoolProperties</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: HikariDataSource ds = new HikariDS()</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: ds.setJdbcUrl(url)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: ds.setUsername(username)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: ds.setPassword(password)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 5: ds.setMaximumPoolSize(maxPoolSize)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 6: ds.setMinimumIdle(minIdle)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 7: ds.setConnectionTimeout(connTimeout)</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 8: jdbcTemplate = new JdbcTemplate(ds)</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.queryForObject("SELECT 1", ...)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HikariDataSource</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcUrl</span><span class="typ">: jdbc:mysql://localhost:3306/nacos</span></li></ul><ul class="dgm-kv"><li><span class="fld">username</span><span class="typ">: root</span></li></ul><ul class="dgm-kv"><li><span class="fld">password</span><span class="typ">: ****</span></li></ul><ul class="dgm-kv"><li><span class="fld">maximumPoolSize</span><span class="typ">: 20</span></li></ul><ul class="dgm-kv"><li><span class="fld">minimumIdle</span><span class="typ">: 10</span></li></ul><ul class="dgm-kv"><li><span class="fld">connectionTimeout</span><span class="typ">: 30000</span></li></ul><ul class="dgm-kv"><li><span class="fld">idleTimeout</span><span class="typ">: 600000</span></li></ul><ul class="dgm-kv"><li><span class="fld">maxLifetime</span><span class="typ">: 1800000</span></li></ul></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ExternalDataSourceServiceImpl</span><span class="s">implements DataSourceService</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>jdbcTemplate: JdbcTemplate</li><li>transactionTemplate: TransactionTemplate</li><li>dataSourceList: List&lt;HikariDataSource&gt;</li><li>isHealthList: List&lt;Boolean&gt;</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">init():</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 1: 构建 JdbcTemplate(maxRows=50000) + testMasterJT 等</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 2: DataSourceTransactionManager + TransactionTemplate</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 3: isUseExternalDB() → reload()</div><div class="dgm-note" style="border:none;background:none;padding:0;">STEP 4: 调度 SelectMasterTask（超过阈值时）+ CheckDbHealthTask（每 10s）</div><div class="dgm-note" style="border:none;background:none;padding:0;">getHealth():</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 基于 CheckDbHealthTask 维护的 isHealthList 返回 UP/WARN:ip/DOWN:ip</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">HikariDataSource × N（多数据源）</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcUrl</span><span class="typ">: 来自 db.url.N</span></li></ul><ul class="dgm-kv"><li><span class="fld">driverClassName</span><span class="typ">: com.mysql.cj.jdbc.Driver（缺省）</span></li></ul><ul class="dgm-kv"><li><span class="fld">connectionTestQuery</span><span class="typ">: "SELECT 1"（未配置时自动设置）</span></li></ul><ul class="dgm-kv"><li><span class="fld">maximumPoolSize</span><span class="typ">: 20（默认，db.pool.config.* 可覆盖）</span></li></ul><ul class="dgm-kv"><li><span class="fld">minimumIdle</span><span class="typ">: 2（默认）</span></li></ul><ul class="dgm-kv"><li><span class="fld">connectionTimeout</span><span class="typ">: 3000ms（默认）</span></li></ul><ul class="dgm-kv"><li><span class="fld">idleTimeout</span><span class="typ">: 600000ms（10min，默认）</span></li></ul><ul class="dgm-kv"><li><span class="fld">validationTimeout</span><span class="typ">: 10000ms（默认）</span></li></ul></div></div></div>
 
 ### 6.5.3 源码走读
 
 #### 6.5.3.1 init()——HikariCP 连接池初始化
 
-`ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:60-180`）：
+`ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:87-127`）：
 
 ```java
-public class ExternalDataSourceServiceImpl implements DataSourceService {
+@Override
+public void init() {
+    queryTimeout = ConvertUtils.toInt(System.getProperty("QUERYTIMEOUT"), 3);
+    jt = new JdbcTemplate();
+    // Set the maximum number of records to prevent memory expansion
+    jt.setMaxRows(50000);
+    jt.setQueryTimeout(queryTimeout);
     
-    private JdbcTemplate jdbcTemplate;
-    private TransactionTemplate transactionTemplate;
-    private HikariDataSource dataSource;
-    private DataSourcePoolProperties poolProperties;
+    testMasterJT = new JdbcTemplate();
+    testMasterJT.setQueryTimeout(queryTimeout);
     
-    @Override
-    public void init() throws Exception {
-        // line 75-85: 加载 ExternalDataSourceProperties 配置
-        ExternalDataSourceProperties properties = 
-            new ExternalDataSourceProperties();
-        // line 90-110: 创建 HikariCP 连接池
-        HikariDataSource ds = new HikariDataSource();
-        ds.setJdbcUrl(properties.getUrl());                    // jdbc:mysql://localhost:3306/nacos
-        ds.setUsername(properties.getUsername());               // root
-        ds.setPassword(properties.getPassword());               // ****
-        ds.setMaximumPoolSize(poolProperties.getMaximumPoolSize()); // 20
-        ds.setMinimumIdle(poolProperties.getMinimumIdle());     // 10
-        ds.setConnectionTimeout(poolProperties.getConnectionTimeout()); // 30000
-        ds.setIdleTimeout(poolProperties.getIdleTimeout());     // 600000
-        ds.setMaxLifetime(poolProperties.getMaxLifetime());     // 1800000
-        ds.setDriverClassName(properties.getDriverClassName());   // com.mysql.cj.jdbc.Driver
-        this.dataSource = ds;
-        // line 115-120: 创建 JdbcTemplate + TransactionTemplate
-        this.jdbcTemplate = new JdbcTemplate(dataSource);
-        DataSourceTransactionManager txManager = 
-            new DataSourceTransactionManager(dataSource);
-        this.transactionTemplate = new TransactionTemplate(txManager);
+    testMasterWritableJT = new JdbcTemplate();
+    testMasterWritableJT.setQueryTimeout(1);
+    
+    testJtList = new ArrayList<>();
+    isHealthList = new ArrayList<>();
+    
+    tm = new DataSourceTransactionManager();
+    tjt = new TransactionTemplate(tm);
+    tjt.setTimeout(TRANSACTION_QUERY_TIMEOUT);
+    
+    dataSourceType = DatasourcePlatformUtil.getDatasourcePlatform(defaultDataSourceType);
+    
+    if (DatasourceConfiguration.isUseExternalDB()) {
+        try {
+            reload();   // 构建多数据源连接池列表
+        } catch (IOException e) {
+            throw new RuntimeException(DB_LOAD_ERROR_MSG, e);
+        }
+        // 数据源数量超过阈值时启用主库选择任务
+        if (this.dataSourceList.size() > DB_MASTER_SELECT_THRESHOLD) {
+            PersistenceExecutor.scheduleTask(new SelectMasterTask(), 10, 10, TimeUnit.SECONDS);
+        }
+        // 数据库健康检查任务（每 10 秒）
+        PersistenceExecutor.scheduleTask(new CheckDbHealthTask(), 10, 10, TimeUnit.SECONDS);
     }
 }
 ```
 
+`reload()`（`:130-170`）经 `ExternalDataSourceProperties.build(EnvUtil.getEnvironment(), ...)` 绑定 `db.num`/`db.url.N`/`db.user.N`/`db.password.N` 多数据源配置——为每个数据源创建 `HikariDataSource`（连接池默认值由 `DataSourcePoolProperties` 提供）并做 `ConnectionCheckUtil.checkDataSourceConnection()` fail-fast 校验——随后原子替换 `dataSourceList`/`testJtList`/`isHealthList`、立即执行一轮 `SelectMasterTask` 与 `CheckDbHealthTask`、最后关闭旧连接池。
+
 ### 6.5.4 设计模式分析
 
-1. **对象池模式（Object Pool）**：HikariCP 连接池（`HikariDataSource`，`ExternalDataSourceServiceImpl.java:80-95`）管理 MySQL 连接的创建、复用和销毁——`maximumPoolSize=20`（最大连接数）、`minimumIdle=10`（最小空闲连接数）——`ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:70-95`）通过 `ExternalDataSourceProperties`（`persistence/.../datasource/ExternalDataSourceProperties.java:30-112`）配置 `maximumPoolSize=20`（最大连接数）、`minimumIdle=10`（最小空闲连接数）、`connectionTimeout=30000ms`（连接超时）、`idleTimeout=600000ms`（空闲回收时间）、`maxLifetime=1800000ms`（最大生命周期）。HikariCP 连接池在连接归还时进行连接有效性校验（`connectionTestQuery="SELECT 1"`）——无效连接自动剔除并创建新连接。
+1. **对象池模式（Object Pool）**：HikariCP 连接池（`HikariDataSource`）管理 MySQL 连接的创建、复用和销毁——`ExternalDataSourceServiceImpl.reload()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:130-170`）经 `ExternalDataSourceProperties`（绑定 `db.num`/`db.url.N`/`db.user.N`/`db.password.N` 多数据源前缀）为每个数据源创建连接池——池参数由 `DataSourcePoolProperties` 提供默认值：`maxPoolSize=20`、`minimumIdle=2`、`connectionTimeout=3s`、`idleTimeout=10min`、`validationTimeout=10s`（可经 `db.pool.config.*` 覆盖）。未显式配置校验 SQL 时自动设置 `connectionTestQuery="SELECT 1"`——HikariCP 借此在连接借出时进行有效性校验——无效连接自动剔除并创建新连接。
 
-2. **工厂模式（Factory）**：`HikariDataSource` 作为连接工厂——通过 `getConnection()` 从对象池获取可用连接。`ExternalDataSourceServiceImpl` 将 `HikariDataSource` 包装为 Spring `DataSource`——`DynamicDataSource`（`persistence/.../datasource/DynamicDataSource.java:30-64`）继承 Spring `AbstractRoutingDataSource`，可根据 `LookupKey` 上下文动态切换读写分离数据源。
+2. **工厂模式（Factory）**：`HikariDataSource` 作为连接工厂——通过 `getConnection()` 从对象池获取可用连接。`ExternalDataSourceServiceImpl` 将 `HikariDataSource` 列表包装为统一的 `DataSourceService` 契约——`DynamicDataSource`（`persistence/.../datasource/DynamicDataSource.java:26-64`）按 `isEmbeddedStorage()` 静态标志在本地 Derby 与外部数据源之间二选一（不支持运行时读写分离路由）。
 
-3. **门面模式（Facade）**：`ExternalDataSourceServiceImpl` 封装了 HikariCP 连接池的初始化、配置验证、健康检查、重载、关闭等全生命周期管理——向 `persistence/` 模块的其他类（如 `BaseDatabaseOperate`/`EmbeddedPaginationHelperImpl`）提供统一的 `DataSource`/`JdbcTemplate`/`TransactionTemplate` 访问门面。
+3. **门面模式（Facade）**：`ExternalDataSourceServiceImpl` 封装了 HikariCP 连接池的初始化、配置验证、健康检查、重载、关闭等全生命周期管理——向 `persistence/` 模块的其他类（如 `BaseDatabaseOperate`/`ExternalStoragePaginationHelperImpl`）提供统一的 `DataSource`/`JdbcTemplate`/`TransactionTemplate` 访问门面。
 
 ### 6.5.5 Trade-off 分析
 
@@ -390,75 +424,94 @@ public class ExternalDataSourceServiceImpl implements DataSourceService {
 |---------|-----------------------------|--------------------|--------------|
 | **并发能力** | ✅ 多连接并发读写——`maximumPoolSize=20` 可并行处理 20 个 SQL 操作 | ❌ 单连接串行——所有 SQL 排队等待唯一连接 | ✅ 多连接并发——连接池复用——DBCP2 性能约 1.5x 耗时 vs HikariCP |
 | **连接复用** | ✅ 连接池复用——避免 TCP 三次握手 + MySQL 认证开销（~10ms/次） | ❌ 每次新建连接——TCP 三次握手 + MySQL 认证开销 | ✅ 连接池复用 |
-| **连接超时** | `connectionTimeout=30,000ms`——超时抛 `CannotGetJdbcConnectionException`（`ExternalDataSourceServiceImpl.java:85-90`）| 无超时控制——可能无限等待 TCP 连接 | `maxWaitMillis` 默认无限制 |
-| **空闲回收** | `idleTimeout=600000ms`——空闲 10 分钟自动回收连接 + `minimumIdle=10` 保持最小空闲连接数 | 无自动回收——需手动关闭连接 | `timeBetweenEvictionRunsMillis` + `minEvictableIdleTimeMillis` |
+| **连接超时** | `connectionTimeout=3,000ms`（默认）——超时抛 `CannotGetJdbcConnectionException`，`db.pool.config.connectionTimeout` 可覆盖 | 无超时控制——可能无限等待 TCP 连接 | `maxWaitMillis` 默认无限制 |
+| **空闲回收** | `idleTimeout=600000ms`（10 分钟）自动回收连接 + `minimumIdle=2` 保持最小空闲连接数（默认） | 无自动回收——需手动关闭连接 | `timeBetweenEvictionRunsMillis` + `minEvictableIdleTimeMillis` |
 | **性能基准** | ✅ 1,000,000 次 `getConnection()`/`close()` 仅 ~30ms（HikariCP 基准测试） | ❌ 1,000,000 次 `DriverManager.getConnection()` 需 ~10,000ms | ⚠️ 性能略低于 HikariCP（约 1.5x 耗时） |
-| **监控集成** | ✅ Micrometer `DatasourceMetrics` 自动暴露 HikariCP 指标——`hikaricp_active_connections` | ❌ 无监控集成 | ⚠️ 需手动集成 JMX MBean |
+| **监控集成** | ✅ Micrometer `DatasourceMetrics.getDbException()` 暴露数据库异常计数器（`nacos_exception{module=config,name=db}`） | ❌ 无监控集成 | ⚠️ 需手动集成 JMX MBean |
 
-Nacos 2.5.3 选择 HikariCP 而非 DBCP2 的核心原因：HikariCP 是 Spring Boot 2.x 默认连接池——零额外依赖，且性能基准优于 DBCP2（HikariCP 基准测试 ~30ms/百万次 `getConnection()`/`close()` vs DBCP2 ~45ms）。`persistence/` 模块通过 `ExternalDataSourceProperties`（`persistence/.../ExternalDataSourceProperties.java:30-112`）暴露所有 HikariCP 配置项——运维人员可通过 `application.properties` 覆盖默认值（如 `spring.datasource.hikaric.maximumPoolSize=50`）。代价是 HikariCP 的连接验证依赖于 `connectionTestQuery="SELECT 1"`——每次连接归还时执行 `SELECT 1` 增加 MySQL 服务器额外负载——但 `SELECT 1` 是 MySQL 最轻量级查询（无需访问任何表），对 MySQL 服务器负载影响可忽略。
+Nacos 2.5.3 选择 HikariCP 而非 DBCP2 的核心原因：HikariCP 是 Spring Boot 2.x 默认连接池——零额外依赖，且性能基准优于 DBCP2（HikariCP 基准测试 ~30ms/百万次 `getConnection()`/`close()` vs DBCP2 ~45ms）。`persistence/` 模块通过 `DataSourcePoolProperties` 绑定 `db.pool.config` 配置前缀（`DataSourcePoolProperties.java:64`）——运维人员可通过 `application.properties` 覆盖默认值（如 `db.pool.config.maximumPoolSize=50`）。代价是 HikariCP 的连接验证依赖于 `connectionTestQuery="SELECT 1"`（用户未配置时由 `ExternalDataSourceProperties` 自动设置）——每次校验执行 `SELECT 1` 增加 MySQL 服务器额外负载——但 `SELECT 1` 是 MySQL 最轻量级查询（无需访问任何表），对 MySQL 服务器负载影响可忽略。
 
 ### 6.5.6 小结
 
-`ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:70-95`）通过 HikariCP 连接池管理 MySQL 连接——`ExternalDataSourceProperties`（`persistence/.../ExternalDataSourceProperties.java:30-112`）配置 `maximumPoolSize=20`/`minimumIdle=10`/`connectionTimeout=30000ms`/`idleTimeout=600000ms`/`maxLifetime=1800000ms`。`DatasourceMetrics`（`persistence/.../monitor/DatasourceMetrics.java:30-62`）自动暴露 HikariCP 指标到 Prometheus——`hikaricp_active_connections`/`hikaricp_idle_connections`/`hikaricp_pending_connections`。适用于生产环境大集群（>10 节点）——HikariCP 连接池支持高并发读写、连接复用、自动健康检查。嵌入式 Derby 实现参见 6.4 节。
+`ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:87-127`）构建多个预设超时的 `JdbcTemplate` 并在 `isUseExternalDB()` 时触发 `reload()`——`ExternalDataSourceProperties`（`persistence/.../ExternalDataSourceProperties.java:75-98`）绑定 `db.num`/`db.url.N`/`db.user.N`/`db.password.N` 多数据源配置——连接池默认值由 `DataSourcePoolProperties` 提供（`maxPoolSize=20`/`minimumIdle=2`/`connectionTimeout=3s`/`idleTimeout=10min`，可经 `db.pool.config.*` 覆盖）。`getHealth()`（`:215-229`）基于 `CheckDbHealthTask` 维护的 `isHealthList` 返回 `UP`/`WARN:ip`/`DOWN:ip`。`DatasourceMetrics`（`persistence/.../monitor/DatasourceMetrics.java:27-34`）仅提供数据库异常计数器 `getDbException()`。适用于生产环境大集群（>10 节点）——HikariCP 连接池支持高并发读写、连接复用、定时健康检查。嵌入式 Derby 实现参见 6.4 节。
 ### 6.6.1 设计背景
 
-`PaginationHelper<T>` 抽象基类（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:28-80`）是 `persistence/` 模块的分页抽象基类——提供统一的分页 CRUD 模板方法——`paginate(int pageNo, int pageSize, T criteria)` 分页查询返回 `Page<T>`（包含 `totalCount`/`pageNo`/`pageSize`/`items`）、`findAll(T criteria)` 全量查询返回 `List<T>`、`findOne(T criteria)` 单条查询返回 `T`、`count(T criteria)` 计数返回 `Integer`、`insert(T entity)` 插入返回 `Boolean`、`update(T entity)` 更新返回 `Boolean`、`delete(T entity)` 删除返回 `Boolean`。`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`）实现嵌入式 Derby 的分页语法——Derby 不支持 MySQL 的 `LIMIT` 关键字——需使用 SQL:2008 标准的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 语法——`SqlTypeLimiter` 接口的 Derby 适配器将 `LIMIT ? OFFSET ?` 转换为 Derby SQL 方言。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal<EmbeddedStorageContext>` 持有嵌入式存储上下文——包含当前线程的 `DataSource`/`JdbcTemplate`/`TransactionTemplate`——保证 Web 请求线程安全——避免多个请求线程共享同一 `JdbcTemplate` 导致的连接泄漏。
+`PaginationHelper<E>` 是接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:29-50`）——而非抽象基类——仅定义分页查询契约：`fetchPage()` 两个重载（`sqlCountRows`+`sqlFetchRows`+`args`+页码页大小+`RowMapper`，其中一个支持 `lastMaxId`）、`fetchPageLimit()` 四个重载（其中一个直接接收 `nacos-datasource-plugin` 的 `MapperResult` 对——计数 SQL 与取数 SQL 分别由 Mapper 生成）、以及 `updateLimit(sql, args)` 带页大小上限的更新。接口没有 `findAll()`/`findOne()`/`count()`/`insert()`/`update()`/`delete()` 等通用 CRUD 方法，也没有 `generateLimitSql()` 这类方言钩子——方言差异由 Mapper 层吸收。`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:34-150`）实现该接口——它不拼接任何分页 SQL——计数与取数 SQL 均为入参透传，执行委托给构造注入的 `DatabaseOperate`（`:38-40`）；`updateLimit()` 则把 SQL 放入 `EmbeddedStorageContextHolder` 后经 `databaseOperate.update()` 一次性提交。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过 `ThreadLocal<ArrayList<ModifyRequest>>`（`SQL_CONTEXT`）与 `ThreadLocal<Map<String, String>>`（`EXTEND_INFO_CONTEXT`）按线程累积待执行 SQL 与扩展信息。
 
 ### 6.6.2 核心类关系图
 
-图 6-6 展示了 `PaginationHelper<T>` 抽象基类与 `EmbeddedPaginationHelperImpl` 的分页机制：
+图 6-6 展示了 `PaginationHelper<E>` 接口与 `EmbeddedPaginationHelperImpl` 的分页机制：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">PaginationHelper&lt;T&gt; (abstract)</span><span class="s">+ paginate(int pageNo, int pageSize, T criteria)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Page&lt;T&gt; (分页查询)</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ findAll(T criteria) → List&lt;T&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ findOne(T criteria) → T</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ count(T criteria) → int</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ insert(T entity) → Boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ update(T entity) → Boolean</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ delete(T entity) → Boolean</div></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EmbeddedPagination</span><span class="s">HelperImpl</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">paginate():</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT * FROM t</div><div class="dgm-note" style="border:none;background:none;padding:0;">OFFSET x ROWS</div><div class="dgm-note" style="border:none;background:none;padding:0;">FETCH NEXT y</div><div class="dgm-note" style="border:none;background:none;padding:0;">ROWS ONLY</div><div class="dgm-note" style="border:none;background:none;padding:0;">count():</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT COUNT(*)</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">PaginationHelper&lt;E&gt; (interface)</span><span class="s">+ fetchPage(sqlCountRows, sqlFetchRows, args, pageNo, pageSize, rowMapper)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Page&lt;E&gt;（fetchPage × 2，其一支持 lastMaxId）</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ fetchPageLimit(...) → Page&lt;E&gt;（× 4，其一接收 MapperResult 对）</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ updateLimit(sql, args) → void</div></div></div><div class="dgm-note">△                              △</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">EmbeddedPagination</span><span class="s">HelperImpl&lt;E&gt;</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">构造参数: DatabaseOperate</div><div class="dgm-note" style="border:none;background:none;padding:0;">doFetchPage():</div><div class="dgm-note" style="border:none;background:none;padding:0;">queryOne(sqlCountRows) 计总数</div><div class="dgm-note" style="border:none;background:none;padding:0;">queryMany(sqlFetchRows) 取当页</div><div class="dgm-note" style="border:none;background:none;padding:0;">（SQL 均为入参透传，不拼接分页子句）</div><div class="dgm-note" style="border:none;background:none;padding:0;">updateLimit():</div><div class="dgm-note" style="border:none;background:none;padding:0;">addSqlContext → databaseOperate.update</div></div></div></div>
 
 ### 6.6.3 源码走读
 
-#### 6.6.3.1 PaginationHelper<T> 抽象基类
+#### 6.6.3.1 PaginationHelper<E> 接口与 Derby 实现
 
-`PaginationHelper<T>`（`persistence/.../repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`——嵌入式 Derby 实现）：
+`EmbeddedPaginationHelperImpl`（`persistence/.../repository/embedded/EmbeddedPaginationHelperImpl.java:34-150`——嵌入式 Derby 实现）：
 
 ```java
-public class EmbeddedPaginationHelperImpl<T> extends PaginationHelper<T> {
+public class EmbeddedPaginationHelperImpl<E> implements PaginationHelper<E> {
     
-    // line 55: 持有 EmbeddedStorageContextHolder
-    private final EmbeddedStorageContextHolder contextHolder;
+    private final DatabaseOperate databaseOperate;
     
-    @Override
-    public Page<T> paginate(int pageNo, int pageSize, T criteria) {
-        // line 65-75: 构造 Derby 分页 SQL（OFFSET...FETCH NEXT ROWS ONLY）
-        String sql = "SELECT * FROM " + getTableName(criteria) 
-            + " WHERE 1=1 " + buildWhereClause(criteria)
-            + " ORDER BY id OFFSET ? ROWS FETCH NEXT ? ROWS ONLY";
-        // line 80: 执行分页查询
-        List<T> list = contextHolder.getJdbcTemplate().query(
-            sql, new Object[]{ (pageNo - 1) * pageSize, pageSize },
-            new BeanPropertyRowMapper<>(getEntityClass())
-        );
-        // line 85: 查询总数
-        int totalCount = count(criteria);
-        return new Page<>(list, pageNo, pageSize, totalCount);
+    public EmbeddedPaginationHelperImpl(DatabaseOperate databaseOperate) {
+        this.databaseOperate = databaseOperate;
+    }
+    
+    private Page<E> doFetchPage(final String sqlCountRows, final Object[] countAgrs, final String sqlFetchRows,
+            final Object[] fetchArgs, final int pageNo, final int pageSize, final RowMapper rowMapper) {
+        checkPageInfo(pageNo, pageSize);
+        // 查询当前记录总数——SQL 为入参透传
+        Integer rowCountInt = (null != countAgrs)
+                ? databaseOperate.queryOne(sqlCountRows, countAgrs, Integer.class)
+                : databaseOperate.queryOne(sqlCountRows, Integer.class);
+        if (rowCountInt == null) {
+            throw new IllegalArgumentException("fetchPageLimit error");
+        }
+        // 计算总页数
+        int pageCount = rowCountInt / pageSize;
+        if (rowCountInt > pageSize * pageCount) {
+            pageCount++;
+        }
+        final Page<E> page = new Page<>();
+        page.setPageNumber(pageNo);
+        page.setPagesAvailable(pageCount);
+        page.setTotalCount(rowCountInt);
+        if (pageNo > pageCount) {
+            return page;
+        }
+        // 取当前页数据——SQL 由 nacos-datasource-plugin 的 Mapper 生成后透传
+        List<E> result = databaseOperate.queryMany(sqlFetchRows, fetchArgs, rowMapper);
+        for (E item : result) {
+            page.getPageItems().add(item);
+        }
+        return page;
     }
     
     @Override
-    public int count(T criteria) {
-        // line 95-100: SELECT COUNT(*) 查询总数
-        String sql = "SELECT COUNT(*) FROM " + getTableName(criteria) 
-            + " WHERE 1=1 " + buildWhereClause(criteria);
-        return contextHolder.getJdbcTemplate().queryForObject(sql, Integer.class);
+    public void updateLimit(final String sql, final Object[] args) {
+        EmbeddedStorageContextHolder.addSqlContext(sql, args);
+        try {
+            databaseOperate.update(EmbeddedStorageContextHolder.getCurrentSqlContext());
+        } finally {
+            EmbeddedStorageContextHolder.cleanAllContext();
+        }
     }
 }
 ```
 
 #### 6.6.3.2 EmbeddedStorageContextHolder
 
-`EmbeddedStorageContextHolder` 通过 `ThreadLocal` 持有当前线程的嵌入式存储上下文（`DataSource` + `JdbcTemplate`），保证多线程环境下的数据源隔离。
+`EmbeddedStorageContextHolder` 通过两个 `ThreadLocal`——`SQL_CONTEXT`（`ArrayList<ModifyRequest>`）与 `EXTEND_INFO_CONTEXT`（`Map<String, String>`）——按线程累积待执行 SQL 与扩展信息，保证多线程环境下各线程的 SQL 攒批互不干扰。
 
 ### 6.6.4 设计模式分析
 
-1. **模板方法模式（Template Method）**：`PaginationHelper<T>` 抽象基类（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:28-80`）定义 `paginate(pageNo, pageSize, criteria)`/`findAll(criteria)`/`findOne(criteria)`/`count(criteria)` 等模板方法——`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`）实现嵌入式 Derby 的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 分页语法。模板方法将分页算法的骨架流程固定在基类中——子类只需覆盖 `generateLimitSql(pageNo, pageSize)` 提供各自数据库的 SQL 方言。
+1. **接口抽象模式（Interface Abstraction）**：`PaginationHelper<E>` 是接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:29-50`）——定义 `fetchPage()`×2、`fetchPageLimit()`×4、`updateLimit()` 分页契约。它不做模板方法式的骨架固化——也没有 `generateLimitSql()` 方言钩子——分页流程（先计总数、再取当页）由各实现类自行组织（`EmbeddedPaginationHelperImpl.doFetchPage()`，`EmbeddedPaginationHelperImpl.java:114-149`）。
 
-2. **策略模式（Strategy）**：`EmbeddedPaginationHelperImpl`（Derby `OFFSET...FETCH NEXT`）和 `ExternalStoragePaginationHelperImpl`（MySQL `LIMIT OFFSET`）两种分页策略——运行时根据 `@ConditionOnEmbeddedStorage` / `@ConditionOnExternalStorage` 条件注解动态选择分页策略实现。策略模式使切换数据库无需修改分页调用代码——Spring 容器自动注入对应的 `PaginationHelper<T>` 实现。
+2. **策略模式（Strategy）**：`EmbeddedPaginationHelperImpl`（嵌入式，委托 `DatabaseOperate`）和 `ExternalStoragePaginationHelperImpl`（外部 MySQL，委托 `JdbcTemplate`）两种分页策略——由持有方（各 `DatabaseOperate` 实现/仓储类）按数据源类型手动 `new` 对应实现（`EmbeddedPaginationHelperImpl` 构造参数为 `DatabaseOperate`，`EmbeddedPaginationHelperImpl.java:38-40`）——并非 Spring Bean 自动注入。策略模式使切换数据库无需修改分页调用代码。
 
-3. **上下文持有者模式（Context Holder）**：`EmbeddedStorageContextHolder`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal<EmbeddedStorageContext>` 持有嵌入式存储上下文——包含当前线程的 `DataSource`、`JdbcTemplate`、`TransactionTemplate`。在 Web 请求处理中，每个 HTTP 请求线程拥有独立的嵌入式存储上下文——保证线程安全，避免多个请求线程共享同一 `JdbcTemplate` 导致的连接泄漏。
+3. **上下文持有者模式（Context Holder）**：`EmbeddedStorageContextHolder`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过两个 `ThreadLocal` 持有嵌入式存储的 SQL 攒批上下文——`SQL_CONTEXT`（`ArrayList<ModifyRequest>`）与 `EXTEND_INFO_CONTEXT`（`Map<String, String>`）。每个 HTTP 请求线程独立累积自己的待执行 SQL——`blockUpdate()` 提交时一次性取出并清理——实现线程级的写请求聚合。
 
 ### 6.6.5 Trade-off 分析
 
@@ -472,142 +525,172 @@ public class EmbeddedPaginationHelperImpl<T> extends PaginationHelper<T> {
 | **连接管理** | ✅ 嵌入式——零网络开销、零连接池配置 | ⚠️ HikariCP 连接池管理——需配置 poolSize/minIdle/maxLifetime | ✅ 零数据库连接 |
 | **持久化** | ❌ 嵌入式 Derby 数据存储在本地文件——节点重启后数据仍存在（非内存数据库） | ✅ MySQL 数据持久化到磁盘——支持主从复制 | ❌ 纯内存——重启后数据丢失 |
 
-Nacos 2.5.3 选择嵌入式 Derby 用于单机和测试环境的核心原因：零外部依赖——无需部署外部 MySQL 数据库，降低单机部署的运维复杂度。`LocalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:40-270`）自动创建嵌入式 Derby 数据库——无需用户手动执行 SQL 建表脚本。代价是嵌入式 Derby 在并发读写场景下性能不如 MySQL——但 Nacos 单机模式通常仅服务于小规模配置管理（<100 个客户端），嵌入式 Derby 的性能完全满足需求。对于生产集群模式，`@ConditionOnExternalStorage` 条件注解自动切换到 `ExternalDataSourceServiceImpl`——使用 HikariCP 连接池连接外部 MySQL——支持高并发读写。
+Nacos 2.5.3 选择嵌入式 Derby 用于单机和测试环境的核心原因：零外部依赖——无需部署外部 MySQL 数据库，降低单机部署的运维复杂度。`LocalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/LocalDataSourceServiceImpl.java:78-89`）自动创建嵌入式 Derby 数据库并经 `reload()` 执行建表脚本——无需用户手动执行 SQL 建表脚本。代价是嵌入式 Derby 在并发读写场景下性能不如 MySQL——但 Nacos 单机模式通常仅服务于小规模配置管理（<100 个客户端），嵌入式 Derby 的性能完全满足需求。对于生产集群模式，`DatasourceConfiguration` 置位的外部库标志使 `DynamicDataSource` 自动选择 `ExternalDataSourceServiceImpl`——使用 HikariCP 连接池连接外部 MySQL——支持高并发读写。
 
 ### 6.6.6 小结
 
-`PaginationHelper<T>` 抽象基类（`persistence/repository/PaginationHelper.java:28-80`）提供统一的分页 CRUD 模板方法——`paginate()`/`findAll()`/`findOne()`/`count()`/`insert()`/`update()`/`delete()`。`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`）实现嵌入式 Derby 的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 分页语法——通过 `SqlTypeLimiter` 接口适配 Derby SQL 方言。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:30-119`）通过 `ThreadLocal<EmbeddedStorageContext>` 持有嵌入式存储上下文——包含当前线程的 `DataSource`/`JdbcTemplate`/`TransactionTemplate`，保证 Web 请求线程安全。外部 MySQL 分页实现参见 6.8 节。
+`PaginationHelper<E>` 是接口（`persistence/repository/PaginationHelper.java:29-50`）——仅定义 `fetchPage()`×2、`fetchPageLimit()`×4 与 `updateLimit()` 分页契约。`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:34-150`）实现该接口——不拼接分页 SQL——方言 SQL 由 `nacos-datasource-plugin` 的 Mapper 生成后经构造注入的 `DatabaseOperate` 透传执行。`EmbeddedStorageContextHolder`（`persistence/repository/embedded/EmbeddedStorageContextHolder.java:31-119`）通过 `ThreadLocal<ArrayList<ModifyRequest>>` 与 `ThreadLocal<Map<String, String>>` 按线程累积待执行 SQL 与扩展信息。外部 MySQL 分页实现参见 6.8 节。
 
 
 ### 6.7.1 设计背景
 
-`DatabaseOperate` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/operate/DatabaseOperate.java:30-60`）定义 SQL 操作的统一抽象——`doOperate(ModifyRequest)` 执行 INSERT/UPDATE/DELETE——返回 `Boolean` 表示成功/失败、`doOperate(SelectRequest)` 执行 SELECT 查询——返回 `List<T>` 结果集、`doOperate(CountRequest)` 执行 COUNT 查询——返回 `Integer` 行数、`doOperate(OneRequest)` 执行单条查询——返回 `T` 实体对象。`StandaloneDatabaseOperateImpl`（`persistence/repository/embedded/operate/StandaloneDatabaseOperateImpl.java:40-153`）是单机模式的默认实现——通过 `JdbcTemplate.update()`/`JdbcTemplate.query()` 执行 SQL 操作——内部统一管理 `Connection` 获取、`PreparedStatement` 参数绑定、事务处理、异常捕获。`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:30-126` / `SelectRequest.java:30-126`）通过 Builder DSL 提供类型安全的 SQL 构造——`.table()`→`.where()`→`.orderBy()`→`.limit()`→`.build()`——所有用户输入通过 `PreparedStatement.setObject(index, value)` 参数化绑定——从根本上杜绝 SQL 注入风险。`SqlTypeLimiter` 接口适配嵌入式 Derby 和外部 MySQL 的 SQL 方言差异——`EmbeddedPaginationHelperImpl`（Derby `OFFSET...FETCH NEXT`）和 `ExternalStoragePaginationHelperImpl`（MySQL `LIMIT OFFSET`）各自实现 `limit()` 方法。
+`DatabaseOperate` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/operate/DatabaseOperate.java:35-154`）定义嵌入式存储 SQL 操作的统一抽象——三个 `queryOne()` 重载（`sql+Class`/`sql+args+Class`/`sql+args+RowMapper`）、三个 `queryMany()` 重载（返回 `List<R>` 或 `List<Map<String, Object>>`）、`update(List<ModifyRequest>, BiConsumer<Boolean, Throwable>)` 批量写（成功/失败经回调通知）、`dataImport(File)` 外部数据导入（返回 `CompletableFuture<RestResult<String>>`）以及两个 default 方法 `update(List<ModifyRequest>)` 与 `blockUpdate()`——后者取出当前线程 `EmbeddedStorageContextHolder` 中的 SQL 列表一次性提交并自动清理。不存在 `doOperate(ModifyRequest)`/`CountRequest`/`OneRequest` 这样的方法与请求类型。`BaseDatabaseOperate`（`BaseDatabaseOperate.java:46-275`）是 `extends DatabaseOperate` 的接口——以 default 方法提供 `queryOne()`×3（`:59-121`）、`queryMany()`×3（`:133-190`）、`update()`×2（`:200-259`）与 `doDataImport()`（`:268-273`）的通用 `JdbcTemplate` 实现。`StandaloneDatabaseOperateImpl`（`persistence/repository/embedded/operate/StandaloneDatabaseOperateImpl.java:53-55`）以 `@Conditional(ConditionStandaloneEmbedStorage.class)` + `@Component` 注册、`implements BaseDatabaseOperate`——`@PostConstruct` 经 `DynamicDataSource.getInstance().getDataSource()` 获取 `JdbcTemplate`/`TransactionTemplate`。`ModifyRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:28-83`）是纯 POJO——字段仅 `executeNo`/`sql`/`rollBackOnUpdateFail`/`args`——即"sql + 参数数组 + 失败回滚标志"的可序列化写请求，无 Builder；`SelectRequest`（`SelectRequest.java:27-128`）字段为 `queryType(byte)`/`sql`/`args`/`className`——`SelectRequestBuilder` 仅提供这四项的链式设置。`SqlTypeLimiter`（`SqlTypeLimiter.java:35-146`）是 SQL 类型白名单安全限制器——只放行 `INSERT`/`UPDATE`/`DELETE`/`SELECT` 与 `CREATE SCHEMA|TABLE|INDEX`/`ALTER TABLE`——开关 `nacos.persistence.sql.derby.limit.enabled` 默认 true——与分页方言适配无关。
 
 ### 6.7.2 核心类关系图
 
-图 6-7 展示了 `DatabaseOperate` 接口与 `ModifyRequest`/`SelectRequest` SQL DSL 的关系：
+图 6-7 展示了 `DatabaseOperate` 接口体系与 `ModifyRequest`/`SelectRequest` 的关系：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DatabaseOperate</span><span class="s">executeModify(ModifyRequest): Boolean</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">executeQuery(SelectRequest): List&lt;T&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeCount(SelectRequest): int</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeOne(SelectRequest): T</div></div></div><div class="dgm-note">△          implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">StandaloneDatabaseOperateImpl</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcTemplate</span><span class="typ">: JdbcTemplate</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">executeModify(ModifyRequest):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.update(sql, args)</div><div class="dgm-note" style="border:none;background:none;padding:0;">executeQuery(SelectRequest):</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ jdbcTemplate.query(sql, args, rowMapper)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">selectColumns</span><span class="typ">: String[]</span></li></ul><ul class="dgm-kv"><li><span class="fld">tableName</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">whereClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">orderByClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">limitClause</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">queryType</span><span class="typ">: QueryType</span></li></ul></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; DatabaseOperate</span><span class="s">queryOne(sql, cls) / queryOne(sql, args, cls) / queryOne(sql, args, mapper)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">queryMany(sql, args, mapper) / queryMany(sql, args, cls) / queryMany(sql, args)</div><div class="dgm-note" style="border:none;background:none;padding:0;">update(List&lt;ModifyRequest&gt;, BiConsumer) / dataImport(File)</div><div class="dgm-note" style="border:none;background:none;padding:0;">default: update(List) / blockUpdate() — 取当前线程 SQL 上下文一次性提交</div></div></div><div class="dgm-note">△  extends（default 方法提供 JdbcTemplate 通用实现）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">&lt;&lt;interface&gt;&gt; BaseDatabaseOperate</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">default queryOne × 3 / queryMany × 3 / update × 2 / doDataImport</div></div></div><div class="dgm-note">△  implements</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">StandaloneDatabaseOperateImpl</span><span class="s">@Conditional(ConditionStandaloneEmbedStorage) + @Component</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">jdbcTemplate</span><span class="typ">: JdbcTemplate（@PostConstruct 经 DynamicDataSource 获取）</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">update(List&lt;ModifyRequest&gt;): 事务内逐条 update，失败按 rollBackOnUpdateFail 回滚</div><div class="dgm-note" style="border:none;background:none;padding:0;">queryOne/queryMany: 委托 BaseDatabaseOperate default 方法</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest (纯 POJO, Serializable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">executeNo</span><span class="typ">: int（SQL 攒批序号）</span></li></ul><ul class="dgm-kv"><li><span class="fld">sql</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">args</span><span class="typ">: Object[]</span></li></ul><ul class="dgm-kv"><li><span class="fld">rollBackOnUpdateFail</span><span class="typ">: boolean</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest (Serializable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">queryType</span><span class="typ">: byte（对应 JdbcTemplate 方法）</span></li></ul><ul class="dgm-kv"><li><span class="fld">sql</span><span class="typ">: String</span></li></ul><ul class="dgm-kv"><li><span class="fld">args</span><span class="typ">: Object[]</span></li></ul><ul class="dgm-kv"><li><span class="fld">className</span><span class="typ">: String</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">SelectRequestBuilder: queryType/sql/args/className 四项链式设置</div></div></div></div>
 
 ### 6.7.3 源码走读
 
 #### 6.7.3.1 DatabaseOperate 接口
 
-`DatabaseOperate`（`persistence/.../repository/embedded/operate/DatabaseOperate.java:28-55`）：
+`DatabaseOperate`（`persistence/.../repository/embedded/operate/DatabaseOperate.java:35-154`）：
 
 ```java
 public interface DatabaseOperate {
     
-    // 执行 UPDATE/INSERT/DELETE
-    <T> Boolean executeModify(ModifyRequest modifyRequest);
+    <R> R queryOne(String sql, Class<R> cls);
+    <R> R queryOne(String sql, Object[] args, Class<R> cls);
+    <R> R queryOne(String sql, Object[] args, RowMapper<R> mapper);
     
-    // 执行 SELECT 查询（返回列表）
-    <T> List<T> executeQuery(SelectRequest selectRequest);
+    <R> List<R> queryMany(String sql, Object[] args, RowMapper<R> mapper);
+    <R> List<R> queryMany(String sql, Object[] args, Class<R> rClass);
+    List<Map<String, Object>> queryMany(String sql, Object[] args);
     
-    // 执行 SELECT COUNT 查询
-    <T> int executeCount(SelectRequest selectRequest);
+    Boolean update(List<ModifyRequest> modifyRequests, BiConsumer<Boolean, Throwable> consumer);
     
-    // 执行 SELECT 查询（返回单个对象）
-    <T> T executeOne(SelectRequest selectRequest);
+    default Boolean update(List<ModifyRequest> modifyRequests) {
+        return update(modifyRequests, null);
+    }
+    
+    CompletableFuture<RestResult<String>> dataImport(File file);
+    
+    default Boolean blockUpdate() {
+        return blockUpdate(null);
+    }
+    
+    default Boolean blockUpdate(BiConsumer<Boolean, Throwable> consumer) {
+        try {
+            return update(EmbeddedStorageContextHolder.getCurrentSqlContext(), consumer);
+        } finally {
+            EmbeddedStorageContextHolder.cleanAllContext();
+        }
+    }
 }
 ```
 
 #### 6.7.3.2 StandaloneDatabaseOperateImpl
 
-`StandaloneDatabaseOperateImpl`（`persistence/.../repository/embedded/operate/StandaloneDatabaseOperateImpl.java:35-100`）：
+`StandaloneDatabaseOperateImpl`（`persistence/.../repository/embedded/operate/StandaloneDatabaseOperateImpl.java:53-100`）：
 
 ```java
-public class StandaloneDatabaseOperateImpl implements DatabaseOperate {
+@Conditional(ConditionStandaloneEmbedStorage.class)
+@Component
+public class StandaloneDatabaseOperateImpl implements BaseDatabaseOperate {
     
-    private final JdbcTemplate jdbcTemplate;
+    private final SqlLimiter sqlLimiter;
+    private JdbcTemplate jdbcTemplate;
+    private TransactionTemplate transactionTemplate;
     
-    @Override
-    public <T> Boolean executeModify(ModifyRequest modifyRequest) {
-        // line 50-55: 通过 JdbcTemplate.update() 执行 INSERT/UPDATE/DELETE
-        int affectedRows = jdbcTemplate.update(
-            modifyRequest.getSql(), 
-            modifyRequest.getArgs()
-        );
-        return affectedRows > 0;
+    public StandaloneDatabaseOperateImpl() {
+        this.sqlLimiter = new SqlTypeLimiter();
+    }
+    
+    @PostConstruct
+    protected void init() {
+        // 经 DynamicDataSource 单例获取当前数据源的 JdbcTemplate/TransactionTemplate
+        DataSourceService dataSourceService = DynamicDataSource.getInstance().getDataSource();
+        jdbcTemplate = dataSourceService.getJdbcTemplate();
+        transactionTemplate = dataSourceService.getTransactionTemplate();
+        LOGGER.info("use StandaloneDatabaseOperateImpl");
     }
     
     @Override
-    public <T> List<T> executeQuery(SelectRequest selectRequest) {
-        // line 65-75: 通过 JdbcTemplate.query() 执行 SELECT 查询
-        return jdbcTemplate.query(
-            selectRequest.getSql(),
-            selectRequest.getArgs(),
-            selectRequest.getRowMapper()
-        );
+    public <R> R queryOne(String sql, Class<R> cls) {
+        return queryOne(jdbcTemplate, sql, cls);   // 委托 BaseDatabaseOperate default 方法
+    }
+    
+    @Override
+    public CompletableFuture<RestResult<String>> dataImport(File file) {
+        return CompletableFuture.supplyAsync(() -> { /* 解析文件并批量写入 Derby */ });
     }
 }
 ```
 
+`update(List<ModifyRequest>)` 的核心逻辑在 `BaseDatabaseOperate` 的 default 实现中：以 `transactionTemplate.execute()` 开启事务——逐条 `jdbcTemplate.update()` 执行 `ModifyRequest`——执行前经 `sqlLimiter` 做类型白名单校验——某条失败且其 `rollBackOnUpdateFail=true` 时整体回滚并回调通知。
+
 ### 6.7.4 设计模式分析
 
-1. **命令模式（Command）**：`ModifyRequest`（INSERT/UPDATE/DELETE，`persistence/repository/embedded/sql/ModifyRequest.java:30-126`）和 `SelectRequest`（SELECT，`persistence/repository/embedded/sql/SelectRequest.java:30-126`）封装 SQL 命令及其参数——表名、WHERE 条件、ORDER BY 排序、LIMIT 分页、参数绑定等。`BaseDatabaseOperate.executeModify()`（`persistence/repository/embedded/operate/BaseDatabaseOperate.java:60-90`）作为命令执行器——将 `ModifyRequest` 转换为 `JdbcTemplate.update()` 调用。命令模式将 SQL 请求对象（Command）与执行器（Invoker）解耦——新增 SQL 操作类型只需新增 `QueryType` 枚举值 + `ModifyRequest` 构造逻辑，无需修改 `BaseDatabaseOperate` 的执行分发逻辑。
+1. **命令模式（Command）**：`ModifyRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:28-83`）封装一条可序列化的写命令——`sql` + `args` 参数数组 + `rollBackOnUpdateFail` 失败回滚标志 + `executeNo` 攒批序号。`EmbeddedStorageContextHolder` 按 `executeNo` 顺序累积命令——`BaseDatabaseOperate.update()`（`persistence/repository/embedded/operate/BaseDatabaseOperate.java:200-259`）作为命令执行器——在事务内将 `ModifyRequest` 逐条转换为 `JdbcTemplate.update()` 调用。命令模式将 SQL 请求对象（Command）与执行器（Invoker）解耦——新增 SQL 操作只需构造新的 `ModifyRequest`，无需修改执行分发逻辑。
 
-2. **DSL 模式（Domain-Specific Language）**：`ModifyRequest.ModifyBuilder()`（`ModifyRequest.java:80-120`）和 `SelectRequest.SelectBuilder()`（`SelectRequest.java:80-126`）提供类型安全的 SQL 构造 DSL——链式调用 `.table().where().orderBy().limit().build()` 编译期检查参数类型匹配（`String`/`Integer`/`Long`）。DSL 避免了字符串拼接 SQL 的 SQL 注入风险——所有用户输入通过 `PreparedStatement.setObject(index, value)` 参数化绑定，从根本上杜绝 SQL 注入。
+2. **骨架复用模式（Default Method Reuse）**：`BaseDatabaseOperate`（`BaseDatabaseOperate.java:46-275`）以 `extends DatabaseOperate` 的接口 + default 方法形式提供 `queryOne()`×3/`queryMany()`×3/`update()`×2 的通用 `JdbcTemplate` 实现——`StandaloneDatabaseOperateImpl` 等实现类各自只补充差异逻辑——公共 CRUD 骨架零重复。
 
-3. **模板方法模式（Template Method）**：`DatabaseOperate` 接口定义 `executeModify()`/`executeQuery()`/`executeCount()`/`executeOne()` 统一 SQL 操作模板方法——`StandaloneDatabaseOperateImpl`（`persistence/repository/embedded/operate/StandaloneDatabaseOperateImpl.java:40-153`）实现这些方法，内部调用 `JdbcTemplate.update()`/`JdbcTemplate.query()`。模板方法模式使所有 SQL 操作共享统一的连接获取、异常处理、日志记录逻辑——子类只需关心具体的 SQL 执行细节。
+3. **模板方法模式（Template Method）**：`DatabaseOperate` 接口定义 `queryOne()`/`queryMany()`/`update()`/`dataImport()`/`blockUpdate()` 统一 SQL 操作契约——`blockUpdate()` 的 default 实现（取出线程 SQL 上下文→提交→finally 清理）固定了"攒批-提交-清理"骨架流程——具体执行由 `update()` 的实现方完成。
 
 ### 6.7.5 Trade-off 分析
 
-**表 6.7：SQL DSL vs 字符串拼接 vs MyBatis trade-off**
+**表 6.7：SQL 请求模型 vs 字符串拼接 vs MyBatis trade-off**
 
-| 权衡维度 | SQL DSL `ModifyRequest`/`SelectRequest`（Nacos 选择） | 字符串拼接 SQL | MyBatis XML Mapper |
+| 权衡维度 | SQL 请求模型 `ModifyRequest`/`SelectRequest`（Nacos 选择） | 字符串拼接 SQL | MyBatis XML Mapper |
 |---------|------------------------------|----------------|-------------------|
-| **类型安全** | ✅ Builder 方法编译期检查——`.where("data_id"=?, value)` 参数类型匹配 | ❌ 运行时字符串拼接——类型错误运行时才暴露 | ✅ XML Mapper 编译期生成代理 |
+| **类型安全** | ✅ `sql + args` 参数数组结构化承载——SQL 与参数分离 | ❌ 运行时字符串拼接——类型错误运行时才暴露 | ✅ XML Mapper 编译期生成代理 |
 | **SQL 注入防护** | ✅ `PreparedStatement.setObject()` 参数化绑定——从根本上杜绝 SQL 注入 | ❌ 需手动转义单引号/分号等特殊字符——易遗漏 | ✅ `#{}` 预编译占位符 |
-| **可维护性** | ✅ 链式调用清晰可读——SQL 结构与 Java 代码在同一文件 | ❌ 多行字符串拼接——SQL 与 Java 代码混杂 | ⚠️ XML Mapper 分散在多个 XML 文件中——跨文件追踪 SQL 逻辑困难 |
-| **跨数据库支持** | ✅ `SqlTypeLimiter` 适配 Derby/MySQL SQL 方言 | ✅ 无任何适配——直接写特定数据库 SQL | ⚠️ 需配置 Hibernate Dialect 或 MyBatis DatabaseIdProvider |
-| **学习成本** | ⚠️ 需学习 Builder DSL API——`ModifyRequest.builder().table()` | ✅ 通用 SQL 知识——无额外 API 学习 | ❌ 需学习 MyBatis XML 语法——`<select>/<insert>/<resultMap>` |
+| **可维护性** | ✅ 请求对象可序列化——攒批、跨进程传递（分布式场景）友好 | ❌ 多行字符串拼接——SQL 与 Java 代码混杂 | ⚠️ XML Mapper 分散在多个 XML 文件中——跨文件追踪 SQL 逻辑困难 |
+| **安全边界** | ✅ `SqlTypeLimiter` SQL 类型白名单——拦截非白名单 SQL | ✅ 无任何适配——直接写特定数据库 SQL | ⚠️ 需配置 Hibernate Dialect 或 MyBatis DatabaseIdProvider |
+| **学习成本** | ⚠️ 需了解 `ModifyRequest`/`SelectRequest` 请求对象语义 | ✅ 通用 SQL 知识——无额外 API 学习 | ❌ 需学习 MyBatis XML 语法——`<select>/<insert>/<resultMap>` |
 
-Nacos 2.5.3 选择自研 SQL DSL 而非 MyBatis 的核心原因：`persistence/` 模块需同时支持嵌入式 Derby（测试/单机）和外部 MySQL（生产集群）两种数据库——自研 DSL 通过 `SqlTypeLimiter` 接口适配两种数据库的 SQL 方言差异（Derby `OFFSET...FETCH NEXT` vs MySQL `LIMIT OFFSET`）。MyBatis 的 `DatabaseIdProvider` 虽可配置多数据库 SQL——但需为每个 SQL 语句维护两份 XML Mapper（Derby 版本 + MySQL 版本），维护成本高昂。自研 DSL 将 SQL 方言适配逻辑集中在 `SqlTypeLimiter` 接口中——子类各自实现 `limit()` 方法即可，无需维护两份完整的 SQL Mapper。代价是需学习自研 DSL API——但 API 设计贴近 SQL 自然语法（`.table().where().limit()`），学习曲线平缓。
+Nacos 2.5.3 选择 SQL 请求对象模型而非 MyBatis 的核心原因：`persistence/` 模块的写操作需要"攒批-事务提交-失败回滚"语义（`EmbeddedStorageContextHolder` 攒批 + `ModifyRequest.rollBackOnUpdateFail`）——且分布式场景下请求对象需可序列化传输。MyBatis 的 `DatabaseIdProvider` 虽可配置多数据库 SQL——但需为每个 SQL 语句维护 XML Mapper，与 Nacos 基于 `nacos-datasource-plugin` Mapper 插件生成 SQL 的路线不匹配。`SqlTypeLimiter` 将 SQL 类型白名单校验集中在 SQL 执行入口——任何绕过校验的 SQL 都会被 `SQLException` 拒绝。代价是需了解请求对象模型——但字段极少（4 个），学习曲线平缓。
 
 ### 6.7.6 小结
 
-`DatabaseOperate` 接口定义统一的 SQL 操作模板方法——`executeModify()`/`executeQuery()`/`executeCount()`/`executeOne()`。`StandaloneDatabaseOperateImpl`（`persistence/repository/embedded/operate/StandaloneDatabaseOperateImpl.java:40-153`）通过 `JdbcTemplate` 执行这些方法——内部统一管理 `Connection` 获取、`PreparedStatement` 参数绑定、事务处理、异常捕获。`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:30-126` / `SelectRequest.java:30-126`）通过 Builder DSL 提供类型安全的 SQL 构造——`PreparedStatement.setObject()` 参数化绑定从根本上杜绝 SQL 注入。`SqlTypeLimiter` 接口适配嵌入式 Derby 和外部 MySQL 的 SQL 方言差异——`EmbeddedPaginationHelperImpl` 和 `ExternalStoragePaginationHelperImpl` 各自实现 `limit()` 方法。
+`DatabaseOperate` 接口定义 `queryOne()`×3/`queryMany()`×3/`update()`/`dataImport()`/`blockUpdate()` 统一 SQL 操作契约——`BaseDatabaseOperate`（接口 extends）以 default 方法提供 `JdbcTemplate` 通用实现。`StandaloneDatabaseOperateImpl`（`persistence/repository/embedded/operate/StandaloneDatabaseOperateImpl.java:53-55`）以 `@Conditional(ConditionStandaloneEmbedStorage.class)` + `@Component` 注册——`@PostConstruct` 经 `DynamicDataSource` 获取 `JdbcTemplate`/`TransactionTemplate`。`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:28-83` / `SelectRequest.java:27-128`）是 SQL + 参数数组的请求对象——`PreparedStatement.setObject()` 参数化绑定从根本上杜绝 SQL 注入。`SqlTypeLimiter`（`SqlTypeLimiter.java:35-146`）是 SQL 类型白名单安全限制器——只放行 DML 与部分 DDL——与分页方言适配无关。
 
 
 ### 6.8.1 设计背景
 
-`ExternalStoragePaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:38-147`）是 `PaginationHelper<T>` 抽象基类的外部 MySQL 分页实现——使用 MySQL 标准的 `LIMIT ? OFFSET ?` 分页语法。与嵌入式 Derby 的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 语法（SQL:2008 标准）不同——MySQL 直接支持 `LIMIT` 关键字，分页 SQL 更简洁（`LIMIT ? OFFSET ?` 仅 8 个字符 vs Derby 的 45 个字符）。`ExternalStoragePaginationHelperImpl` 通过 `@ConditionOnExternalStorage` 条件注解（`persistence/configuration/condition/ConditionOnExternalStorage.java:25-45`）在 `spring.datasource.platform=mysql` 时自动注入——与 `ExternalDataSourceServiceImpl`（HikariCP 连接池）配合使用，适用于生产环境大集群（>10 节点）的高并发读写场景。分页 SQL 通过 `SqlTypeLimiter` 接口的 MySQL 适配器直接透传 `LIMIT ? OFFSET ?`——无需 SQL 方言转换——MySQL 原生支持 `LIMIT`/`OFFSET` 关键字。性能方面：MySQL InnoDB 在大偏移量场景下（如 `LIMIT 1000000, 10`）需扫描跳过 1,000,010 行——建议使用游标分页（`WHERE id > last_id LIMIT 10`）或 ElasticSearch 搜索引擎代替深分页。
+`ExternalStoragePaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:34-147`）是 `PaginationHelper<E>` 接口的外部 MySQL 分页实现——与嵌入式实现的差异在执行通道而非 SQL 生成：它构造注入 `JdbcTemplate`（`:38-40`）并直接执行透传的计数/取数 SQL——SQL 本身由 `nacos-datasource-plugin` 的 Mapper 生成（MySQL 方言含 `LIMIT` 分页子句），实现类内部不拼接分页子句。当 `DatasourceConfiguration.isUseExternalDB()` 为 true 时由持有方手动 `new` 并注入外部数据源的 `JdbcTemplate`——与 `ExternalDataSourceServiceImpl`（HikariCP 连接池）配合使用，适用于生产环境大集群（>10 节点）的高并发读写场景。性能方面：MySQL InnoDB 在大偏移量场景下（如 `LIMIT 1000000, 10`）需扫描跳过 1,000,010 行——建议使用游标分页（`WHERE id > last_id LIMIT 10`）或 ElasticSearch 搜索引擎代替深分页。
 
 ### 6.8.2 核心类关系图
 
-图 6-8 展示了 `ExternalStoragePaginationHelperImpl` 基于 MySQL `LIMIT OFFSET` 分页语法：
+图 6-8 展示了 `ExternalStoragePaginationHelperImpl` 基于 `JdbcTemplate` 透传执行的分页实现：
 
-<div class="dgm"><div class="dgm-cap"><span class="no">6.8.2</span><span class="tt">ExternalStoragePaginationHelperImpl 分页实现</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">ExternalStoragePaginationHelperImpl&lt;T&gt;</span><span class="s">extends PaginationHelper&lt;T&gt;</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">paginate(pageNo, pageSize, criteria): Page&lt;T&gt;</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>SELECT * FROM t WHERE … ORDER BY id LIMIT ? OFFSET ?</li><li>→ jdbcTemplate.query(sql, args, rowMapper)</li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">count(criteria): int</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>SELECT COUNT(*) FROM t WHERE …</li><li>→ jdbcTemplate.queryForObject(sql, Integer.class)</li></div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">6.8.2</span><span class="tt">ExternalStoragePaginationHelperImpl 分页实现</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">ExternalStoragePaginationHelperImpl&lt;E&gt;</span><span class="s">implements PaginationHelper&lt;E&gt;（构造注入 JdbcTemplate）</span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">doFetchPage(sqlCountRows, sqlFetchRows, args, pageNo, pageSize, rowMapper)</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>queryForObject(sqlCountRows, args, Integer.class) 计总数</li><li>→ jdbcTemplate.query(sqlFetchRows, args, rowMapper) 取当页</li><li>（SQL 由 Mapper 生成后透传，实现类不拼接分页子句）</li></div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">updateLimit(sql, args): void</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>→ jdbcTemplate.update(sql, args)</li></div></div></div></div></div></div>
 
 ### 6.8.3 源码走读
 
-`ExternalStoragePaginationHelperImpl.paginate()`——MySQL `LIMIT OFFSET` 分页：
+`ExternalStoragePaginationHelperImpl.doFetchPage()`——`JdbcTemplate` 透传执行：
 
 ```java
-@Override
-public Page<T> paginate(int pageNo, int pageSize, T criteria) {
-    // line 55-65: 构造 MySQL LIMIT OFFSET 分页 SQL
-    String sql = "SELECT * FROM " + getTableName(criteria) 
-        + " WHERE 1=1 " + buildWhereClause(criteria)
-        + " ORDER BY id LIMIT ? OFFSET ?";
-    List<T> list = jdbcTemplate.query(
-        sql, 
-        new Object[]{ pageSize, (pageNo - 1) * pageSize },
-        new BeanPropertyRowMapper<>(getEntityClass())
-    );
-    int totalCount = count(criteria);
-    return new Page<>(list, pageNo, pageSize, totalCount);
+private Page<E> doFetchPage(final String sqlCountRows, final Object[] countAgrs, final String sqlFetchRows,
+        final Object[] fetchArgs, final int pageNo, final int pageSize, final RowMapper rowMapper) {
+    checkPageInfo(pageNo, pageSize);
+    final Page<E> page = new Page<>();
+    // line 115-120: 计数 SQL 为入参透传（MySQL 方言由 Mapper 生成）
+    Integer rowCountInt = null;
+    if (null != countAgrs) {
+        rowCountInt = jdbcTemplate.queryForObject(sqlCountRows, countAgrs, Integer.class);
+    } else {
+        rowCountInt = jdbcTemplate.queryForObject(sqlCountRows, Integer.class);
+    }
+    // 计算总页数后取当页——取数 SQL 同样透传
+    ...
+    List<E> result = jdbcTemplate.query(sqlFetchRows, fetchArgs, rowMapper);
+    for (E item : result) {
+        page.getPageItems().add(item);
+    }
+    return page;
 }
 ```
 
 ### 6.8.4 设计模式分析
 
-1. **策略模式（Strategy）**：`EmbeddedPaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`）使用 Derby 的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 语法，`ExternalStoragePaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:38-147`）使用 MySQL 的 `LIMIT ? OFFSET ?` 语法——两种分页策略实现 `PaginationHelper<T>` 抽象基类的 `paginate(pageNo, pageSize, criteria)` 模板方法，适配不同数据库的 SQL 方言差异。
+1. **策略模式（Strategy）**：`EmbeddedPaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:34-150`，委托 `DatabaseOperate`）与 `ExternalStoragePaginationHelperImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:34-147`，委托 `JdbcTemplate`）两种分页策略——实现 `PaginationHelper<E>` 接口的 `fetchPage()`/`fetchPageLimit()` 契约，执行通道随存储模式切换。
 
-2. **模板方法模式（Template Method）**：`PaginationHelper<T>` 抽象基类（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:28-80`）定义 `paginate()`/`findAll()`/`findOne()`/`count()`/`insert()`/`update()`/`delete()` 统一分页 CRUD 模板方法——子类只需覆盖 `generateLimitSql()` 方法提供各自数据库的分页 SQL 方言（Derby vs MySQL），其余 CRUD 逻辑由基类统一实现。
+2. **接口抽象模式（Interface Abstraction）**：`PaginationHelper<E>` 是接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/PaginationHelper.java:29-50`）——仅定义 `fetchPage()`×2、`fetchPageLimit()`×4、`updateLimit()` 契约——没有 `findAll()`/`count()`/`generateLimitSql()` 等成员——分页流程与方言子句均由实现类或 Mapper 层处理，接口保持最小面。
 
-3. **适配器模式（Adapter）**：`SqlTypeLimiter` 接口（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:30-70`）定义 `limit(pageNo, pageSize)` 方法——`EmbeddedPaginationHelperImpl` 内部的 Derby 适配器将 `LIMIT ? OFFSET ?` 适配为 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`，`ExternalStoragePaginationHelperImpl` 内部的 MySQL 适配器直接透传 `LIMIT ? OFFSET ?`。
+3. **适配器模式（Adapter）**：`SqlTypeLimiter`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:35-146`）并非分页方言适配器——而是 SQL 类型白名单限制器（仅放行 DML 与部分 DDL，开关 `nacos.persistence.sql.derby.limit.enabled` 默认 true）——在 SQL 执行入口处拦截非白名单语句。
 
 ### 6.8.5 Trade-off 分析
 
@@ -625,249 +708,249 @@ Nacos 2.5.3 选择数据库层分页而非应用程序内存分页的核心原�
 
 ### 6.8.6 小结
 
-`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:40-150`）使用 Derby 的 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY` 语法，`ExternalStoragePaginationHelperImpl`（`persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:38-147`）使用 MySQL 的 `LIMIT ? OFFSET ?` 语法——通过 `PaginationHelper<T>` 模板方法模式统一分页 CRUD 逻辑，子类仅需覆盖 `generateLimitSql()` 提供各自数据库的分页 SQL 方言。`SqlTypeLimiter` 接口（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:30-70`）适配两种数据库的 SQL 方言差异——Derby 适配器将 `LIMIT x OFFSET y` 转换为 `OFFSET x ROWS FETCH NEXT y ROWS ONLY`。
+`EmbeddedPaginationHelperImpl`（`persistence/repository/embedded/EmbeddedPaginationHelperImpl.java:34-150`）与 `ExternalStoragePaginationHelperImpl`（`persistence/repository/extrnal/ExternalStoragePaginationHelperImpl.java:34-147`）均实现 `PaginationHelper<E>` 接口（`:29-50`）——均不拼接分页 SQL——方言分页子句由 `nacos-datasource-plugin` 的 Mapper 生成后透传执行；差异仅在执行通道（`DatabaseOperate` vs `JdbcTemplate`）。`SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:35-146`）是 SQL 类型白名单安全限制器——与分页方言适配无关。
 ### 6.9.1 设计背景
 
-`ModifyRequest`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/ModifyRequest.java:30-126`）和 `SelectRequest`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/SelectRequest.java:30-126`）是 `persistence/` 模块的类型安全 SQL 构造 DSL（Domain-Specific Language）——通过 Builder 模式分步构造 SQL 语句——`.table()`→`.where()`→`.orderBy()`→`.limit()`→`.build()`，链式调用清晰可读。`ModifyRequest.ModifyBuilder()`（:`80-120`）构造 INSERT/UPDATE/DELETE SQL，`SelectRequest.SelectBuilder()`（:`80-126`）构造 SELECT SQL。所有用户输入通过 `PreparedStatement.setObject(index, value)` 参数化绑定——从根本上杜绝 SQL 注入风险。`QueryType` 枚举（`persistence/repository/embedded/sql/QueryType.java:25-40`）定义 SQL 操作类型（`INSERT`/`UPDATE`/`DELETE`/`SELECT`/`COUNT`）——`BaseDatabaseOperate.doOperate()`（`persistence/repository/embedded/operate/BaseDatabaseOperate.java:60-90`）根据 `QueryType` 分发到不同的 `JdbcTemplate` 执行方法。`SqlTypeLimiter` 接口（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:30-70`）限制 SQL 操作范围——如单次 DELETE 最大行数限制防误删——`EmbeddedPaginationHelperImpl`（Derby）和 `ExternalStoragePaginationHelperImpl`（MySQL）各自实现 `limit()` 方法适配不同数据库的 SQL 方言差异（Derby `OFFSET...FETCH NEXT` vs MySQL `LIMIT OFFSET`）。
+`ModifyRequest`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/ModifyRequest.java:28-83`）和 `SelectRequest`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/SelectRequest.java:27-128`）是 `persistence/` 模块嵌入式存储层的可序列化 SQL 请求对象——而非完整的 SQL 构造 DSL。`ModifyRequest` 是纯 POJO——字段仅 `executeNo`/`sql`/`rollBackOnUpdateFail`/`args`——即"sql + 参数数组 + 失败回滚标志"的写请求；`SelectRequest` 字段为 `queryType(byte)`/`sql`/`args`/`className`——其 `SelectRequestBuilder` 仅提供这四项的链式设置。两者均不包含表名/条件/排序/分页等结构化 SQL 片段——SQL 文本通常由调用方或 `nacos-datasource-plugin` 的 Mapper 生成。所有用户输入通过 `PreparedStatement.setObject(index, value)` 参数化绑定——从根本上杜绝 SQL 注入风险。`QueryType`（`persistence/repository/embedded/sql/QueryType.java:26-58`）是 final 常量类（非枚举）——定义 6 个 `byte` 常量 0-5——逐一对应 `JdbcTemplate` 的查询方法形态（如 `QUERY_ONE_WITH_MAPPER_WITH_ARGS=0` 对应 `queryForObject(String, RowMapper)`、`QUERY_MANY_WITH_LIST_WITH_ARGS=4` 对应 `queryForList(String, Object...)`）——`BaseDatabaseOperate` 按 `queryType` 分发到对应的 `JdbcTemplate` 执行方法。`SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:35-146`）是 SQL 类型白名单安全限制器——只放行 `INSERT`/`UPDATE`/`DELETE`/`SELECT` 与 `CREATE SCHEMA|TABLE|INDEX`/`ALTER TABLE`——开关 `nacos.persistence.sql.derby.limit.enabled` 默认 true——与分页方言适配无关。
 
 ### 6.9.2 核心类关系图
 
-图 6-9 展示了 `ModifyRequest`/`SelectRequest` SQL 构造 DSL 的层次结构：
+图 6-9 展示了 `ModifyRequest`/`SelectRequest` SQL 请求对象的层次结构：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>sql: String          ← 最终构造的 SQL 语句</li><li>args: Object[]       ← 参数绑定数组</li><li>tableName: String    ← 操作表名</li><li>queryType: QueryType ← INSERT/UPDATE/DELETE</li><li>SqlLimiter          ← SQL 操作限制器</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ getSql(): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getArgs(): Object[]</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getQueryType(): QueryType</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>selectColumns: String[] ← SELECT 列名数组</li><li>tableName: String       ← FROM 表名</li><li>whereClause: String    ← WHERE 条件子句</li><li>orderByClause: String ← ORDER BY 排序子句</li><li>limitClause: String    ← LIMIT OFFSET 分句子句</li><li>queryType: QueryType   ← SELECT / COUNT</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">+ getSql(): String</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getArgs(): Object[]</div><div class="dgm-note" style="border:none;background:none;padding:0;">+ getRowMapper(): RowMapper&lt;T&gt;</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">QueryType (enum)</span><span class="s">INSERT    → executeModify(modifyRequest)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">UPDATE    → executeModify(modifyRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">DELETE    → executeModify(modifyRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">SELECT    → executeQuery(selectRequest)</div><div class="dgm-note" style="border:none;background:none;padding:0;">COUNT     → executeCount(selectRequest)</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">ModifyRequest (纯 POJO, Serializable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>sql: String          ← 完整 SQL 语句文本</li><li>args: Object[]       ← 参数绑定数组</li><li>executeNo: int       ← SQL 攒批序号</li><li>rollBackOnUpdateFail: boolean ← 失败回滚标志</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">无 Builder/tableName/queryType/SqlLimiter 字段</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">SelectRequest (Serializable)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>queryType: byte      ← 对应 JdbcTemplate 方法形态（0-5）</li><li>sql: String          ← 完整 SQL 语句文本</li><li>args: Object[]       ← 参数绑定数组</li><li>className: String    ← 结果类型类名</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">SelectRequestBuilder: queryType/sql/args/className 四项链式设置</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">QueryType (final 常量类)</span><span class="s">byte 常量 0-5，对应 JdbcTemplate 方法</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">0 QUERY_ONE_WITH_MAPPER_WITH_ARGS → queryForObject(sql, RowMapper)</div><div class="dgm-note" style="border:none;background:none;padding:0;">1 QUERY_ONE_NO_MAPPER_NO_ARGS     → queryForObject(sql, Class)</div><div class="dgm-note" style="border:none;background:none;padding:0;">2 QUERY_ONE_NO_MAPPER_WITH_ARGS   → queryForObject(sql, args, Class)</div><div class="dgm-note" style="border:none;background:none;padding:0;">3 QUERY_MANY_WITH_MAPPER_WITH_ARGS→ query(sql, args, RowMapper)</div><div class="dgm-note" style="border:none;background:none;padding:0;">4 QUERY_MANY_WITH_LIST_WITH_ARGS  → queryForList(sql, args...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">5 QUERY_MANY_NO_MAPPER_WITH_ARGS  → queryForList(sql, args, Class)</div></div></div></div>
 
 ### 6.9.3 源码走读
 
-#### 6.9.3.1 ModifyRequest SQL 构造
+#### 6.9.3.1 ModifyRequest 写请求
 
-`ModifyRequest`——INSERT/UPDATE/DELETE SQL 构造：
+`ModifyRequest`——可序列化的写请求（`ModifyRequest.java:28-83`）：
 
 ```java
-public class ModifyRequest {
+public class ModifyRequest implements Serializable {
     
-    private String sql;
-    private Object[] args;
-    private String tableName;
-    private QueryType queryType;
-    private SqlLimiter sqlLimiter;
+    private static final long serialVersionUID = 4548851816596520564L;
     
-    public static ModifyBuilder newBuilder() {
-        return new ModifyBuilder();
+    private int executeNo;                                    // SQL 攒批序号
+    
+    private String sql;                                       // 完整 SQL 语句
+    
+    private boolean rollBackOnUpdateFail = Boolean.FALSE;     // 失败回滚标志
+    
+    private Object[] args;                                    // 参数绑定数组
+    
+    public ModifyRequest() {
     }
     
-    public static class ModifyBuilder {
-        
-        public ModifyBuilder table(String tableName) { ... }
-        public ModifyBuilder setColumns(String[] columns, Object[] values) { ... }
-        public ModifyBuilder where(String whereClause) { ... }
-        public ModifyBuilder queryType(QueryType type) { ... }
-        public ModifyBuilder limiter(SqlLimiter limiter) { ... }
-        public ModifyRequest build() { ... }
+    public ModifyRequest(String sql) {
+        this.sql = sql;
     }
+    // getter/setter ...
 }
 ```
 
-#### 6.9.3.2 SelectRequest SQL 构造
+`ModifyRequest` 没有 Builder、没有表名/条件等 SQL 结构化字段——通常由 `EmbeddedStorageContextHolder.addSqlContext(sql, args)` 在攒批时构造（`executeNo` 取当前列表长度）。
 
-`SelectRequest`——SELECT/COUNT SQL 构造：
+#### 6.9.3.2 SelectRequest 查询请求
+
+`SelectRequest`——可序列化的查询请求（`SelectRequest.java:27-128`）：
 
 ```java
-public class SelectRequest {
+public class SelectRequest implements Serializable {
     
-    private String sql;
-    private Object[] args;
-    private String[] selectColumns;
-    private String tableName;
-    private String whereClause;
-    private String orderByClause;
-    private String limitClause;
-    private QueryType queryType;
+    private byte queryType;     // 对应 JdbcTemplate 查询方法形态（QueryType 常量 0-5）
+    private String sql;         // 完整 SQL 语句
+    private Object[] args;      // 参数绑定数组
+    private String className;   // 结果类型类名
     
-    public static SelectBuilder newBuilder() { ... }
+    public static SelectRequestBuilder builder() {
+        return new SelectRequestBuilder();
+    }
     
-    public static class SelectBuilder {
-        public SelectBuilder select(String... columns) { ... }
-        public SelectBuilder from(String tableName) { ... }
-        public SelectBuilder where(String whereClause) { ... }
-        public SelectBuilder orderBy(String orderByClause) { ... }
-        public SelectBuilder limit(int offset, int limit) { ... }
+    public static final class SelectRequestBuilder {
+        public SelectRequestBuilder queryType(byte queryType) { ... }
+        public SelectRequestBuilder sql(String sql) { ... }
+        public SelectRequestBuilder args(Object[] args) { ... }
+        public SelectRequestBuilder className(String className) { ... }
         public SelectRequest build() { ... }
     }
 }
 ```
 
+`SelectRequestBuilder` 仅提供 `queryType`/`sql`/`args`/`className` 四项——不存在 `select()`/`from()`/`where()`/`orderBy()`/`limit()` 等结构化 SQL 构造方法——SQL 文本由调用方传入。
+
 ### 6.9.4 设计模式分析
 
-1. **建造者模式（Builder）**：`ModifyRequest.ModifyBuilder()`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/ModifyRequest.java:80-120`）通过 Builder 模式分步构造 SQL 语句——`.table("config_info")`→`.where("data_id"=?)`→`.build()`，链式调用清晰可读。Builder 模式的核心价值在于将 SQL 语句的构造过程分解为多个独立步骤——每个步骤设置一个字段（表名、WHERE 条件、ORDER BY、LIMIT），最终 `build()` 聚合所有步骤生成完整的 `ModifyRequest` 对象。这避免了构造函数参数爆炸（`new ModifyRequest(table, where, orderBy, limit, ...)`）的问题。
+1. **命令模式（Command）**：`ModifyRequest`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/sql/ModifyRequest.java:28-83`）是一条可序列化的写命令——`sql` + `args` + `rollBackOnUpdateFail` + `executeNo`。`EmbeddedStorageContextHolder` 按 `executeNo` 顺序攒批命令——`BaseDatabaseOperate.update()` 在事务内逐条执行。命令对象可序列化的特性使其在分布式场景下也可跨进程传输——这是选择"完整 SQL + 参数数组"而非结构化字段的关键考量。
 
-2. **DSL 模式（Domain-Specific Language）**：`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/SelectRequest.java:30-126`）提供类型安全的 SQL 构造 DSL——`.where("data_id"=?, value)` 在编译期检查参数类型匹配（`String`/`Integer`/`Long`），避免运行时字符串拼接导致的类型错误。DSL 的流畅接口（Fluent Interface）使 SQL 构造代码读起来像自然语言——`SelectRequest.builder().table("config_info").where("data_id"=?)".limit(0, 10).build()`。
+2. **建造者模式（Builder，仅 SelectRequest）**：`SelectRequest.SelectRequestBuilder`（`SelectRequest.java:77-127`）提供四字段链式设置——`queryType(byte)`→`sql(String)`→`args(Object[])`→`className(String)`→`build()`。`ModifyRequest` 则无 Builder——通过 setter 或 `addSqlContext()` 攒批路径构造。这种不对称源于两者用途差异：查询请求需要明确 `queryType` 以分发 `JdbcTemplate` 方法形态——写请求则在事务内统一走 `update()`。
 
-3. **策略模式（Strategy）**：`QueryType` 枚举（`persistence/repository/embedded/sql/QueryType.java:25-支40`）定义 SQL 操作类型（`INSERT`/`UPDATE`/`DELETE`/`SELECT`/`COUNT`），`BaseDatabaseOperate.doOperate()`（`persistence/repository/embedded/operate/BaseDatabaseOperate.java:60-90`）根据 `QueryType` 分发到不同的 `JdbcTemplate` 执行方法——`INSERT`→`jdbcTemplate.update()`、`SELECT`→`jdbcTemplate.query()`。策略模式使新增 SQL 操作类型（如 `MERGE`）只需新增 `QueryType` 枚举值 + 对应的执行分支——无需修改已有 INSERT/UPDATE/DELETE/SELECT 的执行逻辑。
+3. **表驱动分发模式（Constant-driven Dispatch）**：`QueryType` 是 final 常量类（`persistence/repository/embedded/sql/QueryType.java:26-58`）——6 个 `byte` 常量与 `JdbcTemplate` 查询方法形态一一对应——`BaseDatabaseOperate` 按 `SelectRequest.queryType` 分发到对应执行方法（如 `0`→`queryForObject(sql, RowMapper)`）。以常量类而非枚举承载——序列化开销最小（单个 byte）——与请求对象的可序列化设计配套。
 
 ### 6.9.5 Trade-off 分析
 
-**表 6.9：Builder DSL vs 字符串拼接 vs ORM trade-off**
+**表 6.9：SQL 请求对象 vs 字符串拼接 vs ORM trade-off**
 
-| 权衡维度 | Builder DSL（Nacos 选择） | 字符串拼接 SQL | ORM 框架（MyBatis/Hibernate） |
+| 权衡维度 | SQL 请求对象（Nacos 选择） | 字符串拼接 SQL | ORM 框架（MyBatis/Hibernate） |
 |---------|--------------------------|----------------|------------------------------|
-| **类型安全** | ✅ Builder 方法编译期检查——`.where("data_id"=?, value)` 参数类型匹配 | ❌ 运行时字符串拼接——`"WHERE data_id=" + value` 类型错误运行时才暴露 | ✅ XML Mapper 编译期生成代理——类型安全 |
+| **类型安全** | ✅ `sql + args` 参数数组结构化承载——SQL 与参数分离 | ❌ 运行时字符串拼接——`"WHERE data_id=" + value` 类型错误运行时才暴露 | ✅ XML Mapper 编译期生成代理——类型安全 |
 | **SQL 注入防护** | ✅ 参数化查询（`PreparedStatement`）自动防护——`?` 占位符 | ❌ 需手动转义特殊字符——易遗漏 | ✅ 参数化查询自动防护 |
-| **可读性** | ✅ 链式调用清晰可读——`.table().where().limit().build()` | ❌ 长字符串难以维护——多行拼接 + 换行符 | ⚠️ XML Mapper 分散在多个 XML 文件中——跨文件追踪 SQL 逻辑困难 |
-| **灵活性** | ✅ 动态 SQL 构造——运行时根据条件动态添加 WHERE/ORDER BY/LIMIT | ✅ 最灵活——可任意拼接任何 SQL 片段 | ⚠️ MyBatis `<if>`/`<choose>` 标签——动态 SQL 能力有限 |
-| **学习成本** | ⚠️ 需学习 Builder DSL API——`ModifyRequest.builder().table()` | ✅ 通用 SQL 知识——无额外 API 学习 | ❌ 需学习 ORM 框架——MyBatis XML Mapper / Hibernate HQL |
+| **可读性** | ✅ 请求对象字段极少（4 个）——语义直观 | ❌ 长字符串难以维护——多行拼接 + 换行符 | ⚠️ XML Mapper 分散在多个 XML 文件中——跨文件追踪 SQL 逻辑困难 |
+| **灵活性** | ✅ SQL 文本自由承载——配合 `nacos-datasource-plugin` Mapper 按方言生成 | ✅ 最灵活——可任意拼接任何 SQL 片段 | ⚠️ MyBatis `<if>`/`<choose>` 标签——动态 SQL 能力有限 |
+| **学习成本** | ⚠️ 需了解 `queryType` 常量与请求对象语义 | ✅ 通用 SQL 知识——无额外 API 学习 | ❌ 需学习 ORM 框架——MyBatis XML Mapper / Hibernate HQL |
 
-Nacos 2.5.3 选择 Builder DSL 而非 ORM 框架的核心原因：`persistence/` 模块需要支持嵌入式 Derby 和外部 MySQL 两种数据库——Builder DSL 通过 `SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:30-70`）适配两种数据库的 SQL 方言差异（Derby LIMIT OFFSET vs MySQL LIMIT OFFSET）。ORM 框架通常针对单一数据库优化——跨数据库支持需额外配置（如 Hibernate Dialect）。Builder DSL 在保持类型安全和 SQL 注入防护的前提下，提供了最大的数据库灵活性。代价是需要手动维护 SQL 方言适配逻辑——`EmbeddedPaginationHelperImpl`（Derby）和 `ExternalStoragePaginationHelperImpl`（MySQL）各自实现 `SqlTypeLimiter` 接口。
+Nacos 2.5.3 选择 SQL 请求对象而非 ORM 框架的核心原因：`persistence/` 模块需要支持嵌入式 Derby 和外部 MySQL 两种数据库——SQL 文本由 `nacos-datasource-plugin` 的 Mapper 插件按数据库方言生成后装入请求对象——方言切换发生在插件层而非请求模型层。ORM 框架通常针对单一数据库优化——跨数据库支持需额外配置（如 Hibernate Dialect）。SQL 请求对象在保持参数化绑定（SQL 注入防护）与可序列化（攒批/跨进程）的前提下，提供了最大的数据库灵活性。`SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:35-146`）在执行入口做 SQL 类型白名单校验——提供统一的安全边界而非方言转换。
 
 ### 6.9.6 小结
 
-`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:30-126` / `SelectRequest.java:30-126`）通过 Builder 模式提供类型安全的 SQL 构造 DSL——链式调用 `.table().where().orderBy().limit().build()` 编译期检查参数类型匹配。`QueryType` 枚举（`persistence/repository/embedded/sql/QueryType.java:25-40`）定义 SQL 操作类型（`INSERT`/`UPDATE`/`DELETE`/`SELECT`/`COUNT`），`BaseDatabaseOperate.doOperate()`（`persistence/repository/embedded/operate/BaseDatabaseOperate.java:60-90`）根据 `QueryType` 分发到不同的 `JdbcTemplate` 执行方法。`SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:30-70`）适配嵌入式 Derby（`OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`，`EmbeddedPaginationHelperImpl.java:120-150`）和外部 MySQL（`LIMIT ?, ?`，`ExternalStoragePaginationHelperImpl.java:120-147`）的 SQL 方言差异——`EmbeddedPaginationHelperImpl` 内部的 Derby 适配器将 `LIMIT ? OFFSET ?` 转换为 `OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`——`ExternalStoragePaginationHelperImpl` 内部的 MySQL 适配器直接透传 `LIMIT ? OFFSET ?`。这种 SQL 方言适配器设计使 `persistence/` 模块能够同时支持嵌入式 Derby（单机/测试环境）和外部 MySQL（生产集群环境）两种数据库——仅需通过 `@ConditionOnEmbeddedStorage`（`persistence/configuration/condition/ConditionOnEmbeddedStorage.java:25-45`）/`@ConditionOnExternalStorage`（`persistence/configuration/condition/ConditionOnExternalStorage.java:25-45`）条件注解自动切换 `PaginationHelper<T>` 实现——无需修改任何上层 SQL 构造代码。
+`ModifyRequest`/`SelectRequest`（`persistence/repository/embedded/sql/ModifyRequest.java:28-83` / `SelectRequest.java:27-128`）是可序列化的 SQL 请求对象——`ModifyRequest` 为纯 POJO（`executeNo`/`sql`/`rollBackOnUpdateFail`/`args`），`SelectRequest` 提供 `queryType`/`sql`/`args`/`className` 四字段及其 Builder。`QueryType`（`persistence/repository/embedded/sql/QueryType.java:26-58`）是 final 常量类（byte 常量 0-5）——`BaseDatabaseOperate` 按 `queryType` 分发到对应的 `JdbcTemplate` 执行方法。`SqlTypeLimiter`（`persistence/repository/embedded/sql/limiter/SqlTypeLimiter.java:35-146`）是 SQL 类型白名单安全限制器——在 SQL 执行入口拦截非白名单语句。分页方言 SQL 由 `nacos-datasource-plugin` 的 Mapper 生成后透传——`PaginationHelper` 实现的切换由 `DatasourceConfiguration` 静态标志驱动的存储模式决定——无需修改任何上层 SQL 构造代码。
 
 
 ### 6.10.1 设计背景
 
-`persistence/` 模块通过事件体系支持 CP 一致性快照的跨节点同步——`DerbyImportEvent`（Derby 数据导入事件——从 CP Leader 拉取快照并导入本地 Derby，`persistence/.../event/DerbyImportEvent.java:30-45`）、`DerbyLoadEvent`（Derby 数据加载事件——从本地 Derby 加载快照数据）、`RaftDbErrorEvent`（Raft 数据库错误事件——JRaft 快照写入/读取异常时触发）。事件通过 `NotifyCenter.publishEvent()`（`common/src/main/java/com/alibaba/nacos/common/notify/NotifyCenter.java:276`）——该行位于 `persistence/` 模块通过 `NotifyCenter` 发布事件异步发布——订阅者（如 `JRaftProtocol`）通过 `NotifyCenter.registerSubscriber()`（`NotifyCenter.java:160`）注册对应 Event 的 Subscriber——接收事件并执行对应的快照操作。Leader 节点的 `JRaftProtocol.onSnapshotSave()` 生成快照文件后发布 `DerbyImportEvent`（仅包含快照文件路径 String——避免 gRPC 传输数百 MB 快照文件阻塞 `GrpcClusterServer` 线程池）——所有 Follower 接收事件后通过 `JRaftProtocol.onSnapshotLoad()`（`core/distributed/raft/JRaftProtocol.java:200-230`）将快照数据写入本地嵌入式 Derby——实现 CP 一致性快照的跨节点同步。事件驱动模式将快照导入/导出与 CP 一致性协议完全解耦——新增 Follower 节点只需注册对应 Event 的 Subscriber——无需修改 Leader 的快照发布逻辑。
+`persistence/` 模块的事件体系是**进程内**通知机制——并不承担跨节点快照同步。三个事件均继承 `SlowEvent`（`com.alibaba.nacos.common.notify.SlowEvent`）并经 `NotifyCenter`（单 JVM 事件总线）发布：`DerbyImportEvent`（`persistence/src/main/java/com/alibaba/nacos/persistence/model/event/DerbyImportEvent.java:26-39`——字段仅 `boolean finished`，通知本地 Derby 导入流程的完成状态）、`DerbyLoadEvent`（同目录，通知本地 Derby 加载完成）、`RaftDbErrorEvent`（`RaftDbErrorEvent.java:26-42`——字段仅 `Throwable ex`，数据库操作出现异常时发布，订阅者据此终止服务进程）。跨节点的 CP 快照同步由 JRaft 承担——`NacosStateMachine`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/NacosStateMachine.java:156,169`）实现 JRaft 的 `onSnapshotSave()`/`onSnapshotLoad()`——经 `JSnapshotOperation`（`JSnapshotOperation.java:41,49`）把各 `NacosStateMachine` 注册的快照处理器（含本地 Derby/磁盘数据）写入或读取 JRaft 快照目录——快照文件随 Raft 日志复制协议在集群间传输与安装。事件体系与 JRaft 快照是两个正交机制：事件只做进程内状态广播（如"导入完成了"），跨节点的数据搬运完全交给 JRaft——不存在"Leader 发布 DerbyImportEvent → Follower 经 NotifyCenter 接收并写本地 Derby"的路径。
 
 ### 6.10.2 核心类关系图
 
-图 6-10 展示了 Derby 事件体系的导入/导出流程：
+图 6-10 展示了事件体系（进程内）与 JRaft 快照（跨节点）的分工：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter (事件总线)</span><span class="s">publishEvent(event): void</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DerbyImport</span><span class="s">Event</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">snapshot</div><ul class="dgm-kv"><li><span class="fld">data</span><span class="typ">: byte</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaftProtoco</span><span class="s">onSnapsho</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从 Lead</div><div class="dgm-note" style="border:none;background:none;padding:0;">onSnapsho</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从本地 De</div><div class="dgm-note" style="border:none;background:none;padding:0;">onRaftDbE</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 记录错误日志</div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">NotifyCenter（单 JVM 事件总线）</span><span class="s">publishEvent(event) → SlowEvent 订阅者</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">DerbyImportEvent (SlowEvent)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">finished</span><span class="typ">: boolean（仅此一个字段）</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">通知本地 Derby 导入完成状态</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">RaftDbErrorEvent (SlowEvent)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ex</span><span class="typ">: Throwable</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">DB 异常广播 → 订阅者终止进程</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">NacosStateMachine（core 模块，跨节点快照）</span><span class="s">implements JRaft StateMachine</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">onSnapshotSave(writer, done)  → 逐个 JSnapshotOperation.onSnapshotSave</div><div class="dgm-note" style="border:none;background:none;padding:0;">onSnapshotLoad(reader)        → 逐个 JSnapshotOperation.onSnapshotLoad</div><div class="dgm-note" style="border:none;background:none;padding:0;">快照文件经 JRaft 日志复制协议跨节点安装</div></div></div></div>
 
 ### 6.10.3 源码走读
 
 #### 6.10.3.1 DerbyImportEvent
 
-`DerbyImportEvent`——Derby 数据导入事件（从 CP Leader 拉取快照并导入本地 Derby）：
+`DerbyImportEvent`——进程内的 Derby 导入完成通知（`persistence/.../model/event/DerbyImportEvent.java:26-39`）：
 
 ```java
-public class DerbyImportEvent {
+public class DerbyImportEvent extends SlowEvent {
     
-    private String snapshotData;  // 快照数据（字节数组）
-    private long snapshotVersion; // 快照版本号
-    private String tableName;     // 目标表名
+    private static final long serialVersionUID = 3299565864352399053L;
     
-    public DerbyImportEvent(String tableName, String snapshotData, long version) {
-        this.tableName = tableName;
-        this.snapshotData = snapshotData;
-        this.snapshotVersion = version;
+    private final boolean finished;
+    
+    public DerbyImportEvent(boolean finished) {
+        this.finished = finished;
+    }
+    
+    public boolean isFinished() {
+        return finished;
     }
 }
 ```
+
+事件体只有一个 `boolean`——它不携带任何快照数据或文件路径——只表达"本地 Derby 导入是否完成"这一状态信号。
 
 #### 6.10.3.2 RaftDbErrorEvent
 
-`RaftDbErrorEvent`——Raft 数据库错误事件（JRaft 快照写入/读取异常时触发）：
+`RaftDbErrorEvent`——进程内的数据库异常广播（`persistence/.../model/event/RaftDbErrorEvent.java:26-42`）：
 
 ```java
-public class RaftDbErrorEvent {
+public class RaftDbErrorEvent extends SlowEvent {
     
-    private String errorMsg;       // 错误消息
-    private Throwable exception;   // 异常对象
+    private static final long serialVersionUID = 101591819161802336L;
     
-    public RaftDbErrorEvent(String errorMsg, Throwable exception) {
-        this.errorMsg = errorMsg;
-        this.exception = exception;
+    private Throwable ex;
+    
+    public RaftDbErrorEvent() {
+    }
+    
+    public RaftDbErrorEvent(Throwable ex) {
+        this.ex = ex;
+    }
+    
+    public Throwable getEx() {
+        return ex;
     }
 }
 ```
 
+字段仅 `Throwable ex`——DB 操作出现不可恢复异常时发布——订阅者收到后执行终止逻辑（防止以错误状态继续服务）。
+
 ### 6.10.4 设计模式分析
 
-1. **观察者模式（Observer）**：`DerbyImportEvent`/`DerbyLoadEvent`/`RaftDbErrorEvent` 通过 `NotifyCenter.publishEvent()`（`common/src/main/java/com/alibaba/nacos/common/notify/NotifyCenter.java:276`）发布事件，`JRaftProtocol` 作为 Subscriber（通过 `NotifyCenter.registerSubscriber()` 注册，`NotifyCenter.java:160`）订阅并执行对应的快照导入/导出操作。Leader 节点的 `JRaftProtocol.onSnapshotSave()` 生成快照文件后发布 `DerbyImportEvent`，所有 Follower 接收事件后通过 `JRaftProtocol.onSnapshotLoad()` 将快照数据写入本地嵌入式 Derby——实现 CP 一致性快照的跨节点同步。
+1. **观察者模式（Observer）**：`DerbyImportEvent`/`DerbyLoadEvent`/`RaftDbErrorEvent` 均 `extends SlowEvent`，通过 `NotifyCenter.publishEvent()` 在**同一 JVM 内**发布，订阅者经 `NotifyCenter.registerSubscriber()` 注册接收。`SlowEvent` 语义保证事件在发布者逻辑执行完毕后异步送达——避免状态通知打断业务主流程。
 
-2. **事件驱动模式（Event-Driven）**：快照导入/导出完全通过事件驱动——Leader 发布 `DerbyImportEvent`→异步事件总线（`NotifyCenter.publishEvent()`）→Follower 接收事件→执行 `onSnapshotLoad()`→写入本地 Derby。这种设计避免了 Leader 直接调用 Follower 的 RPC 接口的强耦合——新增 Follower 节点只需注册对应 Event 的 Subscriber，无需修改 Leader 的快照发布逻辑。
+2. **事件驱动模式（Event-Driven，进程内）**：事件驱动的范围是进程内的状态广播——导入完成、加载完成、DB 异常。跨节点协调不在此层——由 JRaft 的 `NacosStateMachine.onSnapshotSave()`/`onSnapshotLoad()`（`core/distributed/raft/NacosStateMachine.java:156,169`）经 `JSnapshotOperation` 完成快照的写出与安装——两者正交互补：状态广播用事件，数据搬运用 Raft 快照协议。
 
-3. **模板方法模式（Template Method）**：`JRaftProtocol` 的 `onSnapshotSave()`/`onSnapshotLoad()` 定义快照保存/加载的骨架流程——子类（具体 CP 协议实现）可覆盖快照存储格式（如压缩算法、文件命名规则），但事件发布/订阅的流程由基类统一控制。
+3. **责任链模式（Chain of Operations）**：`NacosStateMachine` 维护 `JSnapshotOperation` 列表——`onSnapshotSave()`/`onSnapshotLoad()` 遍历逐个调用各 operation（`:157-159`/`:170-173`）——任一 load 失败即整体失败并记录 `Loggers.RAFT` 错误日志。新增快照数据类型只需注册新的 `JSnapshotOperation`，无需修改状态机骨架。
 
 ### 6.10.5 Trade-off 分析
 
-**表 6.10：事件驱动 vs gRPC vs 共享文件 trade-off**
+**表 6.10：进程内事件 vs JRaft 快照协议 vs 直接 RPC 快照传输 trade-off**
 
-| 权衡维度 | 事件驱动快照导入/导出（Nacos 选择） | 直接 gRPC 调用 | 共享文件系统（NFS/HDFS） |
+| 权衡维度 | 进程内 SlowEvent（Nacos 状态广播选择） | JRaft 快照协议（Nacos 跨节点选择） | 直接 RPC 传输快照 |
 |---------|--------------------------------------|-------------------|------------------------|
-| **解耦性** | ✅ 事件发布者与订阅者通过 `NotifyCenter` 完全解耦——新增 Follower 无需修改 Leader 代码 | ❌ Leader 需维护所有 Follower 的 gRPC stub 列表 | ⚠️ 共享文件系统权限管理复杂 |
-| **异步性** | ✅ `NotifyCenter.publishEvent()` 异步发布——Leader 不阻塞 | ❌ 同步 gRPC 调用 Follower——Leader 等待所有 Follower 响应 | ✅ 文件写入后 Follower 自行读取 |
-| **可靠性** | ⚠️ 事件丢失风险——`NotifyCenter` 默认 `DefaultEventPublisher` 同步逐个通知，若 Follower 宕机则该 Event 丢失 | ✅ 同步 gRPC 调用——失败立即重试 | ⚠️ 共享文件系统单点故障——NFS 宕机则全部 Follower 无法加载快照 |
-| **网络开销** | ✅ 事件体仅包含快照文件路径（String）——网络开销极小 | ❌ gRPC 传输整个快照文件（可能数百 MB） | ✅ 零网络传输——Follower 本地读取共享文件系统 |
-| **运维复杂度** | ✅ 零外部依赖——`NotifyCenter` 是 Nacos 内置事件总线 | ✅ 零外部依赖——gRPC 是 Nacos 内置通信框架 | ❌ 需额外部署 NFS/HDFS——增加运维复杂度 |
+| **适用范围** | ✅ 单 JVM 内状态信号——零序列化开销 | ✅ 跨节点数据搬运——随日志复制协议可靠性传输 | ❌ 需自建传输/重试/校验协议 |
+| **解耦性** | ✅ 发布者与订阅者通过 `NotifyCenter` 完全解耦 | ✅ 状态机只面向 `JSnapshotOperation` 抽象 | ❌ 点对点强耦合——需维护对端列表 |
+| **可靠性** | ⚠️ 进程内通知——进程崩溃则事件随之消失（无需跨节点可靠性） | ✅ JRaft 保证快照安装的日志一致性语义 | ⚠️ 需自行实现失败重传 |
+| **传输开销** | ✅ 事件体极小（如 `DerbyImportEvent` 仅一个 boolean） | ⚠️ 快照文件随协议传输——由 Raft 框架管理分块与校验 | ❌ 大文件 RPC 易阻塞业务线程池 |
+| **运维复杂度** | ✅ 零外部依赖——`NotifyCenter` 是 Nacos 内置事件总线 | ✅ JRaft 是 `nacos-consistency` 内置 CP 组件 | ❌ 需额外实现传输通道与故障处理 |
 
-Nacos 2.5.3 选择事件驱动而非直接 gRPC 调用或共享文件系统的核心原因：快照文件可能数百 MB——通过 gRPC 传输整个快照文件会严重阻塞 Leader 的 gRPC 线程池（`GrpcClusterServer`），影响其他集群通信（如 `ConfigClusterRpcClientProxy.syncConfigChange()`）。事件驱动仅传输快照文件路径（String），Follower 自行通过本地文件系统读取快照文件——网络开销极小。代价是事件丢失风险——若 Follower 在接收 Event 前宕机，该 Event 丢失且 Leader 不知情。但 CP 一致性协议通过 JRaft 的日志复制机制保证了快照数据的最终一致性——Follower 重启后可通过 JRaft 日志回放重新构建状态机，无需依赖快照事件的重传。
+Nacos 2.5.3 的核心设计取舍：状态信号与数据搬运分离。进程内状态通知若塞进 RPC 会引入不必要的序列化与网络开销——而若把跨节点快照交给进程内事件则根本无法到达其他节点。`DerbyImportEvent` 仅含 `boolean finished` 的事实印证了事件体系的定位——真正的跨节点快照同步由 JRaft `NacosStateMachine` + `JSnapshotOperation` 完成，由 Raft 协议的日志复制机制保证一致性。
 
 ### 6.10.6 小结
 
-`DerbyImportEvent`/`DerbyLoadEvent`/`RaftDbErrorEvent` 通过 `NotifyCenter.publishEvent()`（`common/.../NotifyCenter.java:276`）实现 CP 一致性快照的跨节点异步导入/导出——Leader 发布 `DerbyImportEvent`（仅包含快照文件路径 String，`persistence/.../event/DerbyImportEvent.java:30-45`）→`NotifyCenter` 异步通知所有注册的 Subscriber→`JRaftProtocol.onSnapshotLoad()`（`core/distributed/raft/JRaftProtocol.java:200-230`）读取本地快照文件→写入本地嵌入式 Derby。事件驱动模式避免了 Leader 直接 gRPC 传输数百 MB 快照文件对 `GrpcClusterServer` 线程池的阻塞——换来了快照导入/导出与 CP 一致性协议的完全解耦。事件丢失风险由 JRaft 日志复制机制兜底——Follower 重启后通过日志回放重新构建状态机。
+`DerbyImportEvent`（`persistence/.../model/event/DerbyImportEvent.java:26-39`，仅 `boolean finished`）/`DerbyLoadEvent`/`RaftDbErrorEvent`（`:26-42`，仅 `Throwable ex`）均为进程内 `SlowEvent`——经 `NotifyCenter` 在单 JVM 内做状态广播——不承担任何跨节点数据传输。跨节点 CP 快照同步由 JRaft 承担——`NacosStateMachine.onSnapshotSave()`/`onSnapshotLoad()`（`core/distributed/raft/NacosStateMachine.java:156,169`）经 `JSnapshotOperation`（`JSnapshotOperation.java:41,49`）完成快照写出与安装——快照数据随 Raft 日志复制协议在集群间保持一致。事件体系负责"告知状态"，Raft 快照协议负责"搬运数据"——两个机制正交，共同构成嵌入式存储的一致性支撑。
 
 
 ### 6.11.1 设计背景
 
-Nacos 2.5.3 在 `persistence/` 模块中引入 `DatasourceMetrics`（`persistence/src/main/java/com/alibaba/nacos/persistence/monitor/DatasourceMetrics.java:30-62`）数据源监控——基于 Micrometer 指标库（`io.micrometer.core.instrument.MeterRegistry`）暴露数据源健康状态和性能指标。在 `ExternalDataSourceServiceImpl.init()`（`persistence/.../ExternalDataSourceServiceImpl.java:70-95`）初始化 HikariCP 连接池后——`DatasourceMetrics` 通过 `MeterRegistry.register()` 注册四种 Gauge 指标：`datasource.health`（`Gauge<Double>`——数据源健康状态——`1.0`=UP/`0.0`=DOWN——通过 `DataSourceService.getHealth()` 获取）、`datasource.active.connections`（`Gauge<Integer>`——活跃连接数——通过 `HikariDataSource.getHikariPoolMXBean().getActiveConnections()` 获取）、`datasource.idle.connections`（`Gauge<Integer>`——空闲连接数——`HikariDataSource.getHikariPoolMXBean().getIdleConnections()` 获取）、`datasource.pending.connections`（`Gauge<Integer>`——等待连接数——`HikariDataSource.getHikariPoolMXBean().getPendingConnections()` 获取）、`datasource.query.time`（`TimeGauge`——查询耗时分布——通过 `Timer.builder().register(registry)` 记录每次 `JdbcTemplate.query()` 的执行耗时）。Prometheus 通过 `/actuator/prometheus` 端点每 15 秒拉取最新指标值——Grafana Dashboard 可视化 HikariCP 连接池健康状态——`datasource.health == 0` 持续 30s 触发 P1 告警（Prometheus AlertManager → PagerDuty/钉钉/微信）。
+Nacos 2.5.3 在 `persistence/` 模块中提供的 `DatasourceMetrics`（`persistence/src/main/java/com/alibaba/nacos/persistence/monitor/DatasourceMetrics.java:27-34`）是极简的数据源指标入口——而非完整的连接池指标体系。它仅含一个静态方法 `getDbException()`——返回 `Metrics.counter("nacos_exception", "module", "config", "name", "db")`——即全局 Micrometer `Metrics.registry` 中名为 `nacos_exception`、标签为 `module=config, name=db` 的计数器。该计数器在外部数据源的两个定时任务中递增：`SelectMasterTask`（主库选择失败时，`ExternalDataSourceServiceImpl.java:267`）与 `CheckDbHealthTask`（健康检查异常时，`:301`）——即"数据库异常次数"这一业务级指标。需要说明的是：`DatasourceMetrics` 没有 `MeterRegistry` 注入、没有注册任何 Gauge/Timer——连接池层面的指标（活跃/空闲/等待连接数）不在 `persistence/` 模块的监控范围内——它们由 Nacos 其他模块的 `NacosMeterRegistryCenter` 体系或运维侧的 JMX/Prometheus exporter 承担（源码注释亦标明：待 `NacosMeterRegistryCenter` 下沉到更基础模块后可调整用法）。
 
 ### 6.11.2 核心类关系图
 
-图 6-11 展示了 `DatasourceMetrics` 数据源监控指标：
+图 6-11 展示了 `DatasourceMetrics` 与异常计数器的关系：
 
-<div class="dgm"><div class="dgm-cap"><span class="no">6.11.2</span><span class="tt">DatasourceMetrics 数据源监控指标注册</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">DatasourceMetrics</span><span class="s">@Bean 装配</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">datasourceMetrics(MeterRegistry registry)</span></li></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">注册的 Gauge / Timer</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">Gauge "datasource.health"</span><span class="typ">→ ds.getHealth()</span></li><li><span class="fld">Gauge "datasource.active"</span><span class="typ">→ ds.getActiveConnections()</span></li><li><span class="fld">Gauge "datasource.idle"</span><span class="typ">→ ds.getIdleConnections()</span></li><li><span class="fld">Gauge "datasource.pending"</span><span class="typ">→ ds.getPendingConnections()</span></li><li><span class="fld">Timer "datasource.query.time"</span></li></div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">6.11.2</span><span class="tt">DatasourceMetrics 数据库异常计数</span></div><div class="dgm-panel"><div class="dgm-panel-head"><span class="t">DatasourceMetrics</span><span class="s">纯静态工具类</span></div><div class="dgm-panel-body"><div class="dgm-kv"><li><span class="fld">static getDbException()</span><span class="typ">: Counter</span></li></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Metrics.counter("nacos_exception", "module", "config", "name", "db")</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">SelectMasterTask</span><span class="typ">: 主库选择失败 → counter.increment()</span></li><li><span class="fld">CheckDbHealthTask</span><span class="typ">: 健康检查异常 → counter.increment()</span></li></div></div></div></div></div></div>
 
 ### 6.11.3 源码走读
 
-`DatasourceMetrics`——基于 Micrometer `MeterRegistry` 暴露数据源指标：
+`DatasourceMetrics`——数据库异常计数器入口（`persistence/.../monitor/DatasourceMetrics.java:27-34`）：
 
 ```java
-@Configuration
 public class DatasourceMetrics {
     
-    @Bean
-    public MeterBinder datasourceMetrics(DataSourceService dataSourceService) {
-        return registry -> {
-            // Gauge: 数据源健康状态（UP=1, DOWN=0）
-            Gauge.builder("datasource.health", dataSourceService, ds -> {
-                return "UP".equals(ds.getHealth()) ? 1 : 0;
-            }).register(registry);
-            
-            // Gauge: 活跃连接数
-            Gauge.builder("datasource.active.connections", dataSourceService, ds -> {
-                return ds.getActiveConnections();
-            }).register(registry);
-            
-            // Gauge: 空闲连接数
-            Gauge.builder("datasource.idle.connections", dataSourceService, ds -> {
-                return ds.getIdleConnections();
-            }).register(registry);
-        };
+    public static Counter getDbException() {
+        // TODO: After {@code NacosMeterRegistryCenter} move to more basic module, the usage can be changed.
+        // TODO: Current {@code NacosMeterRegistryCenter} is in core module, but core module maybe depend
+        //       persistence to save namespace.
+        return Metrics.counter("nacos_exception", "module", "config", "name", "db");
     }
 }
 ```
 
+`Metrics.counter()` 是 Micrometer 全局 registry 的便捷入口——同名同标签的 counter 幂等复用——因此 `SelectMasterTask`/`CheckDbHealthTask` 每次异常时调用 `DatasourceMetrics.getDbException().increment()` 即可累加同一个计数器。该类设计刻意极简：`persistence/` 不能依赖 `core` 模块（`NacosMeterRegistryCenter` 所在）——否则产生循环依赖——故先用 Micrometer 全局静态 registry 过渡。
+
 ### 6.11.4 设计模式分析
 
-1. **观察者模式（Observer）**：Micrometer `MeterRegistry` 作为被观察者（Subject），通过 `Gauge.builder().register(registry)` 注册数据源指标（`DatasourceMetrics.java:45-58`），Prometheus 作为观察者（Observer）每 15 秒通过 `/actuator/prometheus` 端点拉取最新指标值。这种拉模型（Pull Model）相比推模型（Push Model）的优势是 Prometheus 可以按自身节奏采样——避免数据源瞬时抖动导致告警风暴。
+1. **观察者模式（Observer）**：Micrometer 的 `Metrics.globalRegistry` 作为被观察者（Subject）——counter 注册后，下游观测端（Prometheus 等，经适配的 metrics 端点）按自身节奏拉取。这种拉模型（Pull Model）相比推模型的优势是观测端可按自身采样频率读取——避免瞬时抖动导致告警风暴。
 
-2. **门面模式（Facade）**：`DatasourceMetrics`（`persistence/src/main/java/com/alibaba/nacos/persistence/monitor/DatasourceMetrics.java:30-62`）封装了 Micrometer API 的底层细节——`Gauge`/`FunctionCounter`/`TimeGauge` 等指标类型注册、`Tags.of()` 标签绑定、`MeterRegistry` 注册管理。向运维监控系统（Prometheus + Grafana）提供统一的数据源健康监控视图，调用方只需注入 `DatasourceMetrics` 即可暴露所有数据源指标——无需了解 Micrometer 底层 API。
+2. **静态门面模式（Static Facade）**：`DatasourceMetrics` 封装了 counter 名称与标签约定（`nacos_exception{module=config,name=db}`）——调用方（定时任务）无需了解全局 registry 的命名规范——只需 `getDbException().increment()`。同时以静态方法规避了 `persistence` → `core` 的模块依赖（源码 TODO 注明这是待 `NacosMeterRegistryCenter` 下沉后的过渡方案）。
 
-3. **策略模式（Strategy）**：`DatasourceMetrics` 针对不同数据源指标类型采用不同的 Micrometer 指标类型——`datasource.health` 使用 `Gauge<Double>`（瞬时值）、`datasource.active.connections` 使用 `Gauge<Integer>`（瞬时值）、`datasource.query.time` 使用 `TimeGauge`（带时间单位的计时器），每种指标类型采用最适合的 Micrometer 度量策略。
+3. **约定优于配置（Convention over Configuration）**：指标命名沿用 Nacos 统一约定（`nacos_exception` + `module`/`name` 标签）——与 config 模块其他异常计数器同构——运维侧可以按 `module`/`name` 标签聚合所有 Nacos 异常指标，无需为数据源单独定制仪表盘结构。
 
 ### 6.11.5 Trade-off 分析
 
-**表 6.11：Micrometer vs 自定义日志 vs Spring Actuator trade-off**
+**表 6.11：全局静态 Counter vs MeterBinder 注入 vs 自定义日志监控 trade-off**
 
-| 权衡维度 | Micrometer + Prometheus（Nacos 选择） | 自定义日志监控 | Spring Boot Actuator 仅 Health |
+| 权衡维度 | 全局静态 Counter（Nacos 2.5.3 选择） | MeterBinder + 注入 Registry | 自定义日志监控 |
 |---------|--------------------------------------|---------------|-------------------------------|
-| **实时性** | ✅ Prometheus 每 15s 拉取最新指标 | ❌ 需日志分析工具（ELK/Splunk）解析 + 聚合 | ⚠️ 仅 /health 端点——无指标时间序列 |
-| **可视化** | ✅ Grafana Dashboard 预置模板（HikariCP Metrics） | ❌ 需额外配置 Kibana Dashboard | ❌ 无可视化——仅 UP/DOWN 状态 |
-| **告警能力** | ✅ Prometheus AlertManager——`datasource.health == 0`触发 P1 告警 | ⚠️ 需自定义告警脚本定时 grep 日志 | ❌ 无告警能力 |
-| **存储开销** | ⚠️ Prometheus TSDB 存储时间序列——15 days 默认保留 | ✅ 日志文件滚动——可配置 maxHistory | ✅ 零额外存储 |
-| **集成复杂度** | ⚠️ 需部署 Prometheus + Grafana（额外运维成本） | ✅ 复用现有日志基础设施 | ✅ 零额外组件——Spring Boot 内置 |
+| **模块依赖** | ✅ 零注入——`Metrics.globalRegistry` 静态可达，避免 persistence→core 循环依赖 | ❌ 需注入 `MeterRegistry`——`NacosMeterRegistryCenter` 在 core 模块会形成循环依赖 | ✅ 零依赖——但需日志采集链路 |
+| **实时性** | ✅ 观测端按节奏拉取最新计数值 | ✅ 同左 | ❌ 需日志分析工具（ELK/Splunk）解析 + 聚合 |
+| **可扩展性** | ⚠️ 过渡方案——待 `NacosMeterRegistryCenter` 下沉后迁移（源码 TODO） | ✅ 可注册 Gauge/Timer/分布值等全量指标类型 | ❌ 无结构化指标 |
+| **告警能力** | ✅ 观测端基于 `nacos_exception{name=db}` 增速配置告警 | ✅ 同左且指标面更全 | ⚠️ 需自定义告警脚本定时 grep 日志 |
+| **集成复杂度** | ✅ 零装配成本——一个静态方法 | ⚠️ 需 Bean 装配与生命周期管理 | ❌ 需额外日志基础设施 |
 
-Nacos 2.5.3 选择 Micrometer + Prometheus 而非自定义日志监控的核心原因：`persistence/` 模块作为基础设施层，其数据源健康状态直接影响 `config`/`naming` 所有业务模块的可用性——`datasource.health == 0` 意味着 Config 无法读写配置、Naming 无法注册服务。这种级别的故障需要**秒级告警**而非事后日志分析。Prometheus AlertManager 可在 `datasource.health == 0` 持续 30s 后触发 P1 告警（推送至 PagerDuty/钉钉/微信），日志分析工具无法做到秒级告警。代价是需要额外部署 Prometheus + Grafana（增加运维复杂度），但换来的秒级故障检测能力对生产环境至关重要。
+Nacos 2.5.3 选择全局静态 Counter 的核心原因：模块依赖约束优先于指标丰富度——`persistence` 若依赖 `core` 的 `NacosMeterRegistryCenter` 会形成循环依赖（core 的 namespace 存储反而依赖 persistence）——静态全局 registry 是唯一无环方案。代价是 `persistence/` 内仅暴露数据库异常计数这一项业务级指标——连接池细粒度指标需依赖 `NacosMeterRegistryCenter` 体系或外部观测工具——但这与该指标"故障发现"的定位（DB 异常增速告警）是匹配的。
 
 ### 6.11.6 小结
 
-`DatasourceMetrics`（`persistence/src/main/java/com/alibaba/nacos/persistence/monitor/DatasourceMetrics.java:30-62`）基于 Micrometer `MeterRegistry` 暴露四种数据源指标：`datasource.health`（Gauge，数据源健康状态——`1`=UP/`0`=DOWN）、`datasource.active.connections`（Gauge，活跃连接数）、`datasource.idle.connections`（Gauge，空闲连接数）、`datasource.query.time`（TimeGauge，查询耗时分布）。在 `ExternalDataSourceServiceImpl.init()`（`persistence/.../ExternalDataSourceServiceImpl.java:70-95`）初始化 HikariCP 连接池后，`DatasourceMetrics` 注册所有 Gauge 指标到 `MeterRegistry`。Prometheus 通过 `/actuator/prometheus` 端点每 15s 拉取指标，Grafana Dashboard 可视化 HikariCP 连接池健康状态——`datasource.health == 0` 持续 30s 触发 P1 告警。
+`DatasourceMetrics`（`persistence/src/main/java/com/alibaba/nacos/persistence/monitor/DatasourceMetrics.java:27-34`）仅提供 `getDbException()`——返回全局 Micrometer counter `nacos_exception{module=config,name=db}`——在 `ExternalDataSourceServiceImpl` 的 `SelectMasterTask`（`:267`）与 `CheckDbHealthTask`（`:301`）异常时递增。它不是 MeterBinder/Gauge/Timer 的注册器——数据源连接池细粒度指标不在 persistence 模块监控范围内——静态门面 + 全局 registry 的设计是为了规避 persistence→core 的循环依赖（源码 TODO 注明待 `NacosMeterRegistryCenter` 下沉后迁移）。
 
 
 ### 6.12.1 设计背景
 
-`ConnectionCheckUtil`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/ConnectionCheckUtil.java:30-41`）和 `DatasourcePlatformUtil`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/DatasourcePlatformUtil.java:36-46`）是 `persistence/` 模块的工具类——提供数据库连接可用性检查和数据源平台识别功能。`ConnectionCheckUtil.checkDataSourceConnection(HikariDataSource)`（:`30-41`）通过 `HikariDataSource.getConnection()` + `isClosed()` 瞬时探测数据库物理连接可用性——在 `ExternalDataSourceServiceImpl.init()`（`ExternalDataSourceServiceImpl.java:70-95`）初始化 HikariCP 连接池后立即调用。`DatasourcePlatformUtil.getDatasourcePlatform(String defaultPlatform)`（:`36-46`）通过双层配置 fallback（`spring.datasource.platform` → `nacos.datasource.platform`，`PersistenceConstant.DATASOURCE_PLATFORM_PROPERTY` + `DATASOURCE_PLATFORM_PROPERTY_OLD`）识别当前数据源平台类型——返回 `"derby"` 或 `"mysql"`。在 `DatasourceConfiguration`（`persistence/.../DatasourceConfiguration.java:30-89`）条件注解评估阶段——`@ConditionOnEmbeddedStorage.EmbeddedStorageCondition.matches()`（:`78-89`）需读取 `spring.datasource.platform` 配置决定注入 `LocalDataSourceServiceImpl` 还是 `ExternalDataSourceServiceImpl`——此时 Spring 容器尚未完全启动——无法依赖 `@Autowired` 注入 Bean。静态工具方法无需任何容器依赖——可在条件评估阶段安全调用。`DatasourcePlatformUtil` 的双层 fallback 设计保证了向后兼容性——从 Nacos 2.2.x 升级到 2.5.3 时旧配置项 `nacos.datasource.platform` 仍然生效。
+`ConnectionCheckUtil`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/ConnectionCheckUtil.java:33-39`）和 `DatasourcePlatformUtil`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/DatasourcePlatformUtil.java:36-42`）是 `persistence/` 模块的工具类——提供数据库连接可用性检查和数据源平台识别功能。`ConnectionCheckUtil.checkDataSourceConnection(DataSource)`（:`33-39`）通过 `DataSource.getConnection()` + `isClosed()` 瞬时探测数据库物理连接可用性——在 `ExternalDataSourceServiceImpl.reload()`（`:130-145`）构建每个新数据源时调用。`DatasourcePlatformUtil.getDatasourcePlatform(String defaultPlatform)`（:`36-42`）通过双层配置 fallback（`spring.sql.init.platform` → `spring.datasource.platform`，`PersistenceConstant.DATASOURCE_PLATFORM_PROPERTY`（`:33`）+ `DATASOURCE_PLATFORM_PROPERTY_OLD`（`:31`））识别当前数据源平台类型——返回 `"derby"`、`"mysql"` 或默认值。在 `DatasourceConfiguration`（`persistence/.../DatasourceConfiguration.java:30-89`）容器初始化阶段——`loadDatasourceConfiguration()` 需读取 platform 配置置位静态标志——此时 Spring 容器尚未刷新——无法依赖 `@Autowired` 注入 Bean。静态工具方法无需任何容器依赖——可在该极早阶段安全调用。`DatasourcePlatformUtil` 的双层 fallback 设计保证了向后兼容性——从 Nacos 2.2.x 升级到 2.5.3 时旧配置项 `spring.datasource.platform` 仍然生效。
 
 ### 6.12.2 核心类关系图
 
@@ -882,14 +965,12 @@ Nacos 2.5.3 选择 Micrometer + Prometheus 而非自定义日志监控的核心�
 `ConnectionCheckUtil.checkConnection()`（`persistence/.../utils/ConnectionCheckUtil.java:28-48`）：
 
 ```java
-public static boolean checkConnection(DataSource ds) {
-    try (Connection conn = ds.getConnection()) {
-        // line 35: 执行 SELECT 1 探测连接可用性
-        Statement stmt = conn.createStatement();
-        stmt.execute("SELECT 1");
-        return true;
-    } catch (SQLException e) {
-        return false;
+public static void checkDataSourceConnection(HikariDataSource ds) {
+    try (java.sql.Connection connection = ds.getConnection()) {
+        // line 33-39: 仅获取连接并校验关闭状态——不做任何 SQL 探测
+        connection.isClosed();
+    } catch (Exception e) {
+        throw new RuntimeException(e);
     }
 }
 ```
@@ -917,11 +998,11 @@ public static String getPlatform(DataSource ds) {
 
 ### 6.12.4 设计模式分析
 
-1. **工具类模式（Utility Pattern）**：`ConnectionCheckUtil`（`persistence/utils/ConnectionCheckUtil.java:30-41`）和 `DatasourcePlatformUtil`（`persistence/utils/DatasourcePlatformUtil.java:36-46`）提供纯静态工具方法——无需实例化——直接通过类名调用——无状态、无副作用——纯函数式方法——输入确定则输出确定——天然线程安全——无需同步锁——无需 Spring Bean 容器管理。`DatasourcePlatformUtil.getDatasourcePlatform()` 通过双层配置 fallback（`EnvUtil.getProperty("spring.datasource.platform", "nacos.datasource.platform")`）实现向后兼容——Nacos 2.2.x 旧配置项 `nacos.datasource.platform` 仍然生效。
+1. **工具类模式（Utility Pattern）**：`ConnectionCheckUtil`（`persistence/utils/ConnectionCheckUtil.java:33-39`）和 `DatasourcePlatformUtil`（`persistence/utils/DatasourcePlatformUtil.java:36-42`）提供纯静态工具方法——无需实例化——直接通过类名调用——无状态、无副作用——纯函数式方法——输入确定则输出确定——天然线程安全——无需同步锁——无需 Spring Bean 容器管理。`DatasourcePlatformUtil.getDatasourcePlatform()` 通过双层配置 fallback（`spring.sql.init.platform` → `spring.datasource.platform`）实现向后兼容——Nacos 2.2.x 旧配置项 `spring.datasource.platform` 仍然生效。
 
 2. **适配器模式（Adapter）**：`DatasourcePlatformUtil.getDatasourcePlatform()` 将 JDBC `DatabaseMetaData.getDatabaseProductName()` 的原始返回值（如 `"Apache Derby"`/`"MySQL"`）适配为 Nacos 内部平台标识（`"derby"`/`"mysql"`）——消除 JDBC 驱动厂商字符串格式差异——`DatasourceConfiguration`（`persistence/configuration/DatasourceConfiguration.java:30-89`）的条件注解评估阶段无需感知底层 JDBC 厂商字符串格式。
 
-3. **Fail-Fast 模式**：`ConnectionCheckUtil.checkDataSourceConnection(HikariDataSource)`（`persistence/utils/ConnectionCheckUtil.java:30-41`）在 `ExternalDataSourceServiceImpl.init()`（`persistence/datasource/ExternalDataSourceServiceImpl.java:70-95`）初始化 HikariCP 连接池后立即调用——通过 `HikariDataSource.getConnection()` + `Connection.isClosed()` 瞬时探测数据库物理连接可用性——若返回 `false` 则抛出 `DataSourceOperationException`——阻止 Nacos 节点以不可用数据源状态启动——Fail-Fast 设计原则——避免 Nacos 节点启动后因数据库不可用导致运行时 `SQLException` 雪崩。
+3. **Fail-Fast 模式**：`ConnectionCheckUtil.checkDataSourceConnection(HikariDataSource)`（`persistence/utils/ConnectionCheckUtil.java:33-39`）在 `ExternalDataSourceServiceImpl.reload()`（`persistence/datasource/ExternalDataSourceServiceImpl.java:130-145`）构建每个新数据源时调用——通过 `HikariDataSource.getConnection()` + `Connection.isClosed()` 瞬时探测数据库物理连接可用性——获取连接失败即抛出 `RuntimeException` 使 reload 中断——阻止 Nacos 节点以不可用数据源状态启动——Fail-Fast 设计原则——避免 Nacos 节点启动后因数据库不可用导致运行时 `SQLException` 雪崩。
 
 ### 6.12.5 Trade-off 分析
 
@@ -935,8 +1016,8 @@ public static String getPlatform(DataSource ds) {
 | **启动依赖** | ✅ 零 Spring 容器依赖——可在 `DataSourceService.init()` 之前调用 | ❌ 需 Spring 容器完全启动——`@PostConstruct` 时序受限 |
 | **内存开销** | ✅ 零堆内存占用——无对象实例 | ⚠️ 单例 Bean 占用堆内存 |
 
-Nacos 2.5.3 选择工具类静态方法的核心原因：`DatasourcePlatformUtil.getDatasourcePlatform()`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/DatasourcePlatformUtil.java:36-46`）在 `DatasourceConfiguration` 条件注解评估阶段被调用——`@ConditionOnEmbeddedStorage.EmbeddedStorageCondition.matches()`（`persistence/.../DatasourceConfiguration.java:78-89`）需读取 `spring.datasource.platform` 配置以决定注入 `LocalDataSourceServiceImpl` 还是 `ExternalDataSourceServiceImpl`。此时 Spring 容器尚未完全启动，无法依赖 `@Autowired` 注入 Bean。静态方法无需任何容器依赖，可在条件评估阶段安全调用。代价是单元测试中无法 Mock 静态方法——但持久化层的集成测试通过 `@SpringBootTest` 启动完整容器 + 真实 H2/Derby 数据库验证，绕过了单元 Mock 的需求。
+Nacos 2.5.3 选择工具类静态方法的核心原因：`DatasourcePlatformUtil.getDatasourcePlatform()`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/DatasourcePlatformUtil.java:36-42`）在 `DatasourceConfiguration` 容器初始化阶段被调用——`loadDatasourceConfiguration()`（`persistence/.../DatasourceConfiguration.java:58-83`）需读取 `spring.sql.init.platform`（旧键 `spring.datasource.platform` 兜底）配置以置位 `useExternalDB`/`embeddedStorage` 静态标志。此时 Spring 容器尚未刷新，无法依赖 `@Autowired` 注入 Bean。静态方法无需任何容器依赖，可在该极早阶段安全调用。代价是单元测试中无法 Mock 静态方法——但持久化层的集成测试通过 `@SpringBootTest` 启动完整容器 + 真实 Derby 数据库验证，绕过了单元 Mock 的需求。
 
 ### 6.12.6 小结
 
-`ConnectionCheckUtil.checkDataSourceConnection()`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/ConnectionCheckUtil.java:30-41`）通过 `HikariDataSource.getConnection()` + `isClosed()` 瞬时探测数据库物理连接可用性——在 `ExternalDataSourceServiceImpl.init()`（`persistence/.../ExternalDataSourceServiceImpl.java:70-95`）初始化 HikariCP 连接池后立即调用。`DatasourcePlatformUtil.getDatasourcePlatform()`（`persistence/.../DatasourcePlatformUtil.java:36-46`）通过双层配置 fallback（`spring.datasource.platform` → `nacos.datasource.platform`，`PersistenceConstant.DATASOURCE_PLATFORM_PROPERTY` + `DATASOURCE_PLATFORM_PROPERTY_OLD`）识别数据源平台类型（`"derby"`/`"mysql"`），`DatasourceConfiguration`（`persistence/.../DatasourceConfiguration.java:30-89`）在条件注解评估阶段调用此方法决定注入哪种 `DataSourceService` 实现。两个工具类共同构成持久化层的无状态工具门面——零容器依赖、零堆内存开销、瞬时纯函数执行。
+`ConnectionCheckUtil.checkDataSourceConnection()`（`persistence/src/main/java/com/alibaba/nacos/persistence/utils/ConnectionCheckUtil.java:33-39`）通过 `HikariDataSource.getConnection()` + `isClosed()` 瞬时探测数据库物理连接可用性——在 `ExternalDataSourceServiceImpl.reload()`（`persistence/.../ExternalDataSourceServiceImpl.java:130-145`）构建每个新数据源时调用。`DatasourcePlatformUtil.getDatasourcePlatform()`（`persistence/.../DatasourcePlatformUtil.java:36-42`）通过双层配置 fallback（`spring.sql.init.platform` → `spring.datasource.platform`，`PersistenceConstant.DATASOURCE_PLATFORM_PROPERTY`（`:33`）+ `DATASOURCE_PLATFORM_PROPERTY_OLD`（`:31`））识别数据源平台类型，`DatasourceConfiguration`（`persistence/.../DatasourceConfiguration.java:30-89`）在容器初始化阶段调用此方法置位静态标志——决定 `DynamicDataSource` 选择哪种 `DataSourceService` 实现。两个工具类共同构成持久化层的无状态工具门面——零容器依赖、零堆内存开销、瞬时纯函数执行。

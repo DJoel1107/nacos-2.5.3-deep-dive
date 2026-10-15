@@ -2,7 +2,7 @@
 
 本章为 Nacos 2.5.3 的速查附录，汇总 OpenAPI 接口清单、SQL 表结构、日常运维命令、性能基线参考值、版本迁移与灰度升级要点、适用场景与高频 FAQ。内容面向生产运维与集成开发，作为前 15 章的"查表式"索引，所有接口路径、表结构与命令均基于 2.5.3 源码与控制台实际行为核验。
 
-> **版本基准**：Nacos 2.5.3（`upstream/nacos-2.5.3/`）  
+> **版本基准**：Nacos 2.5.3（`src/nacos-2.5.3-src/`）  
 > **接口前缀**：客户端访问 OpenAPI 时默认在服务端口（8848）后拼接 `/nacos` 上下文（当 `server.servlet.context-path=/nacos`）。
 
 ## 章节导读
@@ -21,7 +21,7 @@
 
 ## 16.1 API 速查表
 
-> 本节汇总五类 OpenAPI 的常用接口：**配置管理 8+、服务管理 7、实例管理 8、集群管理 3、认证鉴权 6**。路径与方法取自 2.5.3 源码控制器注解，参数省略次要项，完整契约以各控制器方法签名为准。
+> 本节汇总五类 OpenAPI 的常用接口：**配置管理 8+、服务管理 7、实例管理 8、集群管理 5、认证鉴权 6**。路径与方法取自 2.5.3 源码控制器注解，参数省略次要项，完整契约以各控制器方法签名为准。
 
 ### 设计背景
 
@@ -37,12 +37,14 @@
 | DELETE | `/v1/cs/configs` | 删除配置 | `dataId,group` | ConfigController.java:285 |
 | GET | `/v1/cs/configs?search=accurate` | 精确查询配置列表 | `dataId,pageNo,pageSize` | ConfigController.java:397 |
 | GET | `/v1/cs/configs?search=blur` | 模糊查询配置列表 | `search,dataId,pageNo,pageSize` | ConfigController.java:426 |
-| GET | `/v1/cs/configs/listener` | 配置监听（长轮询探测变更） | `Listening-Configs` 头 | ConfigController.java:379 |
+| GET | `/v1/cs/configs/listener` | 查询配置监听者列表 | `dataId,group` | ConfigController.java:379 |
+| POST | `/v1/cs/configs/listener` | 配置监听（长轮询探测变更） | `Listening-Configs` 头 | ConfigController.java:350 |
 | POST | `/v1/cs/configs?import=true` | 批量导入配置 | `file,policy` | ConfigController.java:634 |
 | GET | `/v1/cs/configs?export=true` | 批量导出配置 | `dataId/group/ids` | ConfigController.java:529 |
 | POST | `/v1/cs/configs?clone=true` | 配置克隆到目标命名空间 | `namespace` | ConfigController.java:863 |
 | DELETE | `/v1/cs/configs?delType=ids` | 按 ID 批量删除 | `ids` | ConfigController.java:305 |
-| POST | `/v1/cs/configs?beta=true` | 发布灰度（Beta）配置 | `betaIps` | ConfigController.java:464 |
+| POST | `/v1/cs/configs` | 发布灰度（Beta）配置 | `betaIps` 请求头 | ConfigController.java:158/215 |
+| DELETE | `/v1/cs/configs?beta=true` | 停止灰度（Beta）配置 | `dataId,group` | ConfigController.java:464 |
 
 **调用示例（发布配置）**：
 
@@ -75,7 +77,7 @@ curl -X POST 'http://127.0.0.1:8848/nacos/v1/cs/configs' \
 | GET | `/v1/ns/instance/list` | 实例列表（含健康过滤） | `serviceName,groupName,healthyOnly` | InstanceController.java:322 |
 | GET | `/v1/ns/instance` | 查询单个实例 | `ip,port,serviceName,groupName` | InstanceController.java:351 |
 | PUT | `/v1/ns/instance/beat` | 实例心跳（临时实例保活） | `serviceName,beat` | InstanceController.java:385 |
-| GET | `/v1/ns/instance/statuses` | 实例状态批量查询 | `serviceName,pageNo,pageSize` | InstanceController.java:436 |
+| GET | `/v1/ns/instance/statuses` | 实例状态批量查询 | `key` | InstanceController.java:436 |
 | PUT | `/v1/ns/instance/metadata/batch` | 实例元数据批量更新 | `metadata,instances` | InstanceController.java:191 |
 
 **调用示例（注册实例）**：
@@ -92,8 +94,8 @@ curl -X POST 'http://127.0.0.1:8848/nacos/v1/ns/instance' \
 | GET | `/v1/ns/operator/metrics` | 节点运行指标（连接数/服务数等） | — | OperatorController.java:149 |
 | GET | `/v1/ns/operator/switches` | 运行时开关状态 | — | OperatorController.java:119 |
 | POST | `/v1/ns/operator/push/state` | 推送执行状态（含失败重推） | `detail` | OperatorController.java:87 |
-| GET | `/v1/ns/operator/distro/client` | Distro 客户端列表 | — | OperatorController.java:194 |
-| GET | `/v1/ns/cluster/health` | 集群健康状态 | — | ClusterController.java:47 |
+| GET | `/v1/ns/operator/distro/client` | Distro 客户端列表 | `ip,port` | OperatorController.java:194 |
+| GET | `/v1/core/cluster/nodes` | 集群节点列表（含健康状态） | — | NacosClusterController.java:69 |
 
 ### 16.1.5 认证鉴权接口（`UserController` / `PermissionController` 等）
 
@@ -112,8 +114,8 @@ curl -X POST 'http://127.0.0.1:8848/nacos/v1/ns/instance' \
 
 - **上下文前缀**：若服务端以默认方式部署，URL 为 `http://ip:8848/nacos/v1/...`；当 `server.servlet.context-path` 被修改时同步替换 `/nacos` 前缀。
 - **返回体**：单个资源接口返回 `Code`（0 成功）、`message`、`data`；列表接口返回 `pageItems`/`page` 分页结构（`Page` 对象）。
-- **鉴权头**：3.0 起支持 `accessToken` 头与 `username/password` 参数两传法，生产建议用 `accessToken` 头。
-- **临时/持久实例**：`ephemeral=true` 走注册中心内存 + 心跳；持久实例需走 `PUT /v1/ns/instance` 并配置持久化存储，二者接口参数不同，误用会互相覆盖。
+- **鉴权头**：支持 `Authorization: Bearer <token>` 请求头与 `accessToken` 参数两种传法，生产建议用 Bearer 请求头。
+- **临时/持久实例**：`ephemeral=true` 走注册中心内存 + 心跳；持久实例注册统一走 `POST /v1/ns/instance`（InstanceController.java:110，`PUT` 为更新实例，:165）并配置持久化存储，二者接口参数不同，误用会互相覆盖。
 
 ### Trade-off 分析
 
@@ -131,7 +133,7 @@ OpenAPI 的直接调用与 SDK（`NacosNamingService`/`NacosConfigService`）调
 
 ## 16.2 SQL 表结构速查
 
-> 本节列出 Nacos 核心业务表与用户权限表的结构，字段定义取自 `distribution/conf/mysql-schema.sql`（2.5.3）。**共 8 张表**：`config_info`、`config_info_gray`、`his_config_info`、`config_tags_relation`、`group_capacity`、`tenant_capacity`、`tenant_info`、`users`、`roles`、`permissions`（前四张为配置体系，后六张为管控体系）。
+> 本节列出 Nacos 核心业务表与用户权限表的结构，字段定义取自 `distribution/conf/mysql-schema.sql`（2.5.3）。**共 10 张表**：`config_info`、`config_info_gray`、`his_config_info`、`config_tags_relation`、`group_capacity`、`tenant_capacity`、`tenant_info`、`users`、`roles`、`permissions`（前四张为配置体系，后六张为管控体系）。
 
 ### 设计背景
 
@@ -152,7 +154,7 @@ OpenAPI 的直接调用与 SDK（`NacosNamingService`/`NacosConfigService`）调
 | `tenant_id` | varchar(128) | 租户（命名空间 ID），默认空 |
 | `c_desc`/`c_use`/`effect` | varchar | 配置描述/用途/生效说明 |
 | `type` | varchar(64) | 配置类型（yaml/properties/json…） |
-| `c_schema` | text | 配置模式（2.5.x 新增） |
+| `c_schema` | text | 配置模式（历史字段） |
 | `encrypted_data_key` | varchar(1024) | 加密数据密钥 |
 
 - **唯一索引**：`uk_configinfo_datagrouptenant (data_id, group_id, tenant_id)` —— 同一命名空间下 dataId+group 唯一。
@@ -203,7 +205,7 @@ OpenAPI 的直接调用与 SDK（`NacosNamingService`/`NacosConfigService`）调
 
 **`roles`**：`username`+`role`，联合唯一索引 `idx_user_role`。
 
-**`permissions`**：`role`+`resource`+`action`，联合唯一索引 `uk_role_permission`；`resource` 形如 `服务名:组名`、`action` 为读写操作标识。
+**`permissions`**：`role`+`resource`+`action`，联合唯一索引 `uk_role_permission`；`resource` 由 `namespaceId`、`group`、`serviceName` 三元组构成（命名空间:组:服务）、`action` 为读写操作标识。
 
 > **权限模型**：User → Role → Permission（RBAC），`AuthFilter` 在请求入口按用户名/角色鉴权，`resource` 粒度为"服务/配置 + 操作"（详见第 7 章鉴权链路）。
 
@@ -239,9 +241,9 @@ OpenAPI 的直接调用与 SDK（`NacosNamingService`/`NacosConfigService`）调
 ### 16.3.1 状态与指标查询（curl）
 
 ```bash
-# 集群健康状态
+# 集群节点状态
 curl 'http://127.0.0.1:8848/nacos/v1/ns/operator/metrics'
-curl 'http://127.0.0.1:8848/nacos/v1/ns/cluster/health'
+curl 'http://127.0.0.1:8848/nacos/v1/core/cluster/nodes'
 
 # 节点运行指标（连接数/服务数/推送状态等）
 curl -G 'http://127.0.0.1:8848/nacos/v1/ns/operator/metrics'
@@ -249,11 +251,11 @@ curl -G 'http://127.0.0.1:8848/nacos/v1/ns/operator/metrics'
 # 运行时开关
 curl 'http://127.0.0.1:8848/nacos/v1/ns/operator/switches'
 
-# Prometheus 指标端点（需开启）
-curl 'http://127.0.0.1:8848/nacos/actuator/prometheus'
+# Prometheus 指标端点（需配置 nacos.prometheus.metrics.enabled=true 开启）
+curl 'http://127.0.0.1:8848/nacos/prometheus'
 ```
 
-**关键指标**：`naming_count_cluster`（服务数）、`config_count_...`（配置数）、gRPC 连接数、`http_server_requests`（QPS）——详见 13.2 指标表。
+**关键指标**：`nacos_monitor`（通过 `name` 标签区分 `configCount`（配置数）、`longPolling`（长轮询数）、gRPC 连接数等）、`nacos_config_subscriber`（配置订阅者数）、`nacos_naming_subscriber`/`nacos_naming_publisher`（服务订阅/发布者数）、`http_server_requests`（QPS）——详见 13.2 指标表。
 
 ### 16.3.2 配置查询与发布（curl）
 
@@ -295,8 +297,8 @@ curl -X POST 'http://127.0.0.1:8848/nacos/v1/ns/instance' \
 ### 16.3.4 日志分析（grep）
 
 Nacos 客户端与服务端日志位置：
-- **服务端**：`<nacos-home>/logs/`：`nacos.log`（主日志）、`naming-server.log`、`config-server.log`、`remote.log`（gRPC/远程连接）、`access.log.2026-xx-xx`（访问日志）、`embedded-storage.log`。
-- **客户端**：`<app>/logs/`：`nacos-config.log`、`nacos-naming.log`、`nacos.log`（见 15.10 排障）。
+- **服务端**：`<nacos-home>/logs/`：`nacos.log`（主日志）、`naming-server.log`、`config-server.log`、`remote.log`（gRPC/远程连接）、`access_log.{date}.log`（访问日志）、`protocol-raft.log`（Raft 协议日志）、`protocol-distro.log`（Distro 协议日志）、`nacos-persistence.log`（持久化日志）。
+- **客户端**：`~/logs/nacos/`：`config.log`、`naming.log`、`remote.log`（见 15.10 排障）。
 
 ```bash
 # 查看 gRPC 连接与错误
@@ -527,7 +529,7 @@ kubectl -n nacos logs deploy/nacos-server-0 --tail=200
 
 - **方式 A（新增节点替换）**：新起 2.5.3 节点加入集群，逐台剔除旧节点，滚动替换——数据经 Jraft/Distro 同步，客户端无需感知。
 - **方式 B（同节点替换）**：停一台→替换为 2.5.3→拉起→验证，逐台滚动；停机窗口内该节点服务漂移。
-- **每台验证**：`curl /v1/ns/operator/metrics` 正常、节点加入集群（`/v1/ns/cluster/health`）、日志无错误、配置/服务可正常读写。
+- **每台验证**：`curl /v1/ns/operator/metrics` 正常、节点加入集群（`/v1/core/cluster/nodes`）、日志无错误、配置/服务可正常读写。
 - **保持旧客户端可用**：2.x 服务端兼容 1.x/2.x 旧客户端短期运行，为客户端升级留窗口。
 
 ### 16.6.3 阶段三：升级客户端
@@ -629,7 +631,7 @@ FAQ 是速查的收口：把散落在各章的常见疑问聚合成"一问一答
 8. **如何确认客户端实际生效的 nacos-client 版本？** `mvn dependency:tree -Dincludes=com.alibaba.nacos:nacos-client`。见 15.9/16.1。
 9. **配置加密如何开启？** 配置加密插件 + `encrypted_data_key` 字段支持；见第 7 章/16.2。
 10. **鉴权开启后调用 API 返回 403？** 未携带 `accessToken` 或权限不足；`nacos.core.auth.enabled=true` 需登录获取 token。见 16.1/第 7 章。
-11. **集群脑裂怎么判断？** 查 `cluster/nodes`、Raft `leader`、DistroVerify 状态；见 14.7。
+11. **集群脑裂怎么判断？** 查 `cluster/nodes`、Raft `leader`、Distro 校验指标（`distroVerify` 相关计数）；见 14.7。
 12. **FullGC 频繁？** 实例/订阅量过大或堆过小，`jmap -histo:live` 定位大对象；见 12/14.9。
 13. **CPU 飙高怎么办？** `top -H` + `jstack` + async-profiler 火焰图；见 14.11。
 14. **长轮询超时导致配置不生效？** 增大 `configLongPollTimeout` + 查 `ClientWorker` 线程堆栈；见 14.4。

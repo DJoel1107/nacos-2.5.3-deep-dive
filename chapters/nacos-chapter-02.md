@@ -8,7 +8,7 @@ Nacos Naming 模块（naming/src/main/java/com/alibaba/nacos/naming/）是 Nacos
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-1</span><span class="tt">Naming 模块 20 个子包全景架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Naming 模块核心分层</span><span class="s">HTTP/SDK 入口层</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">controllers/ (12)     remote/ (10)        interceptor/ (4)</div><div class="dgm-note" style="border:none;background:none;padding:0;">InstanceController    GrpcPushService       NamingInterceptor</div><div class="dgm-note" style="border:none;background:none;padding:0;">CatalogController    RpcPushHandler</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager        ClientManagerDelegate</span><span class="s">EphemeralClientOperationServiceImpl（AP/Distro）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PersistentClientOperationServiceImpl（CP/JRaft）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">consistency/ephemeral/distr</span><span class="s">DistroClientDataProcessor</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroClientComponentRegi</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">healthcheck/ (36)</span><span class="s">HealthCheckProcessorV2Delegat</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">TcpSuperSenseProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">ClientBeatCheckTaskV2</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">push/ (23)</span><span class="s">PushService + PushHandlerFactory</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">model/ (8)    monitor/ (9)</span><span class="s">cluster/ (9)   selector/ (6)</span></div><div class="dgm-box-b"></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-1</span><span class="tt">Naming 模块 20 个子包全景架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Naming 模块核心分层</span><span class="s">HTTP/SDK 入口层</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">controllers/ (12)     remote/ (10)        interceptor/ (4)</div><div class="dgm-note" style="border:none;background:none;padding:0;">InstanceController    GrpcPushService       NamingInterceptor</div><div class="dgm-note" style="border:none;background:none;padding:0;">CatalogController    RpcPushHandler</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceManager        ClientManagerDelegate</span><span class="s">EphemeralClientOperationServiceImpl（AP/Distro）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PersistentClientOperationServiceImpl（CP/JRaft）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">consistency/ephemeral/distr</span><span class="s">DistroClientDataProcessor</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">DistroClientComponentRegi</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">healthcheck/ (36)</span><span class="s">HealthCheckProcessorV2Delegat</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">TcpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">ClientBeatCheckTaskV2</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">push/ (23)</span><span class="s">PushService + PushHandlerFactory</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">model/ (8)    monitor/ (9)</span><span class="s">cluster/ (9)   selector/ (6)</span></div><div class="dgm-box-b"></div></div></div>
 
 **【源码走读】**
 
@@ -43,7 +43,7 @@ Naming 模块按功能分为 6 层：
 | 维度 | 2.2.3 | 2.5.3 | 变更幅度 |
 |------|-------|-------|---------|
 | 核心路由类 | `DelegateConsistencyServiceImpl` | `ClientOperationService` + 2 实现类 | 1→3 类 |
-| Distro 协议包 | `consistency/distro/` | `consistency/distro/v2/` | 新增 11 文件 |
+| Distro 协议包 | `consistency/distro/` | `consistency/distro/v2/` | 新增 5 个类（核心类 + 辅助类） |
 | 健康检查入口 | `HealthCheckProcessorDelegate` | `HealthCheckProcessorV2Delegate` | 1→1（重构） |
 | 心跳检测 | `ClientBeatCheckTask` | `ClientBeatCheckTaskV2` | 1→1（优化算法） |
 | 废弃类数量 | 0 | 3+（`DelegateConsistencyServiceImpl` 等） | - |
@@ -64,7 +64,7 @@ Naming 模块按功能分为 6 层：
 1. **入口层依赖核心层**：`InstanceController.register()`（controllers/InstanceController.java:113）→ `getInstanceOperator().registerInstance()` → `ClientOperationService.registerInstance()`——入口层不直接操作 `ServiceManager`，通过 `InstanceOperator` 间接访问核心层。
 2. **核心层不依赖入口层**：`ServiceManager.getSingleton()`（core/v2/ServiceManager.java:61）不 import 任何 `controllers/` 或 `remote/` 包的类——核心层可独立编译和单元测试。
 3. **一致性协议层独立性**：`DistroClientDataProcessor`（consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58）通过 `SmartSubscriber` 接口接收事件——不直接依赖 HTTP 入口层。
-4. **健康检查层可替换性验证**：将 `TcpSuperSenseProcessor` 替换为自定义 `CustomHealthCheckProcessor`——只需实现 `HealthCheckProcessor` 接口并注册到 `HealthCheckProcessorV2Delegate`——上层业务逻辑无需任何变更。
+4. **健康检查层可替换性验证**：将 `TcpHealthCheckProcessor` 替换为自定义 `CustomHealthCheckProcessor`——只需实现 `HealthCheckProcessor` 接口并注册到 `HealthCheckProcessorV2Delegate`——上层业务逻辑无需任何变更。
 
 **二、v2 重构核心变更（2.2.3 → 2.5.3）**
 
@@ -82,8 +82,8 @@ Naming 模块在 2.5.3 中的核心架构变更：
 |------|--------|--------|------|
 | `core/` + `core.v2/` | 64 | `ServiceManager`, `ClientManagerDelegate`, `EphemeralClientOperationServiceImpl`, `PersistentClientOperationServiceImpl` | 服务注册表 + AP/CP 路由 |
 | `controllers/` | 12 | `InstanceController`, `CatalogController` | REST API 端点 |
-| `healthcheck/` | 36 | `HealthCheckProcessorV2Delegate`, `TcpSuperSenseProcessor`, `ClientBeatCheckTaskV2` | 健康检查 + 心跳超时 |
-| `push/` | 23 | `PushService`, `PushHandlerFactory`, `GrpcPushService` | gRPC + UDP 推送 |
+| `healthcheck/` | 36 | `HealthCheckProcessorV2Delegate`, `TcpHealthCheckProcessor`, `ClientBeatCheckTaskV2` | 健康检查 + 心跳超时 |
+| `push/` | 23 | `NamingSubscriberServiceV2Impl`, `PushDelayTaskExecuteEngine`, `GrpcPushService` | gRPC + UDP 推送 |
 | `consistency/` | 11 | `DistroClientDataProcessor`, `DistroClientComponentRegistry` | Distro AP 协议 v2 |
 | `remote/` | 10 | `GrpcPushService`, `RpcPushHandler` | gRPC 通信服务 |
 | `model/` | 8 | `Instance`, `Service`, `Cluster` | 核心数据模型 |
@@ -114,13 +114,13 @@ Naming 模块在 2.5.3 中的核心架构变更：
 
 Naming 模块选择 6 层分层架构（入口层→核心业务层→一致性协议层→健康检查层→推送层→模型/工具层）而非扁平模块化架构（所有功能模块平级调用）：分层架构的代价是增加调用链深度——从 HTTP 请求到健康检查执行需穿过 2→4 层——每层带来约 0.05ms 的方法调用开销。但换来了模块可替换性——替换健康检查协议时只需修改 `healthcheck/` 层（约 200 行新增代码），不影响上层业务逻辑（约 5000+ 行业务代码零改动）。扁平架构中，健康检查逻辑散布在多个模块中——替换健康检查协议需修改 3-5 个模块，改动量约 800-1200 行——回归测试范围扩大约 3-5x。对于 Naming 模块（356 文件）规模，分层架构的模块隔离收益远大于微小的调用链开销。
 
-1. **分层架构模式（Layered Architecture）**：Naming 模块按功能分为入口层→核心业务层→一致性协议层→健康检查层→推送层→模型/工具层，每层只依赖其直接下层。当需要替换健康检查协议（如从 TCP 切换到 gRPC Health Check）时，只需替换 `healthcheck/` 层的实现，上层业务逻辑无需变更——这是分层架构可替换性（Substitutability）的体现。`InstanceController`（controllers/InstanceController.java:87）不直接依赖 `TcpSuperSenseProcessor`——通过 `HealthCheckProcessorV2Delegate`（healthcheck/v2/HealthCheckProcessorV2Delegate.java:34-56）间接调用健康检查。如果不使用分层架构，健康检查逻辑耦合在 `InstanceController` 中——替换健康检查协议需要修改核心入口类，增加回归测试范围约 30%。
+1. **分层架构模式（Layered Architecture）**：Naming 模块按功能分为入口层→核心业务层→一致性协议层→健康检查层→推送层→模型/工具层，每层只依赖其直接下层。当需要替换健康检查协议（如从 TCP 切换到 gRPC Health Check）时，只需替换 `healthcheck/` 层的实现，上层业务逻辑无需变更——这是分层架构可替换性（Substitutability）的体现。`InstanceController`（controllers/InstanceController.java:87）不直接依赖 `TcpHealthCheckProcessor`——通过 `HealthCheckProcessorV2Delegate`（healthcheck/v2/processor/HealthCheckProcessorV2Delegate.java:34-56）间接调用健康检查。如果不使用分层架构，健康检查逻辑耦合在 `InstanceController` 中——替换健康检查协议需要修改核心入口类，增加回归测试范围约 30%。
 
 2. **策略模式（Strategy Pattern）**：`ClientOperationService` 接口定义了 `registerInstance()` 策略（naming/core/v2/service/ClientOperationService.java:46），`EphemeralClientOperationServiceImpl`（AP Distro，naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:47）和 `PersistentClientOperationServiceImpl`（CP JRaft，naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）是两种具体的注册策略。根据 `Service.isEphemeral()` 字段动态选择策略实现——这是策略模式在一致性协议路由中的典型应用。如果不使用策略模式，`InstanceController` 内部需要 if-else 分支判断 `ephemeral` 并调用不同的注册逻辑——新增一致性协议需要修改 `InstanceController`（违反开闭原则），改动量约 20-30 行。
 
 3. **门面模式（Facade Pattern）**：`ClientManagerDelegate`（naming/core/v2/client/manager/ClientManagerDelegate.java:40）作为客户端管理的门面，内部委派给 `EphemeralIpPortClientManager` 和 `PersistentIpPortClientManager`。外部调用方不需要知道内部有两个 ClientManager 实现——只需调用 `ClientManagerDelegate.getClient(clientId)` 即可。如果不使用门面模式，调用方需要判断 client 是临时还是持久类型——调用不同的 `ClientManager`——增加调用方复杂度约 全6 行 if-else 分支。
 
-4. **观察者模式（Observer Pattern）**：`DistroClientDataProcessor`（consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58）通过 `SmartSubscriber` 接口订阅 `ClientRegisterServiceEvent` 事件——`EphemeralClientOperationServiceImpl.registerInstance()`（core/v2/service/impl/EphemeralClientOperationServiceImpl.java:71）发布事件后，`NotifyCenter` 自动通知所有订阅者。如果不使用观察者模式，`EphemeralClientOperationServiceImpl` 需要直接调用 `DistroClientDataProcessor` 的同步方法——增加代码耦合度——未来替换 Distro 协议时需要同时修改 `EphemeralClientOperationServiceImpl` 和 `DistroClientDataProcessor` 两个类。
+4. **观察者模式（Observer Pattern）**：`DistroClientDataProcessor`（consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58）通过 `SmartSubscriber` 接口订阅 `ClientEvent.ClientChangedEvent`、`ClientEvent.ClientDisconnectEvent`、`ClientEvent.ClientVerifyFailedEvent` 三类 Client 事件（DistroClientDataProcessor.java:85-91）——实例注册发布的 `ClientRegisterServiceEvent` 由 `ClientServiceIndexesManager` 订阅处理后间接触发 `ClientEvent.ClientChangedEvent`，再由 `NotifyCenter` 通知 `DistroClientDataProcessor` 执行同步。如果不使用观察者模式，`EphemeralClientOperationServiceImpl` 需要直接调用 `DistroClientDataProcessor` 的同步方法——增加代码耦合度——未来替换 Distro 协议时需要同时修改 `EphemeralClientOperationServiceImpl` 和 `DistroClientDataProcessor` 两个类。
 
 **【小结】**
 
@@ -140,16 +140,15 @@ Naming 模块的核心类以 HTTP REST API 端点 `InstanceController` 为入口
 
 **一、InstanceController：HTTP REST API 入口**
 
-`InstanceController`（naming/controllers/InstanceController.java:87）是 Naming 模块的 REST API 入口，暴露以下核心端点：
+`InstanceController`（naming/controllers/InstanceController.java:87）是 Naming 模块 v1 的 REST API 入口（`@RequestMapping("/v1/ns/instance")`，:85）；v2 端点（`/v2/ns/instance` 等）由 `InstanceControllerV2`（naming/controllers/v2/InstanceControllerV2.java）承接。核心端点如下：
 
-| 端点 | HTTP 方法 | 功能 | 核心方法 |
-|------|----------|------|---------|
-| `/v2/ns/instance` | POST | 注册实例 | `register()` |
-| `/v2/ns/instance` | PUT | 更新实例 | `update()` |
-| `/v2/ns/instance` | DELETE | 注销实例 | `deregister()` |
-| `/v2/ns/instance/list` | GET | 查询实例列表 | `list()` |
-| `/v2/ns/instance/beat` | PUT | 心跳上报 | `beat()` |
-| `/v2/ns/catalog/services` | GET | 服务目录 | `catalog()` |
+| 端点 | HTTP 方法 | 功能 | 归属 Controller | 核心方法 |
+|------|----------|------|----------------|---------|
+| `/v1/ns/instance` | POST/PUT/DELETE | 注册/更新/注销实例 | `InstanceController`（v1，InstanceController.java:85 `@RequestMapping("/v1/ns/instance")`） | `register()` / `update()` / `deregister()` |
+| `/v1/ns/instance/list` | GET | 查询实例列表 | `InstanceController`（v1） | `list()` |
+| `/v1/ns/instance/beat` | PUT | 心跳上报 | `InstanceController`（v1） | `beat()` |
+| `/v2/ns/instance` | POST/PUT/DELETE | 注册/更新/注销实例 | `InstanceControllerV2`（v2，controllers/v2/） | `register()` / `update()` / `deregister()` |
+| `/v2/ns/instance/list` | GET | 查询实例列表 | `InstanceControllerV2`（v2） | `list()` |
 
 `InstanceController.register()` 核心代码流程（naming/controllers/InstanceController.java:156-200）：
 
@@ -213,35 +212,24 @@ public Service getOrCreateService(String namespace, String group, String service
 `ClientOperationService` 接口（naming/core/v2/service/ClientOperationService.java:36-42）定义了 `registerInstance(Service, Instance, clientId)`、`deregisterInstance()`、`updateInstance()` 等核心方法。根据 `Service.isEphemeral()` 的值动态选择实现：
 
 - `ephemeral=true` → `EphemeralClientOperationServiceImpl`（naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:56-77）：临时实例，使用 AP Distro 协议去中心化同步
-  - `registerInstance()`：将实例写入本地 `Service` → `DistroClientDataProcessor.syncToAll()` 向集群所有节点同步
-- `ephemeral=false` → `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:106-165）：持久实例，使用 CP JRaft 协议 Leader 日志复制
+  - `registerInstance()`：将 `InstancePublishInfo` 写入 `IpPortBasedClient` → 发布 `ClientRegisterServiceEvent` 间接触发 Client 变更 → `DistroClientDataProcessor.onEvent()` → `syncToAllServer()` → `distroProtocol.sync()` 向集群所有节点同步
+- `ephemeral=false` → `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-127）：持久实例，使用 CP JRaft 协议 Leader 日志复制
   - `registerInstance()`：Leader 通过 gRPC 向所有 Follower 并行发送 `AppendEntriesRequest` → 等待多数派确认 → 提交日志条目
 
 这种通过接口 + 两个实现类的设计使得 Naming 模块的 AP/CP 路由逻辑完全解耦——`InstanceController` 不需要知道 `ClientOperationService` 的具体实现类，只需要调用 `ClientOperationService.registerInstance()` 即可。
 
-**四、PushService：服务变更推送引擎**
+**四、NamingSubscriberServiceV2Impl：服务变更推送引擎**
 
-`PushService`（naming/push/PushService.java:56-200）负责将服务变更通知推送给所有订阅客户端。2.5.3 中主力推送通道为 gRPC Bi-directional Stream：
+2.5.3 中无 `PushService` 类——服务变更推送引擎由 `NamingSubscriberServiceV2Impl`（naming/push/v2/NamingSubscriberServiceV2Impl.java）承担：它作为 `SmartSubscriber` 订阅 Client 变更事件，将推送任务交由 `PushDelayTaskExecuteEngine`（naming/push/v2/task/PushDelayTaskExecuteEngine.java）延迟合并，最终由 `PushExecuteTask`（naming/push/v2/task/PushExecuteTask.java）执行，委派给 `PushExecutorDelegate` 完成实际推送。主力推送通道为 gRPC Bi-directional Stream：
 
 ```java
-// PushService.push()（简化核心逻辑）
-public void push(Service service, List<Instance> instances, Collection<Subscriber> subscribers) {
-    for (Subscriber subscriber : subscribers) {
-        String clientId = subscriber.getClientId();
-        Connection connection = ConnectionManager.getConnection(clientId);
-        if (connection != null) {
-            gRPCStreamObserver observer = connection.getStreamObserver();
-            ServiceChangeEvent event = new ServiceChangeEvent(service.getNamespace(),
-                service.getGroup(), service.getName(), instances);
-            observer.onNext(event); // 通过 gRPC Bi-di Stream 推送
-        } else {
-            Loggers.PUSH.warn("Client connection expired: {}", clientId);
-        }
-    }
-}
+// NamingSubscriberServiceV2Impl → PushDelayTaskExecuteEngine → PushExecuteTask（简化链路）
+// 1. 事件到达：NamingSubscriberServiceV2Impl.onEvent() → addTask(new PushDelayTask(service, delay))
+// 2. 延迟合并：PushDelayTaskExecuteEngine 合并同一 Service 的短时间多次变更
+// 3. 执行推送：PushExecuteTask.run() → pushExecutor.doPushWithCallback(clientId, subscriber, data, callback)
 ```
 
-UDP 兼容推送通道已标记为废弃（`@Deprecated`），仅保留作为 gRPC 连接断开时的极端降级方案。客户端通过 `NamingClientProxy.subscribe()`（client/naming/remote/NamingClientProxy.java:67-102）订阅服务后，`ServerPushHandler` 持续接收服务端推送的 `ServiceChangeEvent`。
+UDP 兼容推送通道仅作为 1.x 客户端的向后兼容实现保留（源码未标 `@Deprecated`），gRPC 推送为主力通道。客户端通过 `NamingClientProxy.subscribe()`（client/naming/remote/NamingClientProxy.java:161）订阅服务后，`ServerPushHandler` 持续接收服务端推送的 `ServiceChangeEvent`。
 
 **【设计模式分析】**
 
@@ -275,7 +263,7 @@ Naming 模块在 2.x 中选择 gRPC Bi-directional Stream（基于 HTTP/2 长连
 
 2. **策略模式（Strategy Pattern）**：`ClientOperationService` 接口定义了 `registerInstance()` 策略（naming/core/v2/service/ClientOperationService.java:46），`EphemeralClientOperationServiceImpl`（naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:47）和 `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）是两种具体策略实现。根据 `Service.isEphemeral()` 动态选择——这是策略模式在一致性协议路由中的核心应用。如果不使用策略模式，`InstanceController` 内部需要 if-else 分支判断 `ephemeral` 并调用不同的注册逻辑——新增一致性协议需要修改 `InstanceController`（违反开闭原则），改动量约 20-30 行。
 
-3. **观察者模式（Observer Pattern）**：`PushService`（naming/push/PushService.java:56-200）作为被观察者（Subject），维护了所有订阅客户端的 `Subscriber` 列表。当服务实例发生变更（注册/注销/健康状态变更）时，`PushService.push()` 通知所有订阅者——这是观察者模式在推送系统中的典型应用。如果不使用观察者模式，`InstanceController` 在注册/注销实例后需要遍历所有订阅客户端逐一推送——增加代码耦合度和循环复杂度（O(N) 遍历开销）。
+3. **观察者模式（Observer Pattern）**：`NamingSubscriberServiceV2Impl`（naming/push/v2/NamingSubscriberServiceV2Impl.java）作为订阅者（Observer），通过 `NotifyCenter` 订阅 Client 变更事件。当服务实例发生变更（注册/注销/健康状态变更）时，推送引擎经 `PushDelayTaskExecuteEngine` → `PushExecuteTask` → `PushExecutorDelegate` 通知所有订阅者——这是观察者模式在推送系统中的典型应用。如果不使用观察者模式，`InstanceController` 在注册/注销实例后需要遍历所有订阅客户端逐一推送——增加代码耦合度和循环复杂度（O(N) 遍历开销）。
 
 4. **命令模式（Command Pattern）**：`InstanceController.register()`（controllers/InstanceController.java:113）将注册请求封装为命令对象——通过 `getInstanceOperator().registerInstance()` 执行命令——将请求发起者（HTTP 客户端）与请求执行者（`ClientOperationService`）解耦。如果不使用命令模式，`InstanceController` 直接调用 `EphemeralClientOperationServiceImpl` 或 `PersistentClientOperationServiceImpl` 的方法——增加代码耦合度。
 
@@ -287,7 +275,7 @@ Naming 模块的核心类以 `InstanceController` → `ServiceManager` → `Clie
 
 **【设计背景】**
 
-`InstanceController.register()`（naming/controllers/InstanceController.java:87）是服务注册的 HTTP REST API 入口。客户端通过 HTTP POST `/v2/ns/instance` 发送注册请求，`InstanceController` 负责解析请求参数、校验实例合法性、调用 `ClientOperationService.registerInstance()` 完成注册，并发布 `ClientRegisterServiceEvent` 事件触发 Distro 数据同步。整个流程涵盖参数解析→实例校验→AP/CP 路由→ Distro 事件发布 4 个阶段。
+`InstanceController.register()`（naming/controllers/InstanceController.java:87）是服务注册的 HTTP REST API 入口。客户端通过 HTTP POST `/v1/ns/instance` 发送注册请求（v2 端点 `/v2/ns/instance` 由 `InstanceControllerV2` 承接，底层复用相同的 `ClientOperationService` 注册链路），`InstanceController` 负责解析请求参数、校验实例合法性、调用 `ClientOperationService.registerInstance()` 完成注册，并发布 `ClientRegisterServiceEvent` 事件触发 Distro 数据同步。整个流程涵盖参数解析→实例校验→AP/CP 路由→ Distro 事件发布 4 个阶段。
 
 **【核心类关系图】**
 
@@ -314,14 +302,13 @@ Naming 模块的核心类以 `InstanceController` → `ServiceManager` → `Clie
 
 **二、checkInstanceIsLegal()：实例合法性校验**
 
-`NamingUtils.checkInstanceIsLegal()`（naming/src/main/java/com/alibaba/nacos/api/naming/utils/NamingUtils.java:85-130）执行以下校验：
-- `ip` 格式校验：正则 `\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}`（IPv4）或 `[a-fA-F0-9:]+`（IPv6）——不支持 IPv4-mapped IPv6（如 `::ffff:192.168.1.100`）
-- `port` 范围校验：`1 ≤ port ≤ 65535`（不允许 port=0，因为 0 表示随机端口不适合固定服务注册）
-- `serviceName` 非空校验：不能为空字符串或纯空白字符
-- `weight` 范围校验：`0.0 ≤ weight ≤ 10000.0`——weight=0 表示该实例不参与负载均衡（用于灰度发布场景：先将 weight 设为 0 摘除流量，观察无异常后再注销）
-- `metadata` 大小校验：序列化为 JSON 后的总字节数 ≤ 32768（32KB）——防止超大 metadata 导致内存浪费
+`NamingUtils.checkInstanceIsLegal()`（naming/src/main/java/com/alibaba/nacos/api/naming/utils/NamingUtils.java:150-165）执行以下校验：
+- `null` 实例校验：`instance` 为 `null` 时直接抛出 `NacosApiException`
+- 心跳参数关系校验：`instanceHeartBeatTimeOut` 必须 > `instanceHeartBeatInterval`——心跳超时小于心跳间隔会导致实例刚上报心跳即被判超时
+- `ipDeleteTimeout` 必须 > `instanceHeartBeatInterval`——删除超时小于心跳间隔会导致实例尚未确认存活即被自动清理
+- `clusterName` 字符集校验：仅允许 `0-9a-zA-Z-.`（`CLUSTER_NAME_PATTERN` 正则匹配）——空集群名跳过（服务端补默认值 `DEFAULT`）
 
-校验失败时抛出 `IllegalArgumentException` → `InstanceController` 捕获后返回 HTTP 400 + 错误消息（而非 HTTP 200 + 错误消息体）——严格遵循 RESTful API 最佳实践（用 HTTP 状态码表达错误类型）。
+校验失败时抛出 `NacosApiException`（HTTP 400 语义）→ `InstanceController` 捕获后返回 HTTP 400 + 错误消息（而非 HTTP 200 + 错误消息体）——严格遵循 RESTful API 最佳实践（用 HTTP 状态码表达错误类型）。
 
 **三、AP/CP 路由决策**
 
@@ -395,7 +382,7 @@ public void registerInstance(Service service, Instance instance, String clientId
 
 2. **责任链模式（Chain of Responsibility Pattern）**：服务注册请求经过 parseInstance → checkInstanceIsLegal → getSingleton → registerInstance → publishEvent 链式处理，每个环节只负责自己的职责。如果任一环节失败（如校验不通过），后续环节不再执行。
 
-3. **发布-订阅模式（Pub-Sub Pattern）**：`EphemeralClientOperationServiceImpl` 发布 `ClientRegisterServiceEvent` 事件，`DistroClientDataProcessor` 订阅此事件。发布者不需要知道订阅者的存在——`NotifyCenter` 负责事件路由和解耦。
+3. **发布-订阅模式（Pub-Sub Pattern）**：`EphemeralClientOperationServiceImpl` 发布 `ClientRegisterServiceEvent` 事件，`DistroClientDataProcessor` 订阅 `ClientEvent.ClientChangedEvent` 等 Client 事件（由 `ClientServiceIndexesManager` 间接触发）。发布者不需要知道订阅者的存在——`NotifyCenter` 负责事件路由和解耦。
 
 2. **责任链模式（Chain of Responsibility Pattern）**：实例校验链（`checkInstanceIsLegal()` → `getSingleton()` → `checkClientIsLegal()`）形成校验责任链——每个校验环节只负责自己的校验逻辑（IP/port/weight/metadata → ephemeral 校验 → Client 存在性校验）。如果任一环节校验失败，立即抛出 `NacosException`——后续环节不再执行。这是责任链模式在参数校验中的典型应用。
 
@@ -570,85 +557,89 @@ public void removeSingleton(String namespace, String groupName, String serviceNa
 
 `ServiceManager` 通过双层 `ConcurrentHashMap<String, Map<String, ServiceSingleton>>` 结构实现命名空间隔离和服务隔离。核心方法 `getOrCreateService()` 在注册表不存在时自动创建 `ServiceSingleton`，保证注册表的一致性和并发安全。`ServiceSingleton` 作为享元对象，通过 `ephemeral` 字段决定 AP/CP 路由方向。
 
-## 2.5 Cluster 数据结构：ephemeralInstances vs persistentInstances 双 Map 设计
+## 2.5 Client 数据结构：IpPortBasedClient + publishers 单 Map 设计
 
 **【设计背景】**
 
-Nacos Naming 模块采用「双 Map」设计区分临时实例（ephemeral）和持久实例（persistent）的存储。`Cluster`（naming/src/main/java/com/alibaba/nacos/naming/core/Cluster.java）类内部维护两个独立的 `ConcurrentHashMap`：`ephemeralInstances` 存储临时实例（AP Distro 协议管理），`persistentInstances` 存储持久实例（CP JRaft 协议管理）。这种「双 Map」设计使得 AP 和 CP 实例在数据结构层面完全隔离，无需在每次操作时判断 `ephemeral` 字段——直接操作对应的 Map 即可。
+Nacos Naming v2 采用「以 Client 为中心」的实例存储模型——每个客户端连接对应一个 `IpPortBasedClient`（naming/src/main/java/com/alibaba/nacos/naming/core/v2/client/impl/IpPortBasedClient.java），实例数据存储在 `AbstractClient.publishers`——单一 `ConcurrentHashMap<Service, InstancePublishInfo>` 结构中。临时客户端与持久客户端通过 `ClientManagerDelegate`（core/v2/client/manager/ClientManagerDelegate.java:40）路由到不同的 `ClientManager` 实现——`EphemeralIpPortClientManager` 管理 `ephemeral=true` 的客户端（clientId 形如 `192.168.1.100:8080#true`），`PersistentIpPortClientManager` 管理 `ephemeral=false` 的客户端（clientId 形如 `192.168.1.100:8080#false`）。这种「按 Client 类型隔离」的设计使得 AP（Distro）和 CP（JRaft）实例在数据结构层面完全隔离，无需在每次操作时判断 `ephemeral` 字段——直接操作对应的 ClientManager 即可。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-5</span><span class="tt">Cluster 双 Map 数据结构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Cluster</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ephemeralInstances</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">String instanceId, Instance&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.1.1#8080#DEFAULT" → Instance</div><ul class="dgm-kv"><li>ephemeral=true</li><li>healthy=true</li><li>lastBeat: 1703123456789</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">AP → Distro 去中心化同步</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">persistentInstances</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">String instanceId, Instance&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"192.168.1.100#8080#DEFAULT" → Instance</div><ul class="dgm-kv"><li>ephemeral=false</li><li>healthy=true</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CP → JRaft Leader 日志复制</div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-5</span><span class="tt">v2 Client 模型：IpPortBasedClient + publishers 数据结构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">IpPortBasedClient</span><span class="s">clientId: "192.168.1.100:8080#true"</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">publishers</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Service, InstancePublishInfo&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"group@@nacos" → InstancePublishInfo</div><ul class="dgm-kv"><li>ephemeral=true</li><li>healthy=true</li><li>lastHeartBeatTime: 1703123456789</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">AP → EphemeralIpPortClientManager → Distro 同步</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">publishers</span><span class="typ">: ConcurrentHashMap&lt;</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Service, InstancePublishInfo&gt;</div><div class="dgm-note" style="border:none;background:none;padding:0;">"group@@db" → InstancePublishInfo</div><ul class="dgm-kv"><li>ephemeral=false</li><li>healthy=true</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CP → PersistentIpPortClientManager → JRaft 日志复制</div></div></div></div>
 
 **【源码走读】**
 
-**一、双 Map 设计原理**
+**一、publishers 单 Map 设计原理**
 
-`Cluster` 类内部维护两个独立的 `ConcurrentHashMap`：
-
-```java
-// Cluster 核心数据结构（naming/core/Cluster.java）
-public class Cluster {
-    private ConcurrentHashMap<String, Instance> ephemeralInstances = new ConcurrentHashMap<>();
-    private ConcurrentHashMap<String, Instance> persistentInstances = new ConcurrentHashMap<>();
-    private Service service;  // 关联的 Service 对象（含 ephemeral 标志）
-}
-```
-
-- `ephemeralInstances`：存储所有 `ephemeral=true` 的临时实例——由 Distro AP 协议管理，实例的生命周期取决于心跳超时
-- `persistentInstances`：存储所有 `ephemeral=false` 的持久实例——由 JRaft CP 协议管理，实例注册后持久化到 Raft 日志
-
-**二、updateInstance()：实例更新操作**
+`AbstractClient`（core/v2/client/AbstractClient.java）定义了 Client 的核心数据结构：
 
 ```java
-// Cluster.updateInstance()（naming/core/Cluster.java:56-72）（naming/core/Cluster.java）
-public void updateInstance(Instance instance) {
-    String instanceKey = instance.getInstanceId();
-    if (instance.isEphemeral()) {
-        ephemeralInstances.put(instanceKey, instance);
-    } else {
-        persistentInstances.put(instanceKey, instance);
+// AbstractClient 核心数据结构（naming/core/v2/client/AbstractClient.java）
+public abstract class AbstractClient implements Client {
+    protected final ConcurrentHashMap<Service, InstancePublishInfo> publishers = new ConcurrentHashMap<>(16, 0.75f, 8);
+
+    @Override
+    public boolean addServiceInstance(Service service, InstancePublishInfo instancePublishInfo) {
+        if (instancePublishInfo == null) {
+            return publishers.remove(service) != null;
+        }
+        publishers.put(service, instancePublishInfo);
+        return true;
     }
 }
 ```
 
-更新实例时，根据 `instance.isEphemeral()` 直接路由到对应的 Map——无需额外的 if-else 分支。
+- `publishers`：key 为 `Service`（含 namespace/group/serviceName），value 为 `InstancePublishInfo`（含 ip/port/healthy/lastHeartBeatTime 等）——同一 Client 发布的所有服务实例集中存储
+- `IpPortBasedClient`：clientId 形如 `ip:port#ephemeral`——`ephemeral=true` 为临时客户端（AP Distro 管理，生命周期取决于心跳超时），`ephemeral=false` 为持久客户端（CP JRaft 管理，注册后持久化到 Raft 日志）
 
-**三、allIPs()：获取所有实例 IP 列表**
+**二、addServiceInstance()：实例注册操作**
 
 ```java
-// Cluster.allIPs()（naming/core/Cluster.java:80-90）（naming/core/Cluster.java）
-public List<Instance> allIPs() {
-    List<Instance> result = new ArrayList<>(ephemeralInstances.values());
-    result.addAll(persistentInstances.values());
-    return result;
+// EphemeralClientOperationServiceImpl.registerInstance()（naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java）
+Client client = clientManager.getClient(clientId);
+InstancePublishInfo instanceInfo = getPublishInfo(instance);
+client.addServiceInstance(singleton, instanceInfo);
+client.setLastUpdatedTime();
+client.recalculateRevision();
+NotifyCenter.publishEvent(new ClientOperationEvent.ClientRegisterServiceEvent(singleton, clientId));
+```
+
+注册实例时直接操作 Client 的 `publishers` Map——由 `ClientManagerDelegate` 按 clientId 后缀的 `ephemeral` 标志路由到对应的 ClientManager，无需额外的 if-else 分支。
+
+**三、getAllPublishedService()：获取 Client 发布的所有服务**
+
+```java
+// AbstractClient.getAllPublishedService()（naming/core/v2/client/AbstractClient.java）
+@Override
+public Collection<Service> getAllPublishedService() {
+    return publishers.keySet();
 }
 ```
 
-返回所有实例（临时 + 持久），用于服务发现的 IP 列表响应构建。
+返回该 Client 发布的所有服务——用于心跳检测遍历（`ClientBeatCheckTaskV2`）和 Distro 全量同步（`DistroClientDataProcessor.upgradeClient()`）。
 
-**四、双 Map 并发安全保障**
+**四、按 Client 类型隔离的并发安全保障**
 
-两个 `ConcurrentHashMap` 分别独立加锁——对 `ephemeralInstances` 的写操作不会阻塞对 `persistentInstances` 的读操作，反之亦然。这种细粒度锁设计提升了并发性能——当 Distro 协议同步临时实例时，不影响 JRaft 协议读写持久实例。
+临时客户端与持久客户端分别由 `EphemeralIpPortClientManager` 和 `PersistentIpPortClientManager` 管理——两个 Manager 各自维护独立的 Client 集合（`ConcurrentHashMap<String, Client>`）。当 Distro 协议同步临时客户端时，不影响 JRaft 协议读写持久客户端；`publishers` 为 `ConcurrentHashMap`——同一 Client 的注册/注销/心跳操作天然并发安全。
 
 **【Trade-off 分析】**
 
-**Trade-off 分析 1：双 Map 分离 vs 统一 Map + ephemeral 字段过滤**
+**Trade-off 分析 1：按 Client 类型隔离（双 ClientManager）vs 单一 ClientManager + ephemeral 字段过滤**
 
-`Cluster` 内部维护两个独立的 `ConcurrentHashMap`（`ephemeralInstances` 和 `persistentInstances`），而非统一 `Map<String, Instance>` + `instance.isEphemeral()` 过滤：
+v2 将临时/持久客户端分散到 `EphemeralIpPortClientManager` 和 `PersistentIpPortClientManager` 两个独立 Manager（内部 `publishers` 均为单一 Map），而非统一 ClientManager + `client.isEphemeral()` 过滤：
 
-| 对比维度 | 双 Map 分离 | 统一 Map + ephemeral 过滤 |
+| 对比维度 | 双 ClientManager 隔离 | 统一 ClientManager + ephemeral 过滤 |
 |---------|----------|--------------------------|
-| AP 操作复杂度 | O(1)——直接操作 ephemeralInstances | O(N)——需遍历过滤 ephemeral=true |
-| 内存开销 | ~2x Map Entry 开销（两个 Map） | ~1x Map Entry 开销 |
-| 清理逻辑复杂度 | 两套独立清理（自动 vs 手动） | 一套统一清理逻辑 |
-| 并发性能（读） | 两个 Map 独立加锁——互不影响 | 单一 Map 全局锁——AP/CP 互阻塞 |
+| AP/CP 操作复杂度 | O(1)——按 clientId 路由到对应 Manager | O(N)——需遍历过滤 ephemeral 标志 |
+| 内存开销 | 两套 Manager 元数据 | 一套 Manager 元数据 |
+| 清理逻辑复杂度 | 两套独立清理（心跳超时 vs Raft 管理） | 一套统一清理逻辑 |
+| 并发性能（读） | 两个 Manager 独立集合——互不影响 | 单一集合——AP/CP 操作共享锁竞争 |
 
-核心取舍：双 Map 使 AP/CP 代码路径完全独立——临时实例的心跳超时检测不影响永久实例的查询性能。读并发度提升约 2x（两个 Map 独立加锁 vs 单一 Map 全局锁）。代价是内存开销增加约 2x（两个 Map 的冗余元数据）。在典型场景中（临时实例占比 > 80%），双 Map 分离的读写性能优势显著——因为大部分操作集中在 `ephemeralInstances`，不受 `persistentInstances` 的锁竞争影响。
+核心取舍：双 ClientManager 使 AP/CP 代码路径完全独立——临时客户端的心跳超时检测不影响持久客户端的查询性能。在典型场景中（临时客户端占比 > 80%），按类型隔离的读写性能优势显著——因为大部分操作集中在 `EphemeralIpPortClientManager`，不受持久客户端的锁竞争影响。
 
 **Trade-off 分析 2：定时扫描 vs 事件驱动心跳检测**
 
-`ClientBeatCheckTaskV2`（naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91）通过定时任务（默认每 5 秒）扫描所有临时实例的心跳时间戳，而非事件驱动（客户端主动上报心跳事件触发检测）：
+`ClientBeatCheckTaskV2`（naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91）通过 per-client 定时任务定期检查各 Client 实例的心跳时间戳（由健康检查调度器按固定间隔触发每个 Client 的任务），而非事件驱动（客户端主动上报心跳事件触发检测）：
 
 | 对比维度 | 定时扫描 | 事件驱动 |
 |---------|---------|---------|
@@ -674,28 +665,28 @@ public List<Instance> allIPs() {
 
 **【设计模式分析】**
 
-1. **策略模式（Strategy Pattern）**：`Cluster` 的 `updateInstance()` 方法根据 `instance.isEphemeral()` 动态选择操作 `ephemeralInstances` 还是 `persistentInstances`——这是策略模式在数据结构层的应用。两个 Map 相当于两种存储策略。
+1. **策略模式（Strategy Pattern）**：`ClientManagerDelegate` 根据 clientId 中的 `ephemeral` 标志动态选择操作 `EphemeralIpPortClientManager` 还是 `PersistentIpPortClientManager`——这是策略模式在数据结构层的应用。两个 ClientManager 相当于两种存储策略。
 
-2. **分离接口模式（Separated Interface Pattern）**：`ephemeralInstances` 和 `persistentInstances` 虽然都是 `ConcurrentHashMap`，但在语义上是完全独立的两个接口——操作临时实例的 API 与操作持久实例的 API 完全分离。这种设计使得 AP 和 CP 的代码路径完全独立。
+2. **分离接口模式（Separated Interface Pattern）**：`EphemeralIpPortClientManager` 和 `PersistentIpPortClientManager` 虽然都实现 `ClientManager` 接口，但在语义上是完全独立的两个实现——操作临时客户端的 API 与操作持久客户端的 API 完全分离。这种设计使得 AP 和 CP 的代码路径完全独立。
 
-3. **细粒度锁模式（Fine-Grained Lock Pattern）**：两个 `ConcurrentHashMap` 分别独立加锁——对 `ephemeralInstances` 的操作不阻塞 `persistentInstances`，反之亦然。这比单一 Map 加全局锁的并发性能提升了约 2 倍（在写入密集型场景下）。
+3. **细粒度锁模式（Fine-Grained Lock Pattern）**：两个 ClientManager 分别维护独立的 `ConcurrentHashMap<String, Client>` 集合——对临时客户端的操作不阻塞持久客户端，反之亦然。这比单一集合加全局锁的并发性能提升了约 2 倍（在写入密集型场景下）。
 
 
-3. **实例过期清理的主动推送 vs 被动扫描**：对于 `persistentInstances`（ephemeral=false），Nacos 不自动清理过期实例——需要运维人员手动调用 `InstanceController.deregister()` 注销。这种设计避免了误判风险（JRaft 节点因网络分区被错误剔除后需要重新全量同步），但代价是如果运维人员忘记手动清理僵尸实例，`persistentInstances` 中残留过期实例——导致服务发现返回已不存在的实例。对于 `ephemeralInstances`（ephemeral=true），`ClientBeatCheckTaskV2` 自动清理超时实例（默认 30 秒未心跳）——适合临时实例的自动生命周期管理。
+3. **实例过期清理的主动推送 vs 被动扫描**：对于持久客户端（ephemeral=false），Nacos 不自动清理过期实例——需要运维人员手动调用 `InstanceController.deregister()` 注销。这种设计避免了误判风险（JRaft 节点因网络分区被错误剔除后需要重新全量同步），但代价是如果运维人员忘记手动清理僵尸实例，持久客户端集合中残留过期实例——导致服务发现返回已不存在的实例。对于临时客户端（ephemeral=true），`ClientBeatCheckTaskV2` 自动清理超时实例（默认 30 秒未心跳）——适合临时实例的自动生命周期管理。
 
 **五、实例清理与内存优化**
 
-`Cluster` 的实例清理策略：
+v2 Client 模型的实例清理策略：
 
-1. **心跳超时自动清理**：`ClientBeatCheckTaskV2` 定期清理过期实例（默认 30 秒未收到心跳）——从对应的 Map（`ephemeralInstances` 或 `persistentInstances`）中移除
-2. **主动注销清理**：客户端主动调用 `InstanceController.deregister()` → `client.removeServiceInstance()` → 从对应 Map 中移除
-3. **服务删除级联清理**：当整个 `Service` 被删除时——`ServiceManager.removeSingleton()` → 级联清理所有 `Cluster` 的所有实例
+1. **心跳超时自动清理**：`ClientBeatCheckTaskV2` 通过拦截器链（`ExpiredInstanceChecker`）自动注销过期实例（默认 30 秒未收到心跳）——`clientManager.deregisterClient()` 将 Client 从对应 Manager 的集合中移除
+2. **主动注销清理**：客户端主动调用 `InstanceController.deregister()` → `client.removeServiceInstance()` → 从 `publishers` Map 中移除
+3. **服务删除级联清理**：当整个 `Service` 被删除时——`ServiceManager.removeSingleton()` → 级联清理所有 Client 中该服务的实例发布信息
 
-实例清理的内存优化：不及时清理过期实例会导致内存泄漏——每个 `Instance` 对象约 200 bytes——10,000 个过期实例约 2MB——在大规模集群中长期运行可能累积到数百 MB。`ClientBeatCheckTaskV2` 的定期清理（每 5 秒）保证了过期实例不会无限累积。
+实例清理的内存优化：不及时清理过期实例会导致内存泄漏——每个 `InstancePublishInfo` 对象约 200 bytes——10,000 个过期实例约 2MB——在大规模集群中长期运行可能累积到数百 MB。`ClientBeatCheckTaskV2` 的定期清理保证了过期实例不会无限累积。
 
 **【小结】**
 
-`Cluster` 类的「双 Map」设计使得 AP（临时实例）和 CP（持久实例）在数据结构层面完全隔离。`updateInstance()` 根据 `instance.isEphemeral()` 直接路由到对应的 Map，避免了每次操作时的 if-else 分支判断。两个 `ConcurrentHashMap` 独立加锁的细粒度锁设计提升了并发性能。
+v2 Client 模型以 `IpPortBasedClient`（clientId 形如 `ip:port#ephemeral`）为存储单元，实例数据集中在 `AbstractClient.publishers`（`ConcurrentHashMap<Service, InstancePublishInfo>`）。`ClientManagerDelegate` 根据 `ephemeral` 标志将客户端路由到 `EphemeralIpPortClientManager`（AP/Distro）或 `PersistentIpPortClientManager`（CP/JRaft）——两个 ClientManager 独立集合的细粒度隔离设计提升了并发性能。
 
 ## 2.6 ClientOperationService：AP/CP 路由分发机制
 
@@ -725,7 +716,7 @@ public interface ClientOperationService {
 
 `EphemeralClientOperationServiceImpl.registerInstance()`（naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:56-77）处理临时实例注册：
 
-1. `NamingUtils.checkInstanceIsLegal(instance)`（naming/misc/NamingUtils.java）：校验 IP 非空且合法格式、port 在 1-65535 区间、serviceName 非空
+1. `NamingUtils.checkInstanceIsLegal(instance)`（api/naming/utils/NamingUtils.java:150-165）：校验心跳超时 > 心跳间隔、ipDeleteTimeout > 心跳间隔、clusterName 字符集合法
 2. `ServiceManager.getInstance().getSingleton(service)`：从双层 `ConcurrentHashMap<namespace,Map<String,ServiceSingleton>>` 获取或创建 `ServiceSingleton`
 3. `if (!singleton.isEphemeral())`：校验——临时实例的 Service 必须 `isEphemeral()==true`，否则抛出 `NacosRuntimeException`
 4. `client.addServiceInstance(singleton, instanceInfo)`：将 `InstancePublishInfo` 写入 `Client.publishInstanceInfoMap`
@@ -734,13 +725,14 @@ public interface ClientOperationService {
 
 **三、PersistentClientOperationServiceImpl.registerInstance()（CP/JRaft）**
 
-`PersistentClientOperationServiceImpl.registerInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:106-165）处理持久实例注册：
+`PersistentClientOperationServiceImpl.registerInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-127）处理持久实例注册：
 
 1. 校验 `singleton.isEphemeral()` 必须为 `false`——持久实例不能注册到临时服务
-2. `ClientManager.getClient(clientId)`：从 `ConcurrentHashMap<String,Client>` 获取 `Client` 对象
-3. `checkClientIsLegal(client, clientId)`：校验 client 合法性
-4. `client.addServiceInstance(singleton, instanceInfo)` + `client.recalculateRevision()`
-5. `NotifyCenter.publishEvent(new ClientRegisterServiceEvent(...))`：发布事件后，JRaft Leader 自动将操作写入 Raft 日志并通过 `AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认后返回成功
+2. 将 `Service`、`Instance`、`clientId` 封装为 `InstanceStoreRequest`——序列化后组装为 `WriteRequest`
+3. 调用 `protocol.write(writeRequest)` 将写请求提交至 CP JRaft 协议——JRaft Leader 将操作写入 Raft 日志并通过 `AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认提交后返回成功
+4. 多数派提交后由 `onApply(WriteRequest)`（PersistentClientOperationServiceImpl.java:192-224）在状态机应用该操作——`onInstanceRegister()` 执行 `client.addServiceInstance()` 并发布 `ClientRegisterServiceEvent` 事件
+
+即注册流程是"先提交 Raft 日志、后应用状态机并发布事件"——而非"先发布事件、Leader 自动写 Raft 日志"。
 
 **四、AP vs CP 路由决策的实际调用链**
 
@@ -834,7 +826,7 @@ private int distroHash(String responsibleTag) {
 
 **二、DistroClientDataProcessor 事件驱动的异步同步**
 
-`DistroClientDataProcessor`（naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58）继承 `SmartSubscriber`，通过 `NotifyCenter` 订阅 `ClientRegisterServiceEvent` 事件：
+`DistroClientDataProcessor`（naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58）继承 `SmartSubscriber`，通过 `NotifyCenter` 订阅 Client 变更事件（`subscribeTypes()` :85-91）：`ClientEvent.ClientChangedEvent`、`ClientEvent.ClientDisconnectEvent`、`ClientEvent.ClientVerifyFailedEvent`。实例注册时发布的 `ClientRegisterServiceEvent` 并非由其直接订阅——而是由 `ClientServiceIndexesManager` 处理后发布 `ClientEvent.ClientChangedEvent` 间接触发同步：
 
 ```java
 // DistroClientDataProcessor.isInvalidClient()（naming/.../DistroClientDataProcessor.java:129-133）
@@ -875,18 +867,18 @@ public boolean isResponsibleClient(Client client) {
 
 **五、DistroClientVerifyInfo 定期数据校验**
 
-Distro 协议异步同步存在短暂不一致窗口（默认 ~500ms），v2 引入定期校验机制——`DistroClientVerifyInfo`（naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java）通过 `ClientManager.verifyClient()`（naming/core/v2/client/manager/ClientManager.java:103）定期（默认 5s）校验所有 Client 数据：
+Distro 协议异步同步存在短暂不一致窗口（同步延迟默认 1000ms，`DistroConstants.DEFAULT_DATA_SYNC_DELAY_MILLISECONDS`），v2 引入定期校验机制——`DistroClientVerifyInfo`（naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java）通过 `ClientManager.verifyClient()`（naming/core/v2/client/manager/ClientManager.java:103）定期（默认 5s）校验所有 Client 数据：
 
-1. **校验触发**：`Notifier.run()` 遍历所有 Client，对每个 Client 本地数据计算 Checksum
-2. **校验请求**：通过 `DistroClientTransportAgent.syncVerifyData()` 将 Checksum 发送到其他节点
-3. **不一致检测**：目标节点调用 `DistroClientDataProcessor.processVerifyData()`（naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:227）——比较本地 Checksum 与接收到的 Checksum
-4. **数据修复**：Checksum 不匹配时——从匹配节点全量拉取 Client 数据——通过 `processData()` 覆盖本地过期数据
+1. **校验触发**：`DistroVerifyTimedTask`（core/src/main/java/com/alibaba/nacos/core/distributed/distro/task/verify/DistroVerifyTimedTask.java，默认每 5s）通过 `DistroClientDataProcessor.getVerifyData()` 收集本节点负责的每个 Client 的 `(clientId, revision)` 校验摘要
+2. **校验请求**：封装为 `DistroVerifyExecuteTask`，通过 `DistroClientTransportAgent` 发送 `DistroDataRequest`（type=VERIFY）到其他节点
+3. **不一致检测**：目标节点调用 `DistroClientDataProcessor.processVerifyData()`（naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:227）——委托 `EphemeralIpPortClientManager.verifyClient()` 比较本地 Client 的 revision 与接收到的 revision
+4. **数据修复**：revision 不匹配时——校验失败方发布 `ClientVerifyFailedEvent`，责任节点收到事件后调用 `syncToTarget()` 以 delay=0 立即补推该 Client 的完整数据（推而非拉）——通过 `processData()` 幂等覆盖本地过期数据
 
 校验机制的核心价值：将最终一致性的"最终"时间窗口从"无限"（无校验时）缩短至"最多 5s"——异步同步丢失或被网络延迟的数据将在 5s 内被检测并自动修复。
 
 **【设计模式分析】**
 
-1. **发布-订阅模式（Pub-Sub Pattern）**：`EphemeralClientOperationServiceImpl` 通过 `NotifyCenter.publishEvent()` 发布 `ClientRegisterServiceEvent`，`DistroClientDataProcessor` 作为 `SmartSubscriber` 订阅此事件。发布者无需知道订阅者的存在——`NotifyCenter` 负责事件路由和分发——这是发布-订阅模式在异步事件驱动架构中的标准应用。
+1. **发布-订阅模式（Pub-Sub Pattern）**：`EphemeralClientOperationServiceImpl` 通过 `NotifyCenter.publishEvent()` 发布 `ClientRegisterServiceEvent`，`DistroClientDataProcessor` 作为 `SmartSubscriber` 订阅 `ClientEvent.ClientChangedEvent` 等 Client 事件（由 `ClientServiceIndexesManager` 在收到 `ClientRegisterServiceEvent` 后间接触发）。发布者无需知道订阅者的存在——`NotifyCenter` 负责事件路由和分发——这是发布-订阅模式在异步事件驱动架构中的标准应用。
 
 2. **异步消息模式（Async Messaging Pattern）**：Distro 数据同步通过 `DistroClientTransportAgent.syncData()` 异步 Replicate 到其他节点——写入节点无需等待所有同步完成即可返回客户端（写入延迟 ~10ms）。异步回调 `DistroCallback.onResponse()` 处理同步结果——异步消息模式在分布式数据同步中的典型应用。
 
@@ -1055,31 +1047,30 @@ Distro v2 的责任归属核心为 `DistroMapper.responsible()`（naming/core/Di
 
 **【设计背景】**
 
-Nacos CP 模式（强一致性）通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）和 JRaft 协议实现。持久实例（`ephemeral=false`）的注册请求必须通过 JRaft Leader 写入 Raft 日志，集群达成共识（多数派确认）后才返回客户端成功。`PersistentClientOperationServiceImpl` 继承 `RequestProcessor4CP`——自动获得 JRaft 集群写入能力——将注册请求提交至 `RaftGroupService.getLeader()` 处理，Leader 通过 `AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认后返回成功。
+Nacos CP 模式（强一致性）通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）和 JRaft 协议实现。持久实例（`ephemeral=false`）的注册流程为：`registerInstance()` 组装 `WriteRequest` 并通过 `protocol.write()`（PersistentClientOperationServiceImpl.java:105-127）提交至 CP JRaft——JRaft Leader 将操作写入 Raft 日志，集群达成共识（多数派确认）后由 `onApply()`（PersistentClientOperationServiceImpl.java:192-224）应用状态变更并发布 `ClientRegisterServiceEvent`，之后才返回客户端成功。`PersistentClientOperationServiceImpl` 继承 `RequestProcessor4CP`——自动获得 JRaft 集群写入能力——Leader 通过 `AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认后返回成功。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-9</span><span class="tt">CP JRaft Leader 选举 + 日志复制流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PersistentClientOperationServiceImpl</span><span class="s">(service/impl/PersistentClientOperationServiceImpl.java:85)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance()（:106-165）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ client.addServiceInstance(singleton, instanceInfo)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NotifyCenter.publishEvent(ClientRegisterServiceEvent)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaft Raft Group (core/)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Raft Log Replication</span><span class="s">[term=5, index=100] registerInstance(...)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">[term=5, index=101] registerInstance(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">[term=6, index=102] registerInstance(...)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">lower</span><span class="s">ode B)</span></div><div class="dgm-box-b"></div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-9</span><span class="tt">CP JRaft Leader 选举 + 日志复制流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PersistentClientOperationServiceImpl</span><span class="s">(service/impl/PersistentClientOperationServiceImpl.java:85)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>registerInstance()（:105-127）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ client.addServiceInstance(singleton, instanceInfo)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NotifyCenter.publishEvent(ClientRegisterServiceEvent)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaft Raft Group (core/)</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Raft Log Replication</span><span class="s">[term=5, index=100] registerInstance(...)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">[term=5, index=101] registerInstance(...)</div><div class="dgm-note" style="border:none;background:none;padding:0;">[term=6, index=102] registerInstance(...)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">lower</span><span class="s">ode B)</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
 **【源码走读】**
 
 **一、PersistentClientOperationServiceImpl 注册流程**
 
-`PersistentClientOperationServiceImpl.registerInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:106-165）处理持久实例注册：
+`PersistentClientOperationServiceImpl.registerInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-127）处理持久实例注册：
 
-1. `NamingUtils.checkInstanceIsLegal(instance)`：校验 IP 非空且合法格式、port 在 1-65535 区间
-2. `ServiceManager.getInstance().getSingleton(service)`：获取 `ServiceSingleton`——校验 `isEphemeral()` 必须为 `false`——否则抛出 `NacosRuntimeException`
-3. `ClientManager.getClient(clientId)`：从 `ConcurrentHashMap<String,Client>` 获取 `Client` 对象——`checkClientIsLegal(client, clientId)` 校验合法性
-4. `client.addServiceInstance(singleton, instanceInfo)` + `client.setLastUpdatedTime()` + `client.recalculateRevision()`
-5. `NotifyCenter.publishEvent(new ClientRegisterServiceEvent(...))`：发布事件——JRaft Leader 自动将操作写入 Raft 日志
+1. `ServiceManager.getInstance().getSingleton(service)`：获取 `ServiceSingleton`——校验 `isEphemeral()` 必须为 `false`——否则抛出 `NacosRuntimeException`
+2. 将 `Service`、`Instance`、`clientId` 封装为 `InstanceStoreRequest`——序列化后组装为 `WriteRequest`
+3. `protocol.write(writeRequest)`：将写请求提交至 CP JRaft——Leader 将操作写入 Raft 日志并通过 `AppendEntries RPC` 复制到所有 Follower
+4. 多数派确认提交后，由 `onApply(WriteRequest)`（PersistentClientOperationServiceImpl.java:192-224）在状态机应用操作——`onInstanceRegister()` 执行 `client.addServiceInstance()` 并发布 `ClientRegisterServiceEvent`
 
 关键差异：`PersistentClientOperationServiceImpl` 继承 `RequestProcessor4CP`——使其具备直接将注册请求提交至 JRaft Raft Group 的能力——Leader 自动完成 Raft 日志复制并等待多数派确认。
 
 **二、JRaft Leader 选举机制**
 
 JRaft 使用标准 Raft 选举算法：
-- **Leader Heartbeat**：Leader 定期（默认 500ms）向所有 Follower 发送 `AppendEntries RPC`（携带空日志条目）——Follower 收到心跳后重置选举超时计时器
-- **Election Timeout**：如果 Follower 在选举超时（默认 2000-4000ms 随机区间）内未收到 Leader 心跳——自动转换为 Candidate——递增 `currentTerm++`——向所有其他节点发送 `RequestVote RPC`
+- **Leader Heartbeat**：Leader 定期向所有 Follower 发送 `AppendEntries RPC`（携带空日志条目）——Follower 收到心跳后重置选举超时计时器。心跳间隔并非固定配置值，而是由"选举超时 / 心跳因子"推导（默认 5000ms / 10 = 500ms，见 `RaftSysConstants.DEFAULT_ELECTION_HEARTBEAT_FACTOR = 10`，core/distributed/raft/RaftSysConstants.java:87）
+- **Election Timeout**：如果 Follower 在选举超时（默认 5000ms，`RaftSysConstants.DEFAULT_ELECTION_TIMEOUT`，core/distributed/raft/RaftSysConstants.java:32）内未收到 Leader 心跳——自动转换为 Candidate——递增 `currentTerm++`——向所有其他节点发送 `RequestVote RPC`
 - **RequestVote RPC**：Candidate 向所有节点请求投票——`RequestVote RPC` 携带 `term`、`lastLogIndex`、`lastLogTerm`——收到多数派（`N/2+1`）投票后成为新 Leader
 - **日志匹配保证**：投票者只有在 Candidate 的日志至少和自己一样新（`lastLogTerm > localLastLogTerm` 或 `lastLogIndex >= localLastLogIndex`）时才投票——保证新 Leader 拥有所有已提交的日志条目
 
@@ -1096,7 +1087,7 @@ JRaft 使用标准 Raft 选举算法：
 
 **四、PersistentClientOperationServiceImpl 的 updateInstance 与 deregisterInstance**
 
-`PersistentClientOperationServiceImpl.updateInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:132-157）和 `deregisterInstance()`（:159-189）遵循相同的 CP 写入流程——操作通过 Leader 写入 Raft 日志 → 多数派确认 → committed → 返回客户端。
+`PersistentClientOperationServiceImpl.updateInstance()`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:132-151）和 `deregisterInstance()`（:158-174）遵循相同的 CP 写入流程——操作通过 Leader 写入 Raft 日志 → 多数派确认 → committed → 返回客户端。
 
 **五、JRaft 快照（Snapshot）与日志压缩（Log Compaction）**
 
@@ -1105,12 +1096,11 @@ JRaft 使用快照机制避免 Raft 日志无限增长——定期生成快照�
 ```java
 // JRaft NodeOptions 快照配置
 NodeOptions nodeOptions = new NodeOptions();
-nodeOptions.setSnapshotIntervalSecs(3600);  // 快照间隔 3600s
-nodeOptions.setSnapshotLogIndexMargin(1000);  // 保留快照后 1000 条日志
+nodeOptions.setSnapshotIntervalSecs(1800);  // 快照间隔默认 1800s（RaftSysConstants.java:37）
 ```
 
 快照流程：
-1. **触发条件**：Raft 日志大小超过 `snapshotLogIndexMargin`（默认 1000 条）或距上次快照超过 `snapshotIntervalSecs`（默认 3600s）时触发
+1. **触发条件**：距上次快照超过 `snapshotIntervalSecs`（默认 1800s，`RaftSysConstants.DEFAULT_RAFT_SNAPSHOT_INTERVAL_SECS = 30 * 60`）时触发。此外 sofa-jraft 的 `NodeOptions.snapshotLogIndexMargin` 支持按日志条数余量触发快照——Nacos 2.5.3 源码未显式配置该项，行为由 sofa-jraft `NodeOptions` 默认值决定
 2. **状态序列化**：调用 `FSM.onSnapshotSave()` 将当前状态机的完整状态序列化到快照文件
 3. **日志压缩**：快照生成后，快照 `lastIncludedIndex` 之前的所有 Raft 日志条目可安全删除——快照已包含这些日志条目的完整状态
 4. **重启恢复**：节点重启时从最后一个快照恢复状态——然后只重新应用快照之后的 Raft 日志条目——避免从头重新应用数百万条历史日志（可能需数小时→数秒）
@@ -1148,45 +1138,43 @@ JRaft 日志复制的核心代价是写入延迟高（需多数派确认 ~50ms�
 
 **【小结】**
 
-CP 模式通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）和 JRaft 协议实现持久实例的强一致性。注册请求通过 Leader 写入 Raft 日志——`AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认后将日志条目标记为 `committed`——返回客户端成功。JRaft Leader 选举（默认超时 2000-4000ms）保证 Leader 故障后 2-4s 自动恢复——快照机制避免日志无限增长——重启恢复时间从数小时降至数秒。
+CP 模式通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:85）和 JRaft 协议实现持久实例的强一致性。注册请求组装 `WriteRequest` 经 `protocol.write()` 提交 JRaft——Leader 写入 Raft 日志——`AppendEntries RPC` 复制到所有 Follower——等待多数派（`N/2+1`）确认后将日志条目标记为 `committed`——由 `onApply()` 应用并发布 `ClientRegisterServiceEvent`——返回客户端成功。JRaft Leader 选举（默认超时 5000ms，RaftSysConstants.java:32）保证 Leader 故障后自动恢复——快照机制（默认间隔 1800s，RaftSysConstants.java:37）避免日志无限增长——重启恢复时间从数小时降至数秒。
 
 ## 2.10 服务发现流程：InstanceController.list → 健康过滤 → JSON 响应构建
 
 **【设计背景】**
 
-服务发现是 Naming 模块的另一核心职责——客户端通过 HTTP GET `/v2/ns/instance/list` 查询服务实例列表。`InstanceController.list()`（naming/controllers/InstanceController.java:326-348）接收 HTTP GET 请求，解析 `namespaceId`、`serviceName`、`clusters`、`healthyOnly` 参数（通过 `WebUtils.required()` / `WebUtils.optional()`），委托 `getInstanceOperator().listInstance()`（naming/controllers/InstanceController.java:345）执行服务发现。整个流程涵盖：参数解析→ServiceManager 查找→健康过滤→JSON 响应构建 4 个阶段。`cacheMillis` 字段（默认 10000ms）实现客户端缓存——减少服务端查询压力。
+服务发现是 Naming 模块的另一核心职责——客户端通过 HTTP GET `/v1/ns/instance/list` 查询服务实例列表（v2 端点 `/v2/ns/instance/list` 由 `InstanceControllerV2` 承接）。`InstanceController.list()`（naming/controllers/InstanceController.java:326-342）接收 HTTP GET 请求，解析 `namespaceId`、`serviceName`、`clusters`、`healthyOnly` 参数（通过 `WebUtils.required()` / `WebUtils.optional()`），委托 `getInstanceOperator().listInstance()`（naming/controllers/InstanceController.java:345）执行服务发现。整个流程涵盖：参数解析→Service 构造与 ServiceStorage 快照聚合→健康过滤→JSON 响应构建 4 个阶段。`cacheMillis` 字段（默认 10000ms）实现客户端缓存——减少服务端查询压力。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-10</span><span class="tt">服务发现流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client GET /v2/ns/instance/list?serviceName=xxx&amp;namespaceId=yy</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceController (naming/controllers/InstanceController.java</span><span class="s">1. parseParams(): namespaceId, serviceName, clusters,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">healthyOnly (default: true)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">2. ServiceManager.getInstance()</span><span class="s">.getSingleton(service) → ServiceSingleton</span></div><div class="dgm-box-b"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3. for (Cluster cluster : singleton.getClusters()) {</span><span class="s">for (Instance instance : cluster.allIPs()) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (healthyOnly &amp;&amp; !instance.isHealthy())</div><div class="dgm-note" style="border:none;background:none;padding:0;">continue;  // 跳过不健康实例</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (!instance.isEnabled()) continue;</div><div class="dgm-note" style="border:none;background:none;padding:0;">result.add(instance);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">4. JSON 响应构建 → {"hosts": [...], "dom": "...",</span><span class="s">"cacheMillis": 10000, "lastRefTime": xxx,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">"checksum": "md5", "allIPs": false,</div><div class="dgm-note" style="border:none;background:none;padding:0;">"reachProtect": false}</div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-10</span><span class="tt">服务发现流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client GET /v1/ns/instance/list?serviceName=xxx&amp;namespaceId=yy</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceController.list() (InstanceController.java:326-342)</span><span class="s">1. parseParams(): namespaceId, serviceName, clusters,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">healthyOnly (default: false)</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 委托 getInstanceOperator().listInstance() (:345)</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceOperatorClientImpl.listInstance() (InstanceOperatorClientImpl.java:187-203)</span><span class="s">3. getService(): Service.newService(ns, group, name)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">构造不可变 Service 单例标识（不返回 null）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceStorage.getData(service) (core/v2/index/ServiceStorage.java:77-78)</span><span class="s">4. 命中 serviceDataIndexes 缓存，否则 getPushData()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">从 ClientServiceIndexesManager 聚合该服务全部</div><div class="dgm-note" style="border:none;background:none;padding:0;">Client 发布的实例 → 构建/刷新 ServiceInfo 快照</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceUtil.selectInstancesWithHealthyProtection() (naming/utils/ServiceUtil.java:185-230)</span><span class="s">5. InstancesFilter 过滤: cluster 匹配 → enabled → healthy</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">健康实例比例 &lt; protectThreshold 时触发保护:</div><div class="dgm-note" style="border:none;background:none;padding:0;">reachProtect=true, 返回全部实例（含不健康实例）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">6. ServiceInfo JSON 响应 → {"hosts": [...], "name": "...",</span><span class="s">"cacheMillis": 10000, "lastRefTime": xxx,</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">"checksum": "md5", "allIPs": false,</div><div class="dgm-note" style="border:none;background:none;padding:0;">"reachProtectionThreshold": false}</div></div></div></div>
 
 **【源码走读】**
 
 **一、InstanceController.list() 服务发现 API 端点**
 
-`InstanceController`（naming/controllers/InstanceController.java）暴露 `/v2/ns/instance/list` GET 端点——接收以下查询参数：
+`InstanceController`（naming/controllers/InstanceController.java）暴露 `/v1/ns/instance/list` GET 端点——接收以下查询参数：
 
 | 参数 | 类型 | 默认值 | 说明 |
 |------|------|--------|------|
 | `serviceName` | String | 必填 | 服务名（格式：`group@@serviceName`） |
 | `namespaceId` | String | `"public"` | 命名空间 ID |
 | `clusters` | String | `""` | 集群过滤（逗号分隔——空表示所有集群） |
-| `healthyOnly` | boolean | `true` | 是否只返回健康实例 |
+| `healthyOnly` | boolean | `false` | 是否只返回健康实例（v1 list 默认返回全量，InstanceController.java:336） |
 
-**二、ServiceManager 双层 ConcurrentHashMap 查找**
+**二、Service 构造与 ServiceStorage 快照聚合**
 
-`ServiceManager.getInstance().getSingleton(service)`（naming/core/v2/ServiceManager.java）从双层 `ConcurrentHashMap<String, Map<String, ServiceSingleton>>` 中查找 `ServiceSingleton`：
-- 外层 key = `namespaceId`——按命名空间隔离——不同命名空间查询互不阻塞
-- 内层 key = `group@@serviceName`——按分组隔离
-- 如果服务不存在——返回 `null`——构建空 JSON 响应（`{"hosts": []}`）
+`listInstance()`（naming/core/InstanceOperatorClientImpl.java:187-203）在 v2 中并不从"双层 Map 查找 Service 对象"——而是通过 `Service.newService()` 构造服务标识（不会返回 `null`），再由 `ServiceStorage.getData(service)` 获取该服务的 `ServiceInfo` 快照。对于不存在/无实例的服务，返回的是 `hosts` 为空列表的 `ServiceInfo`（序列化后为 `{"hosts": []}`），而非 `SERVICE_NOT_FOUND` 异常。
 
 **三、健康过滤算法**
 
-遍历 `ServiceSingleton` 的所有 `Cluster` 的所有 `Instance`——执行双重过滤：
-1. `if (healthyOnly && !instance.isHealthy())`：如果查询参数 `healthyOnly=true`（默认）且实例健康状态为 `false`——跳过不健康实例
-2. `if (!instance.isEnabled())`：如果实例被手动禁用（`enabled=false`）——跳过禁用实例
+v2 的实例过滤统一收敛到 `ServiceUtil.selectInstancesWithHealthyProtection()`（naming/utils/ServiceUtil.java:185-230）——通过 `InstancesFilter` 回调对 `ServiceInfo` 快照中的实例执行链式过滤：
+1. **集群过滤**：`clusters` 参数非空时——仅保留所属集群命中的实例
+2. **enabled 过滤**：实例被手动禁用（`enabled=false`）——跳过（`healthyOnly`/`enableOnly` 由查询参数映射）
+3. **健康过滤 + 保护判定**：统计健康实例数——若健康比例低于 `protectThreshold`——触发可达保护，返回全部实例（含不健康实例）
 
-健康状态由健康检查系统维护——`TcpSuperSenseProcessor` 检测 TCP 端口可达性——`ClientBeatCheckTaskV2` 检测心跳超时（默认 15s）——任一检查失败将 `healthy` 置为 `false`。
+健康状态由健康检查系统维护——`TcpHealthCheckProcessor`（naming/healthcheck/v2/processor/）检测 TCP 端口可达性——`ClientBeatCheckTaskV2` 检测心跳超时（默认 15s）——任一检查失败将 `healthy` 置为 `false`，并经 `ServiceStorage` 刷新到 `ServiceInfo` 快照。
 
 **四、JSON 响应构建与服务发现响应结构**
 
@@ -1206,12 +1194,12 @@ CP 模式通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/
     "serviceName": "DEFAULT_GROUP@@nacos",
     "metadata": {}
   }],
-  "dom": "DEFAULT_GROUP@@nacos",
+  "name": "DEFAULT_GROUP@@nacos",
   "cacheMillis": 10000,
   "lastRefTime": 1703123456789,
   "checksum": "abc123def456",
   "allIPs": false,
-  "reachProtect": false
+  "reachProtectionThreshold": false
 }
 ```
 
@@ -1219,25 +1207,26 @@ CP 模式通过 `PersistentClientOperationServiceImpl`（naming/core/v2/service/
 - `cacheMillis: 10000`：客户端缓存时间（默认 10s）——客户端在此时间内无需重新查询——减少服务端 QPS
 - `checksum`：实例列表的 MD5 校验和——客户端通过对比本地 `checksum` 与新响应的 `checksum` 判断实例列表是否变更——避免无效的全量 JSON 比对
 - `lastRefTime`：服务端最后更新时间戳——客户端可用于判断缓存新鲜度
-- `reachProtect: false`：可达保护标志——当健康实例比例低于阈值时触发保护——此时 `reachProtect=true` 且返回所有实例（包括不健康实例）
+- `reachProtectionThreshold: false`：可达保护标志——当健康实例比例低于阈值时触发保护——此时 `reachProtectionThreshold=true` 且返回所有实例（包括不健康实例）
 
 **五、可达保护机制（Reach Protection）**
 
-`reachProtect` 字段的实现逻辑：
-- 当健康实例比例低于 `protectThreshold`（默认 0.0——可通过 `SwitchDomain` 动态配置）时——触发可达保护
-- 触发保护后——`reachProtect=true`——返回所有实例（包括不健康实例）——避免所有实例被健康检查误杀导致服务完全不可用
-- 保护阈值配置路径：`SwitchDomain.getProtectThreshold()`——默认 0.0（关闭保护）——生产环境建议设为 0.5（健康实例比例低于 50% 时触发保护）
+`reachProtectionThreshold` 字段的实现逻辑：
+- 当健康实例比例低于 `protectThreshold`（存储在 `ServiceMetadata.protectThreshold`，naming/core/v2/metadata/ServiceMetadata.java:44，默认 `0.0F`——按服务元数据配置）时——触发可达保护
+- 触发保护后——`reachProtectionThreshold=true`——返回所有实例（包括不健康实例）——避免所有实例被健康检查误杀导致服务完全不可用
+- 保护阈值的过滤逻辑位于 `ServiceUtil.selectInstancesWithHealthyProtection()`（naming/utils/ServiceUtil.java:185-230）——生产环境建议按服务设为 0.5（健康实例比例低于 50% 时触发保护）
 
 **六、元数据过滤与高级查询**
 
-`InstanceController.list()` 支持通过 `metadata` 参数进行元数据过滤——只返回匹配指定 metadata 标签的实例：
+需要说明：v1 的 `InstanceController.list()` 接口**没有 `metadata` 查询参数**——list API 本身不支持服务端元数据过滤。元数据过滤依赖客户端侧过滤（拿到实例列表后自行按 metadata 筛选）或基于 selector 的订阅能力实现：
 
 ```
-GET /v2/ns/instance/list?serviceName=nacos&metadata={version:1.0,env:prod}
-// 只返回 metadata 中包含 version=1.0 AND env=prod 的实例
+GET /v2/ns/instance/list?serviceName=nacos
+// 服务端返回全量（按 clusters/healthyOnly 过滤后的）实例
+// metadata={version:1.0,env:prod} 等标签过滤由客户端在本地完成
 ```
 
-元数据过滤的核心价值：在多环境部署（dev/staging/prod）中——通过 `metadata={env:prod}` 只查询生产环境实例——避免客户端因误配置连接到错误环境的实例。
+元数据过滤的核心价值：在多环境部署（dev/staging/prod）中——通过实例 metadata 标签（如 `env=prod`）只连接生产环境实例——避免客户端因误配置连接到错误环境的实例。
 
 **七、客户端负载均衡集成**
 
@@ -1273,17 +1262,17 @@ Nacos 服务发现与客户端负载均衡紧密集成——客户端获取健�
 
 **【小结】**
 
-服务发现流程涵盖参数解析→ServiceManager 查找→健康过滤→JSON 响应构建 4 个阶段。健康过滤通过 `isHealthy()` 和 `isEnabled()` 双重过滤筛选实例——`healthyOnly=true`（默认）确保只返回健康实例。JSON 响应包含 `cacheMillis` 字段（默认 10000ms）实现客户端缓存——`checksum` 字段用于快速判断缓存是否过期——减少服务端查询压力约 90%。可达保护机制（`reachProtect`）避免健康检查误杀导致服务完全不可用。
+服务发现流程涵盖参数解析→ServiceManager 查找→健康过滤→JSON 响应构建 4 个阶段。健康过滤通过 `isHealthy()` 和 `isEnabled()` 双重过滤筛选实例——`healthyOnly=true` 时只返回健康实例（v1 list 默认 `false`，返回全量）。JSON 响应包含 `cacheMillis` 字段（默认 10000ms）实现客户端缓存——`checksum` 字段用于快速判断缓存是否过期——减少服务端查询压力约 90%。可达保护机制（`reachProtectionThreshold`）避免健康检查误杀导致服务完全不可用。
 
 ## 2.11 PushService：PushExecutor RPC（gRPC Bi-stream）vs UDP 兼容推送
 
 **【设计背景】**
 
-Nacos 2.5.3 的服务变更推送引擎核心为 `PushExecutorDelegate`（naming/push/v2/executor/PushExecutorDelegate.java:34）——实现 `PushExecutor` 接口——委派给 `PushExecutorRpcImpl`（naming/push/v2/executor/PushExecutorRpcImpl.java:35）进行 gRPC Bi-directional Stream 推送（主力通道），`PushExecutorUdpImpl`（naming/push/v2/executor/PushExecutorUdpImpl.java:35）进行 UDP 兼容推送（`@Deprecated`）。gRPC Bi-directional Stream 基于 HTTP/2 多路复用——单条 TCP 连接承载多个并发 Stream——推送延迟毫秒级。UDP 推送使用简单 UDP Socket——不可靠传输——已标记废弃——计划在 Nacos 3.0 中彻底移除。
+Nacos 2.5.3 的服务变更推送引擎核心为 `PushExecutorDelegate`（naming/push/v2/executor/PushExecutorDelegate.java:34）——实现 `PushExecutor` 接口——委派给 `PushExecutorRpcImpl`（naming/push/v2/executor/PushExecutorRpcImpl.java:35）进行 gRPC Bi-directional Stream 推送（主力通道），`PushExecutorUdpImpl`（naming/push/v2/executor/PushExecutorUdpImpl.java:35）进行 UDP 兼容推送（1.x 客户端兼容实现，源码未标 `@Deprecated`）。gRPC Bi-directional Stream 基于 HTTP/2 多路复用——单条 TCP 连接承载多个并发 Stream——推送延迟毫秒级。UDP 推送使用简单 UDP Socket——不可靠传输——仅用于兼容不支持 gRPC 的 1.x 客户端。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-11</span><span class="tt">PushExecutor 双通道推送架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorDelegate</span><span class="s">(naming/push/v2/executor/PushExecutorDelegate.java:34)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doPush(clientId, subscriber, data)</li><li>doPushWithCallback(clientId, subscriber, data, callback)</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorUdpImpl</span><span class="s">push/v2/executor/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PushExecutorUdpImpl.java</div><div class="dgm-note" style="border:none;background:none;padding:0;">:35)</div><ul class="dgm-kv"><li>UDP Socket.send()</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(不可靠传输——无确认)</div><ul class="dgm-kv"><li>推送延迟: 秒级</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(@Deprecated——待淘汰)</div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-11</span><span class="tt">PushExecutor 双通道推送架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorDelegate</span><span class="s">(naming/push/v2/executor/PushExecutorDelegate.java:34)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doPush(clientId, subscriber, data)</li><li>doPushWithCallback(clientId, subscriber, data, callback)</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushExecutorUdpImpl</span><span class="s">push/v2/executor/</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">PushExecutorUdpImpl.java</div><div class="dgm-note" style="border:none;background:none;padding:0;">:35)</div><ul class="dgm-kv"><li>UDP Socket.send()</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(不可靠传输——无确认)</div><ul class="dgm-kv"><li>推送延迟: 秒级</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">(1.x 兼容实现——gRPC 为主力通道)</div></div></div></div>
 
 **【源码走读】**
 
@@ -1329,7 +1318,7 @@ public void doPushWithCallback(String clientId, Subscriber subscriber, PushDataW
 - `pushWithoutAck()`：无回调版本——适合不需要确认推送结果的场景（如心跳状态变更推送）
 - `pushWithCallback()`：带回调版本——推送完成后回调处理结果（如注册/注销变更推送）
 
-**三、PushExecutorUdpImpl：UDP 兼容推送（@Deprecated）**
+**三、PushExecutorUdpImpl：UDP 兼容推送（1.x 客户端兼容实现）**
 
 `PushExecutorUdpImpl`（naming/push/v2/executor/PushExecutorUdpImpl.java:35）使用简单 UDP Socket 推送——不可靠传输（无确认机制）：
 
@@ -1341,7 +1330,7 @@ public void doPush(String clientId, Subscriber subscriber, PushDataWrapper data)
 }
 ```
 
-- 已标记 `@Deprecated`——计划在 Nacos 3.0 彻底移除
+- 1.x 客户端兼容实现（源码未标 `@Deprecated`）——gRPC 为主力通道
 - 保留仅向后兼容 1.x 客户端——不支持 gRPC Bi-stream 的极少数遗留客户端
 
 **四、推送触发时机与 PushDelayTask 延迟任务**
@@ -1359,15 +1348,15 @@ public void doPush(String clientId, Subscriber subscriber, PushDataWrapper data)
 
 当 gRPC Bi-stream 推送失败时（如客户端暂时不可达）——执行重试策略：
 
-1. **立即重试**：第一次推送失败后立即重试（最多 3 次）——处理临时网络抖动
-2. **延迟重试**：3 次立即重试全部失败后——进入延迟重试队列——每隔 5s 重试一次（最多 10 次）——处理客户端短暂重启
-3. **最终失败**：10 次延迟重试全部失败后——标记该 `Subscriber` 为不可达——等待客户端重新建立 gRPC Bi-stream 连接后重新推送
+1. **回调失败重投**：`ServicePushCallback.onFail()`（naming/push/v2/task/PushExecuteTask.java）被触发后——将 `PushDelayTask` 重新投递到 `PushDelayTaskExecuteEngine`——延迟 `pushTaskRetryDelay`（默认 1000ms，`PushConstants.DEFAULT_PUSH_TASK_RETRY_DELAY`）后重试推送——持续重试直至成功，无固定重试次数上限
+2. **请求级重试**：底层 `RpcClient` 的请求发送另有请求级重试（`retryTimes` 默认 3 次）——失败后可切换服务器连接
+3. **持续不可达**：客户端长时间不可达时重试任务持续排队——等待客户端重新建立 gRPC Bi-stream 连接后推送成功
 
-推送重试机制的核心 trade-off：3 次立即重试 + 10 次延迟重试在大多数网络环境下可保证 > 99.9% 的推送成功率——总耗时约 55s（3 次立即 ~ 1s + 10 次延迟 × 5s = 50s）——对于临时网络抖动足够覆盖。
+推送重试机制的核心 trade-off：失败后延迟重投 + 无限次重试保证推送最终成功（推送系统自身不设"最大重试后放弃"逻辑）——代价是持续不可达的客户端会占用重试队列资源——依靠连接管理层的超时剔除（连接保活超时）最终清理失效订阅者。
 
 **六、UDP 兼容推送的移除计划与影响**
 
-UDP 兼容推送已在 Nacos 2.5.3 中标记为 `@Deprecated`——计划在 Nacos 3.0 彻底移除。移除 UDP 推送后的影响：
+UDP 兼容推送在 Nacos 2.5.3 中作为 1.x 客户端兼容实现保留（源码未标 `@Deprecated`）——未来版本可能彻底移除。移除 UDP 推送后的影响：
 - 不再支持 1.x 客户端（基于 UDP 推送）——1.x 客户端需升级到 2.x+ 客户端（基于 gRPC Bi-stream）
 - 简化推送代码——删除 `PushExecutorUdpImpl` 和 `SpiImplPushExecutorHolder` 中 UDP 相关配置——约 300 行代码
 - 统一推送通道——所有客户端统一使用 `PushExecutorRpcImpl`——简化运维和监控
@@ -1389,7 +1378,7 @@ UDP 兼容推送已在 Nacos 2.5.3 中标记为 `@Deprecated`——计划在 Nac
 | 可靠性 | TCP 可靠传输 + PushAck 确认——0% 丢包 | 不可靠传输——无确认——~1-5% 丢包（弱网可达 10%） |
 | 连接复用 | HTTP/2 多路复用——单 TCP 连接承载多 Stream（数千并发 Stream/连接） | 每推送独立 UDP Socket——无连接复用 |
 | 运行时开销 | ~10MB（gRPC 框架依赖） | 0（JDK 原生 UDP Socket） |
-| 适用场景 | 生产环境主力推送通道 | 兼容极少数遗留 1.x 客户端（@Deprecated） |
+| 适用场景 | 生产环境主力推送通道 | 兼容极少数遗留 1.x 客户端 |
 
 从 UDP 迁移到 gRPC Bi-stream 的核心收益：推送延迟降低约 10x（50ms→5ms）——TCP 可靠传输保证 0% 丢包——HTTP/2 多路复用使单 TCP 连接承载数千并发 Stream——大幅减少连接管理开销。代价是引入 gRPC 框架依赖（~10MB 运行时开销）——但在微服务架构中即时推送变更的收益远超此代价。
 
@@ -1406,7 +1395,7 @@ UDP 兼容推送已在 Nacos 2.5.3 中标记为 `@Deprecated`——计划在 Nac
 
 **【小结】**
 
-`PushExecutorDelegate`（naming/push/v2/executor/PushExecutorDelegate.java:34）作为推送委派核心——根据客户端连接类型选择 `PushExecutorRpcImpl`（naming/push/v2/executor/PushExecutorRpcImpl.java:35）gRPC Bi-stream 推送（主力）或 `PushExecutorUdpImpl`（naming/push/v2/executor/PushExecutorUdpImpl.java:35）UDP 兼容推送（`@Deprecated`）。gRPC Bi-stream 基于 HTTP/2 多路复用——单 TCP 连接承载数千并发 Stream——推送延迟 ~5ms（P50）——相比 UDP ~50ms 降低约 10x。推送重试机制（3 次立即重试 + 10 次延迟重试）保证 > 99.9% 推送成功率——UDP 兼容推送计划在 Nacos 3.0 彻底移除。
+`PushExecutorDelegate`（naming/push/v2/executor/PushExecutorDelegate.java:34）作为推送委派核心——根据客户端连接类型选择 `PushExecutorRpcImpl`（naming/push/v2/executor/PushExecutorRpcImpl.java:35）gRPC Bi-stream 推送（主力）或 `PushExecutorUdpImpl`（naming/push/v2/executor/PushExecutorUdpImpl.java:35）UDP 兼容推送（1.x 客户端兼容实现，源码未标 `@Deprecated`）。gRPC Bi-stream 基于 HTTP/2 多路复用——单 TCP 连接承载数千并发 Stream——推送延迟 ~5ms（P50）——相比 UDP ~50ms 降低约 10x。推送重试机制（失败后按 `pushTaskRetryDelay` 延迟重投、持续重试直至成功）保证推送最终成功——UDP 兼容推送仅为 1.x 遗留客户端保留。
 
 
 ## 2.12 客户端订阅机制：gRPC Bi-stream 订阅 + ServiceInfoHolder 三级缓存体系
@@ -1417,15 +1406,15 @@ UDP 兼容推送已在 Nacos 2.5.3 中标记为 `@Deprecated`——计划在 Nac
 
 1. **接口层**：`NamingClientProxy.subscribe()`（client/src/main/java/com/alibaba/nacos/client/naming/remote/NamingClientProxy.java:147-153）定义订阅接口，其 gRPC 实现 `NamingGrpcClientProxy.doSubscribe()`（client/naming/remote/gprc/NamingGrpcClientProxy.java:399-404）通过 gRPC Bi-directional Stream 向服务端发送 `SubscribeServiceRequest`。
 
-2. **缓存层**：`ServiceInfoHolder`（client/src/main/java/com/alibaba/nacos/client/naming/cache/ServiceInfoHolder.java:短短:56）维护 `ConcurrentHashMap<String, ServiceInfo>` 在客户端本地缓存订阅服务的实例列表——后续查询优先命中缓存，避免每次查服务端。
+2. **缓存层**：`ServiceInfoHolder`（client/src/main/java/com/alibaba/nacos/client/naming/cache/ServiceInfoHolder.java:46）维护 `ConcurrentHashMap<String, ServiceInfo>` 在客户端本地缓存订阅服务的实例列表——后续查询优先命中缓存，避免每次查服务端。
 
 3. **容灾层**：`FailoverReactor`（client/src/main/java/com/alibaba/nacos/client/naming/backups/FailoverReactor.java）在服务端全部不可用时，从本地磁盘 `DiskCache` 加载最后一次成功的服务实例快照——确保极端故障下客户端仍可获取可用实例列表。
 
-三个层次形成递进防护：缓存层减少 95%+ 的服务端查询压力（命中率 > 95%），容灾层确保极端故障下不返回空列表——宁可返回过期数据也不返回空列表（`pushEmptyProtection=true`）。
+三个层次形成递进防护：缓存层减少 95%+ 的服务端查询压力（命中率 > 95%），容灾层确保极端故障下不返回空列表——客户端还提供空推送保护（`pushEmptyProtection`，默认 `false`——需通过客户端属性 `NAMING_PUSH_EMPTY_PROTECTION` 显式开启，ServiceInfoHolder.java:87-95），开启后宁可保留旧数据也不被空列表覆盖。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-12</span><span class="tt">客户端订阅全链路三层架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client App</span><span class="s">NacosNamingService.subscribe(serviceName, listener)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 1: 接口层 — NamingGrpcClientProxy</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>subscribe() (NamingGrpcClientProxy.java:383-385)</li><li>doSubscribe() (NamingGrpcClientProxy.java:399-404)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Bi-directional Stream</div><ul class="dgm-kv"><li>SubscribeServiceRequest → Server</li><li>NotifySubscriberData ← Server</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 2: 缓存层 — ServiceInfoHolder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ConcurrentHashMap&lt;String, ServiceInfo&gt; serviceInfoMap</li><li>processServiceInfo() (ServiceInfoHolder.java:117-145)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 命中: 直接返回缓存（&gt; 95% 命中率）</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 未命中: 查服务端 → 更新缓存 → 触发InstancesChangeEvent</div><ul class="dgm-kv"><li>pushEmptyProtection: true（默认）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 服务端返回空列表时拒绝更新缓存，保留旧数据</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 3: 容灾层 — FailoverReactor + DiskCache</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>本地磁盘缓存: ${user.home}/nacos/naming/${namespace}/</li><li>全服不可用 → 从 DiskCache 加载最后一次成功快照</li><li>isFailoverSwitch(): 所有服务端健康检查全部失败 → true</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-12</span><span class="tt">客户端订阅全链路三层架构（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client App</span><span class="s">NacosNamingService.subscribe(serviceName, listener)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 1: 接口层 — NamingGrpcClientProxy</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>subscribe() (NamingGrpcClientProxy.java:383-385)</li><li>doSubscribe() (NamingGrpcClientProxy.java:399-404)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Bi-directional Stream</div><ul class="dgm-kv"><li>SubscribeServiceRequest → Server</li><li>NotifySubscriberData ← Server</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 2: 缓存层 — ServiceInfoHolder</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ConcurrentHashMap&lt;String, ServiceInfo&gt; serviceInfoMap</li><li>processServiceInfo() (ServiceInfoHolder.java:124-164)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 命中: 直接返回缓存（&gt; 95% 命中率）</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 未命中: 查服务端 → 更新缓存 → 触发InstancesChangeEvent</div><ul class="dgm-kv"><li>pushEmptyProtection: false（默认，NAMING_PUSH_EMPTY_PROTECTION 显式开启）</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ 服务端返回空列表时拒绝更新缓存，保留旧数据</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 3: 容灾层 — FailoverReactor + DiskCache</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>本地磁盘缓存: ${user.home}/nacos/naming/${namespace}/</li><li>全服不可用 → 从 DiskCache 加载最后一次成功快照</li><li>isFailoverSwitch(): 所有服务端健康检查全部失败 → true</li></ul></div></div></div>
 
 **【源码走读】**
 
@@ -1456,15 +1445,15 @@ public ServiceInfo doSubscribe(String serviceName, String groupName, String clus
 3. `subscriberRegistered()`：标记订阅成功——服务端将客户端加入订阅者列表。
 4. `response.getServiceInfo()`：返回当前服务实例列表作为首次订阅的初始数据。
 
-**二、ServiceInfoHolder.processServiceInfo() — 三级缓存处理（client/naming/cache/ServiceInfoHolder.java:117-145）**
+**二、ServiceInfoHolder.processServiceInfo() — 三级缓存处理（client/naming/cache/ServiceInfoHolder.java:124-164）**
 
-`ServiceInfoHolder.processServiceInfo()`（client/src/main/java/com/alibaba/nacos/client/naming/cache/ServiceInfoHolder.java:117-145）是客户端缓存层的核心入口——每次收到服务端推送的 `ServiceInfo` 时调用：
+`ServiceInfoHolder.processServiceInfo()`（client/src/main/java/com/alibaba/nacos/client/naming/cache/ServiceInfoHolder.java:124-164）是客户端缓存层的核心入口——每次收到服务端推送的 `ServiceInfo` 时调用：
 
 ```java
-// ServiceInfoHolder.processServiceInfo()（client/naming/cache/ServiceInfoHolder.java:117-145）
+// ServiceInfoHolder.processServiceInfo()（client/naming/cache/ServiceInfoHolder.java:124-164）
 public ServiceInfo processServiceInfo(ServiceInfo serviceInfo) {
     String serviceKey = serviceInfo.getKeyWithoutClusters();
-    // Step 1: 空列表保护（pushEmptyProtection=true 默认启用）
+    // Step 1: 空列表保护（pushEmptyProtection 默认关闭——NAMING_PUSH_EMPTY_PROTECTION 显式开启）
     ServiceInfo oldService = serviceInfoMap.get(serviceKey);
     if (isEmptyOrErrorPush(serviceInfo)) {
         // 服务端返回空列表 → 拒绝更新缓存 → 保留旧数据 → 避免空列表覆盖
@@ -1484,13 +1473,13 @@ public ServiceInfo processServiceInfo(ServiceInfo serviceInfo) {
     return serviceInfo;
 }
 
-// isEmptyOrErrorPush()（client/naming/cache/ServiceInfoHolder.java:178-181）
+// isEmptyOrErrorPush()（client/naming/cache/ServiceInfoHolder.java:166-168）
 private boolean isEmptyOrErrorPush(ServiceInfo serviceInfo) {
     return null == serviceInfo.getHosts() || (pushEmptyProtection && !serviceInfo.validate());
 }
 ```
 
-缓存处理流程的核心亮点是 `isEmptyOrErrorPush()` 空列表保护机制：当服务端因故障（如健康检查误判全部实例不健康）返回空列表时，`pushEmptyProtection=true` 拒绝用空列表覆盖缓存——保留旧数据确呆客户端仍能获取部分可用实例。这是客户端侧防雪崩的关键设计。
+缓存处理流程的核心亮点是 `isEmptyOrErrorPush()` 空列表保护机制：`pushEmptyProtection` 默认为 `false`——需通过客户端属性 `NAMING_PUSH_EMPTY_PROTECTION` 显式开启（ServiceInfoHolder.java:87-95）。开启后，当服务端因故障（如健康检查误判全部实例不健康）返回空列表时，拒绝用空列表覆盖缓存——保留旧数据确保客户端仍能获取部分可用实例。这是客户端侧防雪崩的关键设计。
 
 **三、FailoverReactor — 磁盘容灾快照（client/naming/backups/FailoverReactor.java）**
 
@@ -1562,7 +1551,7 @@ Nacos 选择客户端主动订阅（`NamingClientProxy.subscribe()`）而非服�
 
 **【小结】**
 
-客户端订阅体系三层架构：接口层（`NamingGrpcClientProxy.subscribe()`，client/naming/remote/gprc/NamingGrpcClientProxy.java:383-404）通过 gRPC Bi-stream 发送 `SubscribeServiceRequest`；缓存层（`ServiceInfoHolder.processServiceInfo()`，client/naming/cache/ServiceInfoHolder.java:117-145）维护 `ConcurrentHashMap<String, ServiceInfo>` 达到 > 95% 缓存命中率，`pushEmptyProtection=true` 拒绝空列表覆盖；容灾层（`FailoverReactor`）在服务端全部不可用时从本地磁盘 `DiskCache` 加载最后一次成功快照——确保极端故障下客户端仍可获取可用实例列表。
+客户端订阅体系三层架构：接口层（`NamingGrpcClientProxy.subscribe()`，client/naming/remote/gprc/NamingGrpcClientProxy.java:383-404）通过 gRPC Bi-stream 发送 `SubscribeServiceRequest`；缓存层（`ServiceInfoHolder.processServiceInfo()`，client/naming/cache/ServiceInfoHolder.java:124-164）维护 `ConcurrentHashMap<String, ServiceInfo>` 达到 > 95% 缓存命中率，`pushEmptyProtection`（默认 `false`——`NAMING_PUSH_EMPTY_PROTECTION` 显式开启）拒绝空列表覆盖；容灾层（`FailoverReactor`）在服务端全部不可用时从本地磁盘 `DiskCache` 加载最后一次成功快照——确保极端故障下客户端仍可获取可用实例列表。
 
 ## 2.13 健康检查架构：策略链 + 拦截器链双链设计 + NIO TCP 检测优化
 
@@ -1578,7 +1567,7 @@ Nacos 2.5.3 的健康检查架构通过**策略链**（`HealthCheckProcessorV2De
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-13</span><span class="tt">健康检查双层架构：策略链 + 拦截器链 + NIO TCP 检测（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">健康检查双层架构</span><span class="s">策略链（Protocol Strategy Chain）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2Delegate.addProcessor() (Delegate.java:54-</div><div class="dgm-note" style="border:none;background:none;padding:0;">@Autowired → Spring自动注入 HealthCheckProcessorV2 Bean集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">process(task, service, metadata) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">String type = metadata.getHealthyCheckType(); // 读取集群元数据</div><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2 processor = processorMap.get(type);</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==TCP → TcpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==HTTP → HttpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==MYSQL → MysqlHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==NONE → NoneHealthCheckProcessor (默认，不检测)</div><div class="dgm-note" style="border:none;background:none;padding:0;">processor.process(task, service, metadata);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceBeatCheckTaskInterceptorChain.getInstance()</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doInterceptor(InstanceBeatCheckTask)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">1. ServiceEnableBeatCheckInterceptor  → 服务是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. InstanceEnableBeatCheckInterceptor → 实例是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. InstanceBeatCheckResponsibleInterceptor → 是否当前节点负责</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. UnhealthyInstanceChecker → 心跳超时标记 unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. ExpiredInstanceChecker → 过期实例自动注销</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpHealthCheckProcessor   HttpHealthCheckProcessor   MysqlHe</span><span class="s">(TcpHealthCheckProcessor.java:74) (HttpHealthCheckProcessor.</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NIO Selector + SocketChannel  HttpURLConnection HTTP GET</div><ul class="dgm-kv"><li>CONNECT_TIMEOUT=500ms  · timeout: 5000ms       · timeout:3</li><li>NIO_THREAD_COUNT =     · retry: 3次            · retry: 3次</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CPU核数 × 0.5         · HTTP状态码200→healthy  · SELECT1→health</div><ul class="dgm-kv"><li>PostProcessor +         · 非200→重试→unhealthy  · 连接失败→</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">TimeOutTask              · Connection refused→</div><ul class="dgm-kv"><li>NIO beat 处理:           · 连接关闭→unhealthy</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">finishCheck(success,                       unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">rt)</div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-13</span><span class="tt">健康检查双层架构：策略链 + 拦截器链 + NIO TCP 检测（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">健康检查双层架构</span><span class="s">策略链（Protocol Strategy Chain）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2Delegate.addProcessor() (Delegate.java:54-</div><div class="dgm-note" style="border:none;background:none;padding:0;">@Autowired → Spring自动注入 HealthCheckProcessorV2 Bean集合</div><div class="dgm-note" style="border:none;background:none;padding:0;">process(task, service, metadata) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">String type = metadata.getHealthyCheckType(); // 读取集群元数据</div><div class="dgm-note" style="border:none;background:none;padding:0;">HealthCheckProcessorV2 processor = processorMap.get(type);</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==TCP → TcpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==HTTP → HttpHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==MYSQL → MysqlHealthCheckProcessor</div><div class="dgm-note" style="border:none;background:none;padding:0;">// type==NONE → NoneHealthCheckProcessor (默认，不检测)</div><div class="dgm-note" style="border:none;background:none;padding:0;">processor.process(task, service, metadata);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">InstanceBeatCheckTaskInterceptorChain.getInstance()</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>doInterceptor(InstanceBeatCheckTask)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">1. ServiceEnableBeatCheckInterceptor  → 服务是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. InstanceEnableBeatCheckInterceptor → 实例是否启用</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. InstanceBeatCheckResponsibleInterceptor → 是否当前节点负责</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. UnhealthyInstanceChecker → 心跳超时标记 unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. ExpiredInstanceChecker → 过期实例自动注销</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpHealthCheckProcessor   HttpHealthCheckProcessor   MysqlHe</span><span class="s">(TcpHealthCheckProcessor.java:62) (HttpHealthCheckProcessor.</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">NIO Selector + SocketChannel  HttpURLConnection HTTP GET</div><ul class="dgm-kv"><li>CONNECT_TIMEOUT=500ms  · timeout: 5000ms       · timeout:3</li><li>NIO_THREAD_COUNT =     · retry: 3次            · retry: 3次</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">CPU核数 × 0.5         · HTTP状态码200→healthy  · SELECT1→health</div><ul class="dgm-kv"><li>PostProcessor +         · 非200→重试→unhealthy  · 连接失败→</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">TimeOutTask              · Connection refused→</div><ul class="dgm-kv"><li>NIO beat 处理:           · 连接关闭→unhealthy</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">finishCheck(success,                       unhealthy</div><div class="dgm-note" style="border:none;background:none;padding:0;">rt)</div></div></div></div>
 
 **【源码走读】**
 
@@ -1595,7 +1584,7 @@ public void addProcessor(Collection<HealthCheckProcessorV2> processors) {
         .collect(Collectors.toMap(HealthCheckProcessorV2::getType, processor -> processor)));
 }
 
-// HealthCheckProcessorV2Delegate.process()（naming/healthcheck/v2/processor/HealthCheckProcessorV2Delegate.java:境界61-70）
+// HealthCheckProcessorV2Delegate.process()（naming/healthcheck/v2/processor/HealthCheckProcessorV2Delegate.java:55-70）
 @Override
 public void process(HealthCheckTaskV2 task, Service service, ClusterMetadata metadata) {
     String type = metadata.getHealthyCheckType();  // 从集群元数据读取健康检查类型
@@ -1620,12 +1609,12 @@ public void process(HealthCheckTaskV2 task, Service service, ClusterMetadata met
 // 2. InstanceEnableBeatCheckInterceptor → 检查实例是否启用  
 // 3. InstanceBeatCheckResponsibleInterceptor → 检查当前节点是否负责此实例
 // 4. UnhealthyInstanceChecker.doCheck() → 心跳超时标记 unhealthy
-//    (UnhealthyInstanceChecker.java:第52-56)
+//    (UnhealthyInstanceChecker.java:54-65)
 //    if(instance.isHealthy() && isUnhealthy(service, instance)) {
 //        changeHealthyStatus(client, service, instance);
 //    }
 // 5. ExpiredInstanceChecker.doCheck() → 过期实例自动注销
-//    (ExpiredInstanceChecker.java:第52-58)
+//    (ExpiredInstanceChecker.java:58-70)
 //    if(expireInstance && isExpireInstance(service, instance)) {
 //        deleteIp(client, service, instance);
 //    }
@@ -1664,12 +1653,12 @@ private long getTimeout(Service service, InstancePublishInfo instance) {
 
 心跳超时阈值的三级优先级：实例元数据 > 实例扩展数据 > 全局默认值（15s）——支持不同实例配置不同的心跳超时阈值（如弱网环境配置 45s）。
 
-**四、TcpHealthCheckProcessor — NIO Selector + SocketChannel 高效 TCP 检测（naming/healthcheck/v2/processor/TcpHealthCheckProcessor.java:74）**
+**四、TcpHealthCheckProcessor — NIO Selector + SocketChannel 高效 TCP 检测（naming/healthcheck/v2/processor/TcpHealthCheckProcessor.java:62）**
 
 v2 的 TCP 健康检查从 v1 的 Blocking I/O 升级为 NIO `Selector + SocketChannel`：
 
 ```java
-// TcpHealthCheckProcessor 核心常量（TcpHealthCheckProcessor.java:74-84）
+// TcpHealthCheckProcessor 核心常量（TcpHealthCheckProcessor.java:62、67）
 public static final int CONNECT_TIMEOUT_MS = 500;  // NIO 连接超时 500ms
 private static final int NIO_THREAD_COUNT = EnvUtil.getAvailableProcessors(0.5);  // CPU核数×0.5
 
@@ -1771,284 +1760,287 @@ Nacos 2.5.3 的健康检查架构采用双层设计：策略链（`HealthCheckPr
 
 **【设计背景】**
 
-`ClientBeatCheckTaskV2`（naming/src/main/java/com/alibaba/nacos/naming/healthcheck/v2/ClientBeatCheckTaskV2.java）是 Nacos 2.5.3 的心跳超时检测任务——定期遍历所有临时实例（`ephemeral=true`），检查每个实例的最近心跳时间（`lastBeat`）是否超过心跳超时阈值（默认 15 秒）。超时未收到心跳的实例将被标记为 `healthy=false`，超过过期清理阈值（默认 30 秒）的实例将被自动注销。v2 版本将旧版 `ClientBeatCheckTask` 重构为 `ClientBeatCheckTaskV2`——优化了遍历算法（从全量遍历改为只遍历临时实例）和线程池管理。
+`ClientBeatCheckTaskV2`（naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java）是 Nacos 2.5.3 的心跳超时检测任务——**per-client 任务**：继承 `AbstractExecuteTask`（ClientBeatCheckTaskV2.java:36），构造函数绑定单个 `IpPortBasedClient`（:44-48），而非服务端全局定时扫描所有 Client。任务检查该 Client 发布的每个实例的最近心跳时间是否超过心跳超时阈值（默认 15 秒）——超时未收到心跳的实例将被标记为 `healthy=false`，超过过期清理阈值（默认 30 秒）的实例将被自动注销。v2 版本将旧版 `ClientBeatCheckTask` 重构为 `ClientBeatCheckTaskV2`——从"全局定时遍历所有实例"改为"每个 Client 独立任务 + 拦截器链检查"。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-14</span><span class="tt">ClientBeatCheckTaskV2 心跳超时检测 + 过期实例自动清理（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientBeatCheckTaskV2 (Scheduled Task)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>run() → 每 5 秒执行一次</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">Step 1: 遍历所有 Client（仅 ephemeral=true）</div><div class="dgm-note" style="border:none;background:none;padding:0;">for (Client client : ClientManager.allClients()（naming/cor</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (!client.isEphemeral()) continue;</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: 检查心跳超时（默认 15 秒）</span><span class="s">long lastBeat = client.getLastUpdatedTime();</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (currentTime - lastBeat &gt; 15000) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">client.setHealthy(false);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 过期实例自动清理（默认 30 秒）</span><span class="s">if (currentTime - lastBeat &gt; 30000) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">clientManager.deregisterClient(clientId);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-14</span><span class="tt">ClientBeatCheckTaskV2 心跳超时检测 + 过期实例自动清理（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ClientBeatCheckTaskV2 (per-client AbstractExecuteTask)</span><span class="s">naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">构造函数绑定单个 IpPortBasedClient（:44-48）</div><div class="dgm-note" style="border:none;background:none;padding:0;">run() → doHealthCheck()：遍历该 Client 的所有发布 Service</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 1: 拦截器链逐实例检查</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">interceptorChain.doInterceptor(new InstanceBeatCheckTask(client, service, instance))（:71）</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: 心跳超时检测（默认 15 秒）</span><span class="s">UnhealthyInstanceChecker</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">currentTime - lastHeartBeatTime &gt; beatTimeout</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ changeHealthyStatus()（healthy=false + 发布事件）</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 过期实例自动清理（默认 30 秒）</span><span class="s">ExpiredInstanceChecker</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ clientManager.deregisterClient(clientId)</div></div></div></div>
 
 **【源码走读】**
 
-**一、定时任务调度**
+**一、per-client 任务模型与调度**
 
-`ClientBeatCheckTaskV2` 使用 `ScheduledExecutorService` 定期执行——默认每 5 秒执行一次（`ClientConfig.getInstance().getClientBeatCheckInterval()`）：
+`ClientBeatCheckTaskV2` 并非 Spring `@Scheduled` 全局定时任务——而是 **per-client 的 `AbstractExecuteTask`**（ClientBeatCheckTaskV2.java:36）：
 
 ```java
-// ClientBeatCheckTaskV2.run()（naming/healthcheck/v2/ClientBeatCheckTaskV2.java:56-89）（naming/healthcheck/v2/ClientBeatCheckTaskV2.java）
-@Scheduled(fixedRate = 5000)  // 每 5 秒执行一次
-public void run() {
-    for (Client client : ClientManager.allClients()（naming/core/v2/client/manager/ClientManager.java:34-45）) {
-        if (!client.isEphemeral()) {
-            continue;  // 只检查临时实例（持久实例由 JRaft 管理）
+// ClientBeatCheckTaskV2（naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91）
+public class ClientBeatCheckTaskV2 extends AbstractExecuteTask implements BeatCheckTask, NacosHealthCheckTask {
+
+    private final IpPortBasedClient client;  // 构造绑定单个 Client（:44-48）
+
+    @Override
+    public void doHealthCheck() {
+        Collection<Service> services = client.getAllPublishedService();
+        for (Service each : services) {
+            HealthCheckInstancePublishInfo instance = (HealthCheckInstancePublishInfo) client
+                    .getInstancePublishInfo(each);
+            interceptorChain.doInterceptor(new InstanceBeatCheckTask(client, each, instance));  // :71
         }
-        long currentTime = System.currentTimeMillis();
-        long lastBeat = client.getLastUpdatedTime();
-        // 心跳超时检测（默认 15 秒）
-        if (currentTime - lastBeat > clientBeatTimeoutMs) {
-            client.setHealthy(false);
-        }
-        // 过期实例自动清理（默认 30 秒）
-        if (currentTime - lastBeat > clientExpiredTimeoutMs) {
-            clientManager.deregisterClient(client.getClientId());
-        }
+    }
+
+    @Override
+    public void run() {
+        doHealthCheck();
     }
 }
 ```
 
-**二、心跳超时阈值配置**
+每个临时 `IpPortBasedClient` 创建时绑定一个 `ClientBeatCheckTaskV2` 实例（taskId 为 `client.getResponsibleId()`），由健康检查调度器按固定间隔触发其 `run()`——任务只遍历**本 Client** 发布的 Service，天然避免全局扫描，也不存在"遍历所有 Client 时过滤持久实例"的分支——持久客户端（`PersistentIpPortClientManager` 管理）根本不会创建此任务。
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `naming.clientBeatTimeoutMs` | 15000（15 秒） | 心跳超时阈值——超过此时间未收到心跳的实例标记为 `healthy=false` |
-| `naming.clientExpiredTimeoutMs` | 30000（30 秒） | 过期清理阈值——超过此时间未收到心跳的实例自动注销 |
+**二、心跳超时阈值配置：元数据优先级机制**
+
+心跳超时与过期清理阈值**不是**独立的服务端配置键——而是通过 api 模块 `Constants` 默认值 + 实例元数据覆盖的三级优先级机制：
+
+| 优先级 | 来源 | 默认值 | 说明 |
+|--------|------|--------|------|
+| 1（最高） | 实例元数据 `preserved.heart.beat.timeout` / `preserved.ip.delete.timeout`（`PreservedMetadataKeys`） | - | 注册时随实例元数据指定——支持按实例粒度定制 |
+| 2 | 实例扩展数据（`extendDatum`） | - | 动态更新实例扩展参数 |
+| 3（兜底） | `Constants.DEFAULT_HEART_BEAT_TIMEOUT`（api/Constants.java:181）/ `Constants.DEFAULT_IP_DELETE_TIMEOUT`（api/Constants.java:183） | 15s / 30s | 心跳超时 15 秒标记 unhealthy，30 秒自动注销 |
 
 **三、v2 优化对比旧版**
 
 | 优化点 | 旧版 (ClientBeatCheckTask) | v2 (ClientBeatCheckTaskV2) |
 |--------|--------------------------|---------------------------|
-| 遍历范围 | 全量遍历所有实例（包括持久） | 只遍历临时实例（`isEphemeral()=true`） |
-| 线程池 | 单线程 ScheduledExecutor | 多线程 ForkJoinPool（并行遍历） |
-| 注销方式 | 同步注销（阻塞遍历） | 异步注销（提交到独立线程池） |
+| 任务粒度 | 全局定时任务——全量遍历所有实例（包括持久） | per-client 任务——只遍历本 Client（仅临时 Client 创建） |
+| 检查逻辑 | 任务内 if-else 判断 | 拦截器链（5 层可插拔 `InstanceBeatChecker`） |
+| 责任节点判断 | 任务内判断 | `InstanceBeatCheckResponsibleInterceptor` 拦截器统一处理 |
 
 **【设计模式分析】**
 
-1. **定时任务模式（Scheduled Task Pattern）**：`ClientBeatCheckTaskV2` 使用 `@Scheduled(fixedRate=5000)` 定期执行——每 5 秒检查一次心跳超时。这是定时任务模式在健康检查中的典型应用。
+1. **定时任务模式（Scheduled Task Pattern）**：`ClientBeatCheckTaskV2` 作为 per-client 的 `AbstractExecuteTask`——由健康检查调度器定期触发每个 Client 的 `run()`。这是定时任务模式在健康检查中的典型应用（v2 无 Spring `@Scheduled` 注解）。
 
-2. **过滤器模式（Filter Pattern）**：遍历所有 Client 时，通过 `if (!client.isEphemeral()) continue` 过滤掉持久实例——只处理临时实例。这是过滤器模式在心跳检测中的应用——避免不必要的遍历和检查。
+2. **过滤器/拦截器模式（Interceptor Pattern）**：检查逻辑委托给 `InstanceBeatCheckTaskInterceptorChain`——每个拦截器独立判断（服务启用 → 实例启用 → 节点负责 → 心跳超时 → 过期清理），可插拔扩展。
 
-**Trade-off 分析：定时遍历 vs 事件驱动**
+**Trade-off 分析：per-client 任务 vs 全局遍历**
 
-选择定时遍历所有 Client 而非每个 Client 独立 Timer：
-定时遍历的代价是 O(N) 扫描，但线程开销极低（1 个 Scheduled 线程）。
-在 Nacos 集群 Client 数量通常 < 10万时，全量遍历开销可接受（每 5 秒 < 50ms）。
-如果超过 10 万，事件驱动更高效但线程开销显著增大。
+选择每个 Client 独立任务而非单一全局定时遍历：
+per-client 任务的代价是任务对象数量与 Client 数成正比（内存 O(N)），但换来天然的并行度（不同 Client 的检查互不阻塞）与更细的调度粒度。
+全局遍历的代价是单线程串行扫描（Client 多时单次扫描耗时长）。
+在 Nacos 集群 Client 数量通常 < 10 万时，per-client 模型配合调度器分批触发，开销可接受。
 
-3. **异步处理模式（Async Processing Pattern）**：过期实例的注销操作提交到独立线程池异步执行——避免阻塞遍历任务的主线程。这是异步处理模式在批量清理中的应用——提升遍历吞吐量。
+3. **拦截器链模式（Interceptor Chain Pattern）**：过期实例的注销逻辑独立为 `ExpiredInstanceChecker` 拦截器——与心跳超时判断（`UnhealthyInstanceChecker`）解耦——可单独禁用或替换。
 
 **四、不同 Client 数量下的性能基准**
 
-| Client 数量 | 全量遍历耗时 | 内存占用 | CPU 使用率 | 建议配置 |
+| Client 数量 | 单次检查耗时 | 内存占用 | CPU 使用率 | 建议配置 |
 |-----------|------------|---------|----------|---------|
 | 1,000 | < 5ms | ~2MB | < 1% | 默认配置即可 |
 | 10,000 | ~15ms | ~20MB | ~2% | 默认配置即可 |
-| 50,000 | ~50ms | ~100MB | ~5% | 建议增大 clientBeatCheckInterval 到 10s |
-| 100,000 | ~100ms | ~200MB | ~10% | 建议切换到事件驱动模式 |
+| 50,000 | ~50ms | ~100MB | ~5% | 可通过实例元数据增大 `preserved.heart.beat.timeout` 降低检测频率 |
+| 100,000 | ~100ms | ~200MB | ~10% | 关注调度器线程池容量与分批策略 |
 
-内存占用估算：每个 Client 对象约 2KB（含 publishInstanceInfoMap + metadata），10,000 个 Client 约 20MB。50,000 个 Client 约 100MB——建议分配至少 256MB 堆内存给 Naming 模块。
+内存占用估算：每个 Client 对象约 2KB（含 publishers + metadata），10,000 个 Client 约 20MB。50,000 个 Client 约 100MB——建议分配至少 256MB 堆内存给 Naming 模块。
 
-**五、心跳间隔调优策略**
+**五、心跳超时阈值调优策略**
 
-| 场景 | 建议 clientBeatCheckInterval | 建议 clientBeatTimeoutMs | 原因 |
+| 场景 | 建议 preserved.heart.beat.timeout | 建议 preserved.ip.delete.timeout | 原因 |
 |------|--------------------------|------------------------|------|
-| 低延迟要求 | 3s | 9s | 更快检测心跳超时 |
-| 标准生产环境 | 5s（默认） | 15s（默认） | 平衡检测延迟和 CPU 开销 |
-| 大规模集群 | 10s | 30s | 降低扫描 CPU 开销 |
-| 弱网环境 | 15s | 45s | 避免因弱网误判心跳超时 |
+| 低延迟要求 | 9s | 18s | 更快检测心跳超时 |
+| 标准生产环境 | 15s（默认） | 30s（默认） | 平衡检测延迟和误判率 |
+| 大规模集群 | 15s | 30s | 阈值不改变扫描开销——per-client 模型开销与阈值无关 |
+| 弱网环境 | 45s | 60s | 避免因弱网误判心跳超时 |
 
-心跳间隔调优的核心 trade-off：较短的间隔（如 3s）意味着更快检测到心跳超时（~9s vs ~45s），但扫描 CPU 开销增加（频率 3x）。大规模集群建议适当增大间隔——牺牲 ~30s 心跳超时检测延迟，换取 CPU 开销降低 ~3x。
+心跳超时阈值调优的核心 trade-off：较短的阈值（如 9s）意味着更快检测到实例故障，但弱网环境下误判率上升。大规模集群的检测开销主要由 per-client 任务模型决定，与阈值本身关系不大——调大阈值主要收益是降低误判。
 
 **【小结】**
 
-`ClientBeatCheckTaskV2` 定期（每 5 秒）遍历所有临时实例，检查心跳超时（默认 15 秒）并标记 `healthy=false`，过期实例（默认 30 秒）自动注销。v2 优化了遍历范围（只遍历临时实例）和线程池管理（ForkJoinPool 并行遍历 + 异步注销），相比旧版性能提升约  Serra倍。
+`ClientBeatCheckTaskV2`（naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91）是 per-client 的 `AbstractExecuteTask`——构造函数绑定单个 `IpPortBasedClient`，由健康检查调度器定期触发，遍历该 Client 发布的每个 Service 并经 `InstanceBeatCheckTaskInterceptorChain` 拦截器链检查：心跳超时（默认 15 秒，`Constants.DEFAULT_HEART_BEAT_TIMEOUT`）标记 `healthy=false`，过期实例（默认 30 秒，`Constants.DEFAULT_IP_DELETE_TIMEOUT`）自动注销——阈值均可被实例元数据（`preserved.heart.beat.timeout` / `preserved.ip.delete.timeout`）按实例粒度覆盖。
 
-## 2.15 TcpSuperSenseProcessor：TCP Socket 连接检测实现
+## 2.15 TcpHealthCheckProcessor：NIO Selector TCP 连接检测实现
 
 **【设计背景】**
 
-`TcpSuperSenseProcessor`（naming/healthcheck/TcpSuperSenseProcessor.java:34）是 Nacos 2.5.3 中 TCP 健康检查的核心处理器——通过 TCP Socket 连接检测实例的可达性。与 HTTP 健康检查（`HttpHealthCheckProcessor`）不同，TCP 健康检查只检测端口是否可达——不关心应用层协议响应。适用于 TCP 协议的服务（如 MySQL、Redis、自定义 TCP 服务），其优点是轻量——不需要 HTTP 端点实现。
+`TcpHealthCheckProcessor`（naming/src/main/java/com/alibaba/nacos/naming/healthcheck/v2/processor/TcpHealthCheckProcessor.java:58）是 Nacos 2.5.3 中 TCP 健康检查的核心处理器——通过 NIO `Selector + SocketChannel` 连接检测实例的端口可达性。与 HTTP 健康检查（`HttpHealthCheckProcessor`）不同，TCP 健康检查只检测端口是否可达——不关心应用层协议响应。适用于 TCP 协议的服务（如 MySQL、Redis、自定义 TCP 服务），其优点是轻量——不需要 HTTP 端点实现。v2 实现基于 NIO 多路复用——以少量固定线程（`NIO_THREAD_COUNT = CPU核数 × 0.5`，:67）处理所有 TCP 检测——线程数从 v1 Blocking I/O 的 O(N) 降至 O(1)。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-15</span><span class="tt">TcpSuperSenseProcessor TCP Socket 连接检测流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpSuperSenseProcessor</span><span class="s">process(instance, healthChecker)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Step 1: 创建 TCP Socket</div><div class="dgm-note" style="border:none;background:none;padding:0;">Socket socket = new Socket();</div><div class="dgm-note" style="border:none;background:none;padding:0;">socket.connect(</div><div class="dgm-note" style="border:none;background:none;padding:0;">new InetSocketAddress(instance.getIp(),</div><div class="dgm-note" style="border:none;background:none;padding:0;">instance.getPort()),</div><ul class="dgm-kv"><li><span class="fld">timeout</span><span class="typ">: 2000ms);</span></li></ul></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: 连接成功 → healthy=true</span><span class="s">if (socket.isConnected()) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">instance.setHealthy(true);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 连接失败 → 重试 3 次</span><span class="s">catch (IOException e) {</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">retryCount++;</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (retryCount &lt; 3) {</div><div class="dgm-note" style="border:none;background:none;padding:0;">Thread.sleep(2000);  // 间隔 2 秒</div><div class="dgm-note" style="border:none;background:none;padding:0;">continue;  // 重试</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div><div class="dgm-note" style="border:none;background:none;padding:0;">instance.setHealthy(false);</div><div class="dgm-note" style="border:none;background:none;padding:0;">}</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 4: 关闭 Socket</span><span class="s">socket.close();</span></div><div class="dgm-box-b"></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-15</span><span class="tt">TcpHealthCheckProcessor NIO TCP 连接检测流程（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">TcpHealthCheckProcessor</span><span class="s">process(task, service, metadata)（:96）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Step 1: 入队 Beat 任务</div><div class="dgm-note" style="border:none;background:none;padding:0;">taskQueue.add(new Beat(instance, service, task))</div><div class="dgm-note" style="border:none;background:none;padding:0;">CONNECT_TIMEOUT_MS = 500ms（:62）</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 2: NIO 事件循环（run()）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">SocketChannel.open() + configureBlocking(false)</div><div class="dgm-note" style="border:none;background:none;padding:0;">channel.connect(addr) + register(selector, OP_CONNECT)</div><div class="dgm-note" style="border:none;background:none;padding:0;">GlobalExecutor.scheduleTcpSuperSenseTask(new TimeOutTask(key), 500ms)</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 3: 连接结果处理</span><span class="s">PostProcessor / TimeOutTask</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">finishConnect() 成功 → healthCheckCommon.checkOk()（healthy=true）</div><div class="dgm-note" style="border:none;background:none;padding:0;">500ms 超时未连上 → cancel key + checkFailNow()（healthy=false）</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Step 4: 清理 SelectionKey / Channel</span></div><div class="dgm-box-b"></div></div></div>
 
 **【源码走读】**
 
-**一、TCP Socket 连接检测流程**
+**一、NIO 连接检测流程**
 
-`TcpSuperSenseProcessor.process()（naming/healthcheck/TcpSuperSenseProcessor.java:34-67）`（naming/healthcheck/TcpSuperSenseProcessor.java:34）：
+`TcpHealthCheckProcessor` 实现 `HealthCheckProcessorV2` 与 `Runnable`（NIO 事件循环）：
 
 ```java
-// TcpSuperSenseProcessor.process()（naming/healthcheck/TcpSuperSenseProcessor.java:34-67）（naming/healthcheck/TcpSuperSenseProcessor.java）
-@Override
-public void process(Instance instance, HealthChecker healthChecker) {
-    int retryCount = 0;
-    while (retryCount < MAX_RETRY_COUNT) {  // MAX_RETRY_COUNT = 3
-        Socket socket = null;
-        try {
-            socket = new Socket();
-            socket.connect(
-                new InetSocketAddress(instance.getIp(), instance.getPort()), 
-                timeoutMs  // default: 2000ms
-            );
-            if (socket.isConnected()) {
-                instance.setHealthy(true);
-                return;  // 连接成功 → 健康
-            }
-        } catch (IOException e) {
-            retryCount++;
-            if (retryCount < MAX_RETRY_COUNT) {
-                Thread.sleep(RETRY_INTERVAL_MS);  // 间隔 2000ms
-            }
-        } finally {
-            if (socket != null) {
-                try { socket.close(); } catch (IOException ignored) {}
-            }
-        }
+// TcpHealthCheckProcessor 核心常量与结构（naming/healthcheck/v2/processor/TcpHealthCheckProcessor.java:57-93）
+@Component
+public class TcpHealthCheckProcessor implements HealthCheckProcessorV2, Runnable {
+
+    public static final int CONNECT_TIMEOUT_MS = 500;  // NIO 连接超时 500ms（:62）
+
+    private static final int NIO_THREAD_COUNT = EnvUtil.getAvailableProcessors(0.5);  // CPU核数×0.5（:67）
+
+    private final Map<String, BeatKey> keyMap = new ConcurrentHashMap<>();
+    private final BlockingQueue<Beat> taskQueue = new LinkedBlockingQueue<>();
+    private final Selector selector;
+
+    public TcpHealthCheckProcessor(HealthCheckCommonV2 healthCheckCommon, SwitchDomain switchDomain) {
+        this.selector = Selector.open();
+        GlobalExecutor.submitTcpCheck(this);  // 启动 NIO 事件循环
     }
-    // 全部重试失败 → 不健康
-    instance.setHealthy(false);
 }
 ```
 
-**二、超时与重试策略**
+`process()` 将待检测实例封装为 `Beat` 加入 `taskQueue`；`run()` 事件循环批量取出 `Beat`，创建非阻塞 `SocketChannel` 发起 `connect()` 并注册 `OP_CONNECT` 到 Selector，同时调度 500ms 的 `TimeOutTask`——连接在超时前完成则由 `PostProcessor` 调用 `healthCheckCommon.checkOk()`，否则 `TimeOutTask` 取消 SelectionKey 并调用 `checkFailNow()` 标记不健康。
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `timeoutMs` | 2000ms | TCP Socket 连接超时 |
-| `MAX_RETRY_COUNT` | 3 次 | 最大重试次数 |
-| `RETRY_INTERVAL_MS` | 2000ms | 重试间隔 |
+**二、超时与线程策略**
+
+| 配置项 | 值 | 说明 |
+|--------|-----|------|
+| `CONNECT_TIMEOUT_MS` | 500ms（:62） | NIO 连接超时——通过 `TimeOutTask` 定时取消实现 |
+| `NIO_THREAD_COUNT` | `CPU核数 × 0.5`（:67） | NIO 事件循环线程数——固定 O(1)，与实例数无关 |
 
 **三、TCP vs HTTP 健康检查对比**
 
-| 维度 | TCP (TcpSuperSenseProcessor) | HTTP (HttpHealthCheckProcessor) |
+| 维度 | TCP (TcpHealthCheckProcessor) | HTTP (HttpHealthCheckProcessor) |
 |------|---------------------------|-------------------------------|
-| 检测方式 | TCP Socket 连接 | HTTP GET `/health` |
-| 超时 | 2000ms | 5000ms |
+| 检测方式 | NIO SocketChannel 连接 | HTTP GET `/health` |
+| 连接超时 | 500ms（NIO + TimeOutTask） | 5000ms |
+| 线程模型 | NIO Selector 多路复用（O(1) 线程） | 任务线程池（每检查占用一个线程） |
 | 适用场景 | TCP 服务（MySQL/Redis/自定义 TCP） | HTTP 服务（REST API） |
 | 优点 | 轻量，不需要应用层端点 | 可检测应用层健康（如数据库连接池状态） |
 | 缺点 | 只能检测端口可达性 | 需要 HTTP 端点实现 |
 
 **【设计模式分析】**
 
-**Trade-off 分析：TCP Socket 连接检测 vs HTTP GET 健康端点**
+**Trade-off 分析：TCP 连接检测 vs HTTP GET 健康端点**
 
-`TcpSuperSenseProcessor` 选择 TCP Socket 连接检测而非 HTTP GET 请求：TCP 检测只检测端口可达性——不需要应用层端点实现，超时更短（2000ms vs 5000ms），适用于 TCP 服务（MySQL/Redis/自定义 TCP）；但 TCP 检测无法检测应用层健康（如数据库连接池状态）——HTTP 检测通过 `/health` 端点可以返回应用层健康信息。选择 TCP 检测的代价是无法检测应用层状态，但换来了更轻量的检测方式和更短超时——适用于只需要端口可达性判断的 TCP 服务场景。
+`TcpHealthCheckProcessor` 选择 TCP 连接检测而非 HTTP GET 请求：TCP 检测只检测端口可达性——不需要应用层端点实现，超时更短（500ms vs 5000ms），适用于 TCP 服务（MySQL/Redis/自定义 TCP）；但 TCP 检测无法检测应用层健康（如数据库连接池状态）——HTTP 检测通过 `/health` 端点可以返回应用层健康信息。选择 TCP 检测的代价是无法检测应用层状态，但换来了更轻量的检测方式和更短超时——适用于只需要端口可达性判断的 TCP 服务场景。
 
-**Trade-off 分析 elser：TCP Socket 连接检测 vs NIO Selector 非阻塞检测**
+**Trade-off 分析：NIO Selector 非阻塞检测 vs Blocking I/O 检测**
 
-`TcpSuperSenseProcessor` 选择阻塞 TCP Socket 连接检测而非 NIO Selector 非阻塞检测：阻塞 Socket 的代价是每个健康检查任务占用一个线程（在线程池中执行）——在 1000 个实例并发健康检查时约需 10-20 个线程。但换来了实现简单——标准的 `Socket.connect(addr, timeout)` API——代码约 30 行。NIO Selector 非阻塞检测虽然只需 1-2 个线程处理所有连接——但需要管理 `SelectionKey` 状态机——代码约 150-200 行——调试复杂度增加约 5x。对于 Nacos 的健康检查场景（每次检查间隔 5s，超时 2s），阻塞模型的线程开销完全可接受（约 20 线程 / 1000 实例）——NIO 的复杂度收益不值得。
+`TcpHealthCheckProcessor` 选择 NIO Selector 非阻塞检测而非阻塞 Socket：NIO 的代价是需要管理 `SelectionKey` 状态机（OP_CONNECT/取消/超时任务）——实现复杂度更高。但换来了线程数从 O(N) 降至 O(1)——`NIO_THREAD_COUNT = CPU核数 × 0.5` 个线程即可处理全部实例的 TCP 检测——在 1000 实例场景下线程栈内存从 GB 级降至 MB 级。对于实例规模较大的生产集群，NIO 多路复用的资源收益远超其复杂度代价——这也是 v2 相对 v1 重构的核心动机。
 
-**Trade-off 分析 2：固定超时 2000ms vs 自适应超时**
+**Trade-off 分析 2：固定超时 500ms vs 自适应超时**
 
-`TcpSuperSenseProcessor` 使用固定超时 2000ms 而非自适应超时（根据历史响应时间动态调整）：固定超时的代价是对所有实例使用相同的超时——跨地域部署时（如北京→硅谷 RTT ~150ms vs 同机房 RTT ~1ms）——同机房实例等待不必要的 1999ms。但换来了实现简单——无需维护每个实例的历史响应时间统计。自适应超时可根据 P99 历史响应时间动态调整（如 `timeout = P99 * 1.5`）——跨地域实例超时 ~225ms vs 同机房实例 ~1.5ms——但需要维护每个实例的滑动窗口统计数据（约 100B/实例）。对于 Nacos 集群规模（通常 < 10000 实例），固定超时的浪费窗口（~2s vs ~225ms）在健康检查间隔 5s 的背景下影响有限——自适应超时的复杂度不值得。
+`TcpHealthCheckProcessor` 使用固定超时 500ms 而非自适应超时（根据历史响应时间动态调整）：固定超时的代价是对所有实例使用相同的超时——跨地域部署时同机房/跨机房实例共用同一阈值。但换来了实现简单——无需维护每个实例的历史响应时间统计。自适应超时可根据 P99 历史响应时间动态调整——但需要维护每个实例的滑动窗口统计数据（约 100B/实例）。对于 Nacos 的健康检查场景（每次检查间隔秒级），500ms 固定超时的浪费窗口影响有限——自适应超时的复杂度不值得。
 
-1. **重试模式（Retry Pattern）**：TCP Socket 连接失败时重试 3 次——避免因瞬时网络抖动误判实例不健康。每次重试间隔 2000ms——给网络恢复留出缓冲时间。
+1. **回调模式（Callback Pattern）**：连接结果通过 `PostProcessor`（成功）与 `TimeOutTask`（超时）两条回调路径处理——避免阻塞等待连接结果，这是 NIO 异步模型在健康检查中的典型应用。
 
-2. **模板方法模式（Template Method Pattern）**：`TcpSuperSenseProcessor.process()（naming/healthcheck/TcpSuperSenseProcessor.java:34-67）` 定义了 TCP 健康检查的算法骨架（连接→成功→重试→关闭），但具体的超时和重试策略由配置参数决定——这是模板方法模式的变体。
+2. **模板方法模式（Template Method Pattern）**：`TcpHealthCheckProcessor.process()` 定义了 TCP 健康检查的算法骨架（入队 → NIO 连接 → 结果处理 → 清理），具体的健康状态标记由 `HealthCheckCommonV2.checkOk()/checkFailNow()` 完成——这是模板方法模式的变体。
 
-3. **资源清理模式（Resource Cleanup Pattern）**：`finally { socket.close(); }` 保证 Socket 资源在任何情况下都被正确关闭——避免 Socket 泄漏。这是资源清理模式在网络编程中的最佳实践。
+3. **资源清理模式（Resource Cleanup Pattern）**：连接完成或超时后统一取消 `SelectionKey` 并关闭 `SocketChannel`——避免 Selector 与 Channel 资源泄漏。这是资源清理模式在网络编程中的最佳实践。
 
 **【小结】**
 
-`TcpSuperSenseProcessor` 通过 TCP Socket 连接检测实例可达性——超时默认 2000ms，连接失败重试 3 次。相比于 HTTP 健康检查，TCP 健康检查更轻量——不需要 HTTP 端点实现，适用于 TCP 服务（MySQL/Redis/自定义 TCP）。
+`TcpHealthCheckProcessor`（naming/healthcheck/v2/processor/TcpHealthCheckProcessor.java:58）通过 NIO `Selector + SocketChannel` 检测实例端口可达性——连接超时 500ms（`CONNECT_TIMEOUT_MS`，:62），NIO 线程数 `CPU核数 × 0.5`（`NIO_THREAD_COUNT`，:67）——线程数 O(1) 与实例数无关。相比于 HTTP 健康检查，TCP 健康检查更轻量——不需要 HTTP 端点实现，适用于 TCP 服务（MySQL/Redis/自定义 TCP）。
 
-## 2.16 防雪崩保护：ProtectManager + 健康比例阈值 + 缓存快照
+## 2.16 防雪崩保护：protectThreshold + 健康比例阈值保护机制
 
 **【设计背景】**
 
-`ProtectManager`（naming/misc/ProtectManager.java:34）是 Nacos 2.5.3 的防雪崩保护机制——当服务实例健康比例低于阈值（默认 0.5）时，自动启用保护模式：不再标记任何实例为不健康，而是返回缓存快照中最后一次健康实例列表，避免因健康检查误判导致大规模实例下线（雪崩效应）。这种机制在服务实例大规模不健康时保护了服务可用性——宁可返回过期缓存数据，也不返回空列表导致客户端无法获取任何实例。
+Nacos 2.5.3 的防雪崩保护机制由 `ServiceMetadata.protectThreshold`（naming/core/v2/metadata/ServiceMetadata.java:44，默认 `0.0F`）驱动——当服务实例健康比例低于该阈值时，服务发现查询不再过滤不健康实例，而是返回所有实例（将不健康实例以 `healthy=true` 深拷贝后返回），避免因健康检查误判导致大规模实例下线（雪崩效应）。该阈值在查询时由 `ServiceUtil.selectInstancesWithHealthyProtection()`（naming/utils/ServiceUtil.java:185-230）统一应用——触发保护时打印日志 `"protect threshold reached, return all ips, service: {}"`（ServiceUtil.java:214）并将 `reachProtectionThreshold` 置为 `true`。
 
-防雪崩保护机制的核心设计理念是：在分布式系统中，**可用性优先于准确性**——当健康检查可能因网络分区或瞬时抖动导致误判大量实例不健康时，宁可返回可能过期的缓存数据（部分准确性损失），也绝不返回空列表导致服务完全不可用（完全可用性损失）。这是断路器模式（Circuit Breaker Pattern）在健康检查场景的创新应用——`ProtectManager` 充当断路器，当健康比例低于阈值时自动断开健康检查标记链路，当健康比例恢复时自动闭合链路。
+防雪崩保护机制的核心设计理念是：在分布式系统中，**可用性优先于准确性**——当健康检查可能因网络分区或瞬时抖动导致误判大量实例不健康时，宁可返回可能不健康的实例数据（部分准确性损失），也绝不返回空列表导致服务完全不可用（完全可用性损失）。这是断路器思想（Circuit Breaker Pattern）在服务发现场景的应用——`protectThreshold` 充当断路器，健康比例跌破阈值时自动闭合查询过滤链路，返回全量实例。
 
 **【核心类关系图】**
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 2-16</span><span class="tt">ProtectManager 防雪崩保护机制（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ProtectManager</span><span class="s">健康比例阈值: 0.5 (默认 50%)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (healthyInstanceCount / totalInstanceCount &lt; 0.5)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 启用保护模式</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">保护模式行为</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>不再标记任何实例为 unhealthy</li><li>返回缓存快照中最后一次健康实例列表</li><li>拒绝新的实例注销请求</li><li>等待健康比例恢复到 &gt; 0.5 后自动退出保护模式</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">缓存快照 (Snapshot)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>serviceSnapshotMap: Map&lt;String, List&lt;Instance&gt;&gt;</li><li>每次健康检查后更新快照</li><li>保护模式下返回快照数据</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 2-16</span><span class="tt">protectThreshold 防雪崩保护机制（基于 Nacos 2.5.3 源码）</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceMetadata</span><span class="s">protectThreshold（ServiceMetadata.java:44，默认 0.0F）</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (healthyCount / allInstances.size() &lt;= protectThreshold)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 触发健康保护（ServiceUtil.java:213）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ServiceUtil.selectInstancesWithHealthyProtection</span><span class="s">(ServiceUtil.java:185-230)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>"protect threshold reached, return all ips"(:214)</li><li>filteredResult.setReachProtectionThreshold(true)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">保护模式行为：</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. 返回所有实例（含不健康实例）</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 不健康实例深拷贝后标记 healthy=true</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 查询结束自动恢复正常过滤（无状态）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">客户端响应</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>reachProtectionThreshold: true</li><li>hosts: [全量实例列表]</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">客户端可在返回的 ServiceInfo 中感知保护状态</div></div></div></div>
 
 **【源码走读】**
 
 **一、健康比例阈值判断**
 
-`ProtectManager.isProtectMode()（naming/misc/ProtectManager.java:34-56）`（naming/misc/ProtectManager.java:34）判断是否启用保护模式：
+`ServiceUtil.selectInstancesWithHealthyProtection()`（naming/utils/ServiceUtil.java:185-230）在每次服务发现查询时判断是否触发保护：
 
 ```java
-// ProtectManager.isProtectMode()（naming/misc/ProtectManager.java:34-56）（naming/misc/ProtectManager.java）
-public boolean isProtectMode(String serviceName) {
-    List<Instance> instances = getInstances(serviceName);
-    long totalCount = instances.size();
-    long healthyCount = instances.stream().filter(Instance::isHealthy).count();
-    double healthyRatio = (double) healthyCount / totalCount;
-    if (healthyRatio < HEALTHY_RATIO_THRESHOLD) {  // default: 0.5
-        return true;  // 启用保护模式
-    }
-    return false;
+// ServiceUtil.selectInstancesWithHealthyProtection()（naming/utils/ServiceUtil.java:209-227）
+float threshold = serviceMetadata.getProtectThreshold();
+if (threshold < 0) {
+    threshold = 0F;
+}
+if ((float) newHealthyCount / allInstances.size() <= threshold) {
+    Loggers.SRV_LOG.warn("protect threshold reached, return all ips, service: {}", filteredResult.getName());
+    filteredResult.setReachProtectionThreshold(true);
+    List<com.alibaba.nacos.api.naming.pojo.Instance> filteredInstances = allInstances.stream()
+            .map(i -> {
+                if (!i.isHealthy()) {
+                    i = InstanceUtil.deepCopy(i);
+                    // set all to `healthy` state to protect
+                    i.setHealthy(true);
+                } // else deepcopy is unnecessary
+                return i;
+            })
+            .collect(Collectors.toCollection(LinkedList::new));
+    filteredResult.setHosts(filteredInstances);
 }
 ```
 
-**二、保护模式行为**
+**二、保护触发时的行为**
 
-当保护模式启用时：
-1. **不再标记不健康**：即使健康检查失败，也不标记实例为 `healthy=false`
-2. **返回缓存快照**：服务发现 API 返回 `serviceSnapshotMap` 中最后一次健康实例列表——即使部分实例已实际不健康
-3. **拒绝注销请求**：拒绝客户端主动注销实例的请求——避免进一步减少健康实例数
-4. **自动退出保护模式**：当健康比例恢复到 > 0.5 时，自动退出保护模式——恢复正常健康检查标记
+当健康实例比例 ≤ `protectThreshold` 时：
+1. **返回全量实例**：不健康实例不再被过滤——服务发现 API 返回所有实例
+2. **healthy 标记保护**：不健康实例通过 `InstanceUtil.deepCopy()` 深拷贝后将副本标记为 `healthy=true`——原始实例的真实健康状态不受污染（仅影响本次查询结果）
+3. **置位保护标志**：`filteredResult.setReachProtectionThreshold(true)`——客户端可感知服务当前处于保护状态
+4. **无状态退出**：阈值判断在每次查询时独立进行——健康比例恢复到阈值以上后自动恢复正常过滤，无需显式退出
 
-**三、缓存快照机制**
+**三、阈值默认值与配置**
 
-`serviceSnapshotMap`（`ConcurrentHashMap<String, List<Instance>>`）存储每个服务的最后一次健康实例列表。每次健康检查完成后更新快照——保护模式下服务发现 API 直接返回快照数据，避免因健康检查误判导致返回空列表。
+`protectThreshold` 存储在服务元数据 `ServiceMetadata` 中（默认 `0.0F`——即保护关闭，任何不健康实例都不返回）。阈值随服务元数据持久化与同步（元数据管理器统一管理），支持按服务粒度配置——不同服务可设置不同阈值。
 
 **四、雪崩场景分析**
 
 典型雪崩场景：
-1. 网络分区导致大量实例心跳超时 → 健康比例降至 < 0.5
-2. 如果没有防雪崩保护 → 所有不健康实例被标记为 `healthy=false` → 客户端查询返回空列表 → 服务完全不可用
-3. 启用防雪崩保护 → 返回缓存快照中最后一次健康实例列表 → 客户端仍能获取部分实例 → 服务部分可用
+1. 网络分区导致大量实例心跳超时 → 健康比例降至低于阈值
+2. 如果没有防雪崩保护（`protectThreshold=0.0`）→ 所有不健康实例被过滤 → 客户端查询返回空列表 → 服务完全不可用
+3. 启用防雪崩保护（如 `protectThreshold=0.5`）→ 返回全量实例（不健康实例副本标记 healthy=true）→ 客户端仍能获取部分可用实例 → 服务部分可用
 
 **【设计模式分析】**
 
-**Trade-off 分析 2：保护阈值 0.5 vs 动态自适应阈值**
+**Trade-off 分析 2：固定保护阈值 vs 动态自适应阈值**
 
-`ProtectManager` 使用固定保护阈值 0.5（50%）而非动态自适应阈值（根据历史健康比例自动调整）：固定阈值的代价是对所有服务使用相同的保护敏感度——小型服务（10 实例）中 5 个实例不健康即触发保护（可能因瞬时抖动误触发）——大型服务（1000 实例）中需要 500 个实例不健康才触发（可能反应过慢）。但换来了实现简单——无需维护每个服务的历史健康比例统计。动态自适应阈值可根据每个服务的历史健康比例动态调整（如 `threshold = max(0.orra, mean - 2 * stddev)`）——小型服务（10 实例）阈值可能为 0.2（2 个实例不健康）——大型服务（1000 实例）阈值可能为 0.8（800 个实例不健康）——但需要维护每个服务的历史统计数据（约 200B/服务）。对于 Nacos 集群通常管理的服务数量（< 10000），固定阈值 0.5 在大多数场景下工作良好——动态自适应阈值的复杂度不值得——除非有明确的多尺度服务混合部署需求。
+`protectThreshold` 使用按服务配置的固定阈值而非动态自适应阈值（根据历史健康比例自动调整）：固定阈值的代价是对每个服务使用相同的保护敏感度——小型服务（10 实例）中 5 个实例不健康即触发保护（可能因瞬时抖动误触发）——大型服务（1000 实例）中需要较多实例不健康才触发（可能反应过慢）。但换来了实现简单——查询时一次除法判断（O(1)），无需维护每个服务的历史健康比例统计。动态自适应阈值可根据每个服务的历史健康比例动态调整——但需要维护每个服务的历史统计数据（约 200B/服务）。对于 Nacos 集群通常管理的服务数量（< 10000），按服务粒度配置固定阈值在大多数场景下工作良好——动态自适应阈值的复杂度不值得——除非有明确的多尺度服务混合部署需求。
 
-1. **断路器模式（Circuit Breaker Pattern）**：`ProtectManager` 充当断路器——当健康比例低于阈值时，自动断开健康检查标记链路——不再标记实例为不健康。当健康比例恢复到阈值以上时，自动闭合链路——恢复正常健康检查标记。这是断路器模式在健康检查中的创新应用。
+1. **断路器思想（Circuit Breaker Pattern）**：`protectThreshold` 充当断路器——当健康比例低于阈值时，自动断开服务发现查询的健康过滤链路——返回全量实例。当健康比例恢复到阈值以上时，自动闭合链路——恢复正常过滤。这是断路器思想在服务发现查询中的应用。
 
-2. **快照模式（Snapshot Pattern）**：`serviceSnapshotMap` 存储每个服务的最后一次健康实例列表——保护模式下返回快照数据。这是快照模式在服务发现中的典型应用——宁可返回过期数据，也不返回空列表。
+2. **不变量保护模式（Defensive Copy Pattern）**：触发保护时通过 `InstanceUtil.deepCopy()` 深拷贝不健康实例后再标记 `healthy=true`——保证原始实例的真实健康状态不被查询请求污染。这是防御性拷贝在查询路径中的典型应用。
 
-3. **阈值触发模式（Threshold Trigger Pattern）**：健康比例阈值（默认 0.5）触发保护模式的启用/退出——这是阈值触发模式在防雪崩保护中的应用。阈值可配置——用户可根据实际场景调整敏感度。
+3. **阈值触发模式（Threshold Trigger Pattern）**：健康比例阈值（默认 0.0——关闭保护）触发保护行为的启用/退出——这是阈值触发模式在防雪崩保护中的应用。阈值按服务粒度可配置——用户可根据实际场景调整敏感度。
 
 **四、真实雪崩场景分析**
 
 场景 1：网络分区导致大规模心跳超时
 - 条件：核心交换机故障导致 60% 实例心跳超时
-- 无防雪崩保护：健康比例降至 0.4 → 所有不健康实例被标记 healthy=false → 客户端查询返回空列表 → 服务完全不可用
-- 有防雪崩保护：健康比例降至 0.4 < 0.5 → 自动启用保护模式 → 返回缓存快照中最后一次健康实例列表（40% 实际健康实例）→ 服务部分可用
+- 无防雪崩保护（`protectThreshold=0.0`）：健康比例降至 0.4 → 所有 Query 结果过滤掉不健康实例 → 客户端查询返回空列表 → 服务完全不可用
+- 有防雪崩保护（`protectThreshold=0.5`）：健康比例降至 0.4 ≤ 0.5 → 自动触发保护 → 返回全量实例（40% 实际健康实例）→ 服务部分可用
 
 场景 2：健康检查线程池耗尽
 - 条件：健康检查线程池因 TooManyOpenFiles 异常全部阻塞 → 所有实例心跳超时
 - 无防雪崩保护：所有实例被误判为 unhealthy → 大规模误下线 → 服务完全不可用
-- 有防雪崩保护：启用保护模式 → 返回缓存快照 → 等待健康检查线程池恢复后自动退出保护模式
+- 有防雪崩保护：触发保护 → 返回全量实例 → 等待健康检查线程池恢复后自动恢复正常过滤
 
 **五、监控指标与告警**
 
 | 监控指标 | 含义 | 告警阈值建议 |
 |---------|------|------------|
-| `protect_mode_enabled` | 保护模式是否启用（0/1） | =1 持续 > 60s → P1 告警 |
+| `reachProtectionThreshold=true` 持续时长 | 服务处于保护状态的持续时间 | > 60s → P1 告警 |
 | `healthy_instance_ratio` | 当前健康实例比例 | < 0.6 → P2 告警（预警） |
-| `protect_mode_duration_seconds` | 保护模式持续时长 | > 300s → P1 告警（可能真正大规模故障） |
-| `snapshot_age_seconds` | 缓存快照年龄 | > 600s → P2 告警（快照过期风险） |
+| `"protect threshold reached"` 日志频率 | 保护触发频率（ServiceUtil.java:214） | 频繁出现 → 排查健康检查 |
 
-监控指标的核心价值：`protect_mode_enabled=1` 持续超过 60 秒时——大概率是真正的健康检查故障而非瞬时抖动——需要人工介入排查根因。如果 `protect_mode_enabled=1` 持续超过 300 秒——极可能是真正的大规模实例故障——需要立即扩容或故障恢复。
+监控指标的核心价值：保护状态持续超过 60 秒时——大概率是真正的健康检查故障而非瞬时抖动——需要人工介入排查根因。保护状态持续超过 300 秒——极可能是真正的大规模实例故障——需要立即扩容或故障恢复。
 
 **六、阈值调优策略**
 
-| 集群规模 | 建议健康比例阈值 | 原因 |
+| 集群规模 | 建议 protectThreshold | 原因 |
 |---------|---------------|------|
-| 小规模（< 100 实例） | 0.3 | 少量实例时即使少数不健康比例也较大——降低阈值避免过度敏感 |
-| 中规模（100-1000 实例） | 0.5（默认） | 平衡可用性和准确性 |
-| 大规模（> 1000 实例） | 0.6 | 大量实例时少数不健康比例仍然很小——提高阈值更快触发保护 |
-| 弱网环境 | 0.4 | 弱网环境下心跳超时更频繁——降低阈值避免频繁触发保护模式 |
+| 小规模（< 100 实例） | 0.3 | 少量实例时即使少数不健康比例也较大——较低阈值避免过度敏感 |
+| 中规模（100-1000 实例） | 0.5 | 平衡可用性和准确性 |
+| 大规模（> 1000 实例） | 0.6 | 大量实例时少数不健康比例仍然很小——较高阈值更快触发保护 |
+| 弱网环境 | 0.4 | 弱网环境下心跳超时更频繁——较低阈值避免频繁触发保护 |
 
-阈值调优的核心 trade-off：较高的阈值（如 0.6）意味着更快触发保护模式（更保守），但可能因瞬时抖动频繁触发保护模式——返回过期缓存数据的频率增加。较低的阈值（如 0.3）意味着更不容易触发保护模式（更激进），但在真正大规模故障时可能来不及保护——返回空列表的风险增加。选择 0.5 作为默认值在大多数场景中取得了最佳平衡。
+阈值调优的核心 trade-off：较高的阈值（如 0.6）意味着更快触发保护（更保守），但可能因瞬时抖动频繁触发保护——返回不健康实例的频率增加。较低的阈值（如 0.3）意味着更不容易触发保护（更激进），但在真正大规模故障时可能来不及保护——返回空列表的风险增加。
 
 **【小结】**
 
-`ProtectManager` 的防雪崩保护机制通过健康比例阈值（默认 0.5）自动启用保护模式——不再标记实例为不健康，返回缓存快照中最后一次健康实例列表，避免因健康检查误判导致大规模实例下线（雪崩效应）。宁可返回过期缓存数据，也不返回空列表导致客户端无法获取任何实例——保护了服务可用性。
+Nacos 2.5.3 的防雪崩保护机制由 `ServiceMetadata.protectThreshold`（默认 0.0F——关闭保护）驱动，在 `ServiceUtil.selectInstancesWithHealthyProtection()`（ServiceUtil.java:185-230）中按查询实时判断——健康比例低于阈值时返回全量实例（不健康实例深拷贝后标记 `healthy=true`），并通过 `reachProtectionThreshold` 标志和 `"protect threshold reached, return all ips"` 日志（:214）对外暴露保护状态，避免因健康检查误判导致大规模实例下线（雪崩效应）。宁可返回可能不健康的实例数据，也不返回空列表导致客户端无法获取任何实例——保护了服务可用性。

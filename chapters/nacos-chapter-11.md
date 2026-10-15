@@ -59,15 +59,15 @@ Nacos 自研的 Distro 协议是专为服务发现场景设计的 AP 协议。�
                      └── Node1 → Node3: sync(serviceA, 192.168.1.1:8080)</div></div>
 
 Distro 同步任务的核心入口位于：
-- `NamingDistroDataTransport.distributeData()`（`naming/src/main/java/com/alibaba/nacos/naming/cluster/transport/NamingDistroDataTransport.java:94-118`）：构建 DistroData 并发送到目标节点
-- `DistroClientDataProcessor.processData()`（`naming/src/main/java/com/alibaba/nacos/naming/cluster/remote/DistroClientDataProcessor.java:56-89`）：接收对端节点的同步数据并写入本地 DataStore
-- `DistroVerifyTask.verifyForAll()`（`naming/src/main/java/com/alibaba/nacos/naming/cluster/DistroVerifyTask.java:68-105`）：周期性 Checksum 校验，触发差异同步
+- `DistroClientTransportAgent.syncData()`（`naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java:88-108`）：构建 `DistroDataRequest` 并通过集群 gRPC 通道发送到目标节点
+- `DistroClientDataProcessor.processData()`（`naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:140-156`）：接收对端节点的同步数据并写入本地 `ClientManager`
+- `DistroVerifyTimedTask`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/task/verify/DistroVerifyTimedTask.java`）：周期性（默认 5s）发送 `(clientId, revision)` 校验，触发责任节点差异补推
 
-Distro 数据同步数据模型 `DistroData` 定义于 `consistency/src/main/java/com/alibaba/nacos/consistency/entity/DataOperation.java:28-75`，包含操作类型（ADD/DELETE/VERIFY）、数据内容（byte[]）和版本号（version）。
+Distro 数据同步数据模型 `DistroData` 定义于 `core/src/main/java/com/alibaba/nacos/core/distributed/distro/entity/DistroData.java:26`，包含操作类型（`DataOperation`：ADD/CHANGE/DELETE/VERIFY 等）、数据内容（`byte[] content`）与 `DistroKey`（资源键 + 目标节点）。
 
 **2. 最终一致性模型**
 
-Distro 不保证写入后立即全局一致，而是通过异步同步任务在后台逐渐将数据扩散到集群所有节点。每个节点维护一个本地的 `DataStore`（服务注册表），通过周期性 Checksum 校验对比与其他节点的数据差异，触发差异同步。
+Distro 不保证写入后立即全局一致，而是通过异步同步任务在后台逐渐将数据扩散到集群所有节点。每个节点通过 `ClientManager` 维护本地 Client 视图（服务注册表），通过周期性 `(clientId, revision)` 校验对比与其他节点的数据差异，触发责任节点差异补推。
 
 **3. 健康检查与自动剔除**
 
@@ -93,11 +93,11 @@ JRaft 是阿里巴巴基于 Raft 论文实现的开源 Java Raft 库。Nacos 2.5
     └── 4. Leader 返回客户端成功</div></div>
 
 JRaft 协议在 Nacos 中的集成点位于 CP 协议层：
-- `JRaftProtocol.submit()`（`consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftProtocol.java:76-125`）：将 Config 写入操作提交为 Raft 日志条目
-- `JRaftServer.start()`（`consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftServer.java:132-198`）：启动 JRaft 节点（加载 Raft 配置、初始化 Snapshot、注册状态机回调）
-- `NacosStateMachine.onApply()`（`consistency/src/main/java/com/alibaba/nacos/consistency/cp/NacosStateMachine.java:62-140`）：Raft 状态机应用日志条目到业务层（执行 Config 写入）
+- `JRaftProtocol.write()`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java:178`）：将 Config 写入操作提交为 Raft 日志条目
+- `JRaftServer.start()`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java:190-219`）：启动 JRaft 节点（加载 Raft 配置、初始化 Snapshot、注册状态机回调）
+- `NacosStateMachine.onApply()`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/NacosStateMachine.java:95-149`）：Raft 状态机应用日志条目到业务层（执行 Config 写入）
 
-JRaft 集群配置通过 `application.properties` 中的 `nacos.cp.member` 指定 CP 节点列表（格式为 `ip1:raft_port1,ip2:raft_port2,...`），选举超时由 `nacos.cp.election.timeoutMs` 配置（默认 5000ms）。
+JRaft 集群的 CP 成员由 `cluster.conf`（或 `nacos.naming.members`）配置，经 `ServerMemberManager` 注入 `RaftConfig`。选举超时经 `nacos.core.protocol.raft.data.election_timeout_ms` 配置（默认 5000ms，`RaftSysConstants.java:138`）。
 
 **2. 强一致性保证**
 
@@ -161,7 +161,7 @@ Distro 的最终一致性窗口（通常 < 1s）在高频心跳场景下影响�
 
 2. **代理模式（Proxy）**：一致性协议层（Distro / JRaft）作为 Naming/Config 模块的数据同步代理——上层模块不感知底层协议切换，通过抽象一致性层 CP/AP 接口统一为上层提供数据同步能力。
 
-3. **观察者模式（Observer）**：Distro 的异步同步任务 + Checksum 校验机制——各节点定期相互 Checksum 对比发现数据差异，触发差异同步任务。类似 ZooKeeper 的 Watcher 机制但非实时触发（周期性主动 Pull）。
+3. **观察者模式（Observer）**：Distro 的异步同步任务 + revision 校验机制——各节点周期（默认 5s）互发 `(clientId, revision)` 校验，发现差异触发责任节点补推。类似 ZooKeeper 的 Watcher 机制但非实时触发（周期性主动 Pull）。
 
 ### 小结
 
@@ -194,9 +194,9 @@ NamingMaintainService.registerInstance(serviceName, groupName,
     }});
 ```
 
-客户端 SDK 中 `NamingClientProxyDelegate.registerService()`（`client/src/main/java/com/alibaba/nacos/client/naming/remote/NamingClientProxyDelegate.java:127-201`）根据 `ephemeral` 字段路由到不同的请求处理器：
-- `ephemeral=true` → `EphemeralClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:62-158`）→ Distro 同步
-- `ephemeral=false` → `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:58-146`）→ JRaft 提交
+客户端 SDK 中 `NamingClientProxyDelegate.registerService()`（`client/src/main/java/com/alibaba/nacos/client/naming/remote/NamingClientProxyDelegate.java:94-97`）注册后由 `getExecuteClientProxy()`（`:195-200`）根据 `ephemeral` 字段路由到不同的请求处理器：
+- `ephemeral=true` → `EphemeralClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:55-74`）→ Distro 同步
+- `ephemeral=false` → `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-119`）→ JRaft 提交
 
 服务端通过 `ClientOperationService` 接口（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/ClientOperationService.java:30-42`）抽象了两种一致性模式的处理逻辑，上层 Naming API 不感知底层协议差异——这正是策略模式的典型应用。
 
@@ -236,7 +236,7 @@ Nacos 客户端在注册服务实例时需要明确指定实例类型：**临时
 
 #### Q2（仅 CP 分支）：心跳频率多高？
 
-持久实例的健康检查间隔由  控制（默认 5s）。心跳频率影响健康检查开销：
+持久实例不依赖客户端心跳，而由服务端健康检查任务 `HealthCheckTaskV2`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/v2/HealthCheckTaskV2.java:43`）配合 Tcp/Http/Mysql 探测处理器主动探测：检查间隔来自集群元数据中健康检查器参数（`ClusterMetadata`/`SwitchDomain.HealthParams`），初始为 2s 起随机延迟，随后按探测结果动态自适应调整（reEvaluateCheckRT，在 min/max 区间内收敛），默认量级约 5s。心跳频率影响健康检查开销：
 
 - **> 10s**：低频健康检查，适合基础设施服务（DNS/IP 列表），允许较长故障检测延迟
 - **5-10s**：标准健康检查，适合大多数持久实例
@@ -274,7 +274,7 @@ spring:
         heartbeat-timeout: 15000
 ```
 
-客户端心跳发送路径：`BeatReactor.addBeatInfo()`（`client/src/main/java/com/alibaba/nacos/client/naming/beat/BeatReactor.java:82-138`）构建心跳任务并提交到调度线程池；`NamingProxy.beat()`（`client/src/main/java/com/alibaba/nacos/client/naming/remote/NamingProxy.java:186-225`）通过 gRPC 双向流发送心跳。
+2.x gRPC 客户端不再有客户端侧心跳任务（1.x 的 `BeatReactor`/`NamingProxy.beat` 已移除）；临时实例存活由 gRPC 长连接维系，断连后由 `NamingGrpcRedoService` 标记重做并自动重新注册（`client/src/main/java/com/alibaba/nacos/client/naming/remote/gprc/redo/NamingGrpcRedoService.java:93-104`），连接健康由 `RpcClient` 周期 healthCheck 探测（`client/src/main/java/com/alibaba/nacos/common/remote/client/RpcClient.java:276-294`）。
 
 **CP 模式（持久实例）**：
 
@@ -290,16 +290,16 @@ spring:
           version: v1.0.0
 ```
 
-持久实例注册通过 `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:58-146`）将实例数据通过 JRaft 提交为 Raft 日志条目。
+持久实例注册通过 `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-119`）将实例数据通过 JRaft 提交为 Raft 日志条目。
 
 ### 服务端 AP/CP 路由机制
 
 Nacos 2.5.3 通过 `ClientOperationService` 接口（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/ClientOperationService.java:30-42`）抽象临时/持久实例的不同处理逻辑：
 
-- `EphemeralClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:62-158`）：临时实例→Distro 同步
-- `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:58-146`）：持久实例→JRaft 提交
+- `EphemeralClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/EphemeralClientOperationServiceImpl.java:55-74`）：临时实例→Distro 同步
+- `PersistentClientOperationServiceImpl.registerInstance()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/PersistentClientOperationServiceImpl.java:105-119`）：持久实例→JRaft 提交
 
-`InstanceRequestHandler.handle()`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/service/impl/InstanceRequestHandler.java:78-166`）根据请求中的 `ephemeral` 字段路由到对应实现——上层 `InstanceController`（`naming/src/main/java/com/alibaba/nacos/naming/controllers/v2/InstanceController.java:72-145`）不感知底层协议差异。
+gRPC 注册入口为 `InstanceRequestHandler.handle()`（`naming/src/main/java/com/alibaba/nacos/naming/remote/rpc/handler/InstanceRequestHandler.java:58`，仅处理临时实例）；持久实例由 `PersistentInstanceRequestHandler` → `PersistentClientOperationServiceImpl`（JRaft 提交）；HTTP API 的 `ephemeral` 路由在 `InstanceOperatorClientImpl`。上层 `InstanceControllerV2`（`naming/src/main/java/com/alibaba/nacos/naming/controllers/v2/InstanceControllerV2.java:95`，注册入口 `:107`）不感知底层协议差异。
 
 
 
@@ -318,7 +318,7 @@ Nacos 2.5.3 通过 `ClientOperationService` 接口（`naming/src/main/java/com/a
 
 **临时实例数量上限与内存规划**：
 
-临时实例完全存储在 JVM 堆内存中（`ConcurrentHashMap<String, Service>` in `ServiceManager`），每实例元数据（IP:Port+metadata）约 200 bytes 原始数据，但注册表对象引用约消耗 1KB per instance——建议单节点临时实例控制在 50 万以内。超过此规模建议：(a) 分区部署 Nacos 集群（按业务域分集群）；(b) 扩大 JVM 堆至 8GB+
+临时实例存储在内存 Client 体系中——`ClientManager` 管理的 `IpPortBasedClient`/`ConnectionBasedClient` 持有 `InstancePublishInfo`，`ServiceManager`（core/v2）仅缓存 Service 单例。每实例元数据（IP:Port+metadata）约 200 bytes 原始数据，但注册表对象引用约消耗 1KB per instance——建议单节点临时实例控制在 50 万以内。超过此规模建议：(a) 分区部署 Nacos 集群（按业务域分集群）；(b) 扩大 JVM 堆至 8GB+
 
 **临时实例的集群重启风险**：
 
@@ -326,7 +326,7 @@ Nacos 集群全部重启后，所有节点内存清空——**所有临时实例
 
 **客户端注册风暴缓解机制**：
 
-Nacos 2.5.3 客户端 `BeatReactor` 在心跳超时后触发重新注册，自带随机退避延迟（`ThreadLocalRandom.current().nextInt(2000)` + 1000ms），避免所有客户端同时重注册。大规模集群重启时，随机退避分散，注册请求约 30-60s 逐渐达到稳态。
+Nacos 2.5.3 客户端的断线重注册由 `NamingGrpcRedoService` + `RedoScheduledTask` 周期扫描未完成注册自动重做（`NamingGrpcRedoService.java:66-77`），重做周期由客户端属性 `redoDelayTime`（默认 3000ms，api `Constants.java:230`）控制——自动分散各客户端的重注册时机，避免注册风暴。
 
 ### 设计模式分析
 
@@ -336,11 +336,11 @@ Nacos 2.5.3 客户端 `BeatReactor` 在心跳超时后触发重新注册，自�
 
 ### 小结
 
-- AP（临时实例，`ephemeral=true`）：客户端心跳保活（`BeatReactor`），宕机自动剔除，适合无状态微服务（K8s Pod/Spring Boot）
+- AP（临时实例，`ephemeral=true`）：gRPC 长连接保活（断线由 `NamingGrpcRedoService` 重做机制自动重注册），宕机自动剔除，适合无状态微服务（K8s Pod/Spring Boot）
 - CP（持久实例，`ephemeral=false`）：服务端健康检查（`HealthCheckTask`），宕机不自动剔除，适合基础设施服务（DNS/数据库节点列表）
 - 三层决策树：Q1 是否需要自动恢复？→ Q2 心跳频率？→ Q3 保持列表稳定？逐层缩小决策空间
 - 服务端路由：`InstanceRequestHandler` 根据 `ephemeral` 字段路由到 `EphemeralClientOperationServiceImpl`（AP）或 `PersistentClientOperationServiceImpl`（CP）
-- 临时实例集群全部重启后全部丢失——需客户端重新注册，随机退避机制（1-3s）缓解注册风暴
+- 临时实例集群全部重启后全部丢失——需客户端重新注册，redo 机制（redoDelayTime 默认 3000ms 周期）自动重做并分散注册时机
 
 ---
 
@@ -386,22 +386,19 @@ Raft 协议的双 Leader 场景需要**同时满足**以下条件：
 
 如果少数派分区的 Follower 节点恰好先触发选举超时（在收到新 Leader 心跳之前），也可能在少数派分区内选举出另一个 Leader——但这种情况下新 Leader 无法获得多数派投票（只有 2/5 投票），选举失败。
 
-### JRaft 的 Pre-Vote 机制如何阻止双 Leader？
+### 分区恢复后的收敛机制（无 Pre-Vote）
 
-JRaft 实现了 Raft 论文中提出的 **Pre-Vote（预投票）** 机制，专门防止网络分区后的无效选举。Pre-Vote 的核心思想：**在正式发起 RequestVote RPC 之前，先发起 Pre-Vote RPC 试探其他节点是否愿意投票**。
+需要特别说明：**JRaft 库本身支持 Pre-Vote（预投票）机制，但 Nacos 2.5.3 并未开启**——Nacos 从未调用 `setEnablePreVote(true)`，JRaft `NodeOptions` 默认 `enablePreVote=false`，即标准 Raft 选举流程。
 
-Pre-Vote 的 3 层检查：
+分区恢复后的双 Leader 收敛由 Raft 的两个基础机制保证：
 
-**第 1 层：Term 检查**
-Candidate 发起 Pre-Vote RPC，携带自己的 `lastLogTerm` 和 `lastLogIndex`。接收方检查 Candidate 的日志是否至少和自己一样新（`lastLogTerm > myLastLogTerm` 或 `lastLogTerm == myLastLogTerm && lastLogIndex >= myLastLogIndex`）。
+**1. Term 单调递增**
 
-**第 2 层：Leader 存活检查**
-接收方在最近 `Election Timeout` 时间内是否收到过 Leader 的心跳？如果收到过——说明 Leader 仍存活，拒绝 Pre-Vote。
+网络恢复后，旧 Leader（分区 A，Term=N）收到新 Leader（分区 B，Term=N+1）的心跳/AppendEntries RPC——发现对方 Term 更高 → 立即 Step Down 退位为 Follower → 双 Leader 自动收敛为单 Leader。
 
-**第 3 层：日志最新检查**
-接收方的日志是否比 Candidate 的日志更新？如果是——拒绝 Pre-Vote（ Candidate 日志落后，不应该成为 Leader）。
+**2. 退位机制与日志覆盖**
 
-三层检查通过后，Candidate 才正式发起 RequestVote RPC。Pre-Vote 机制在网络分区场景下阻止双 Leader 的过程：
+退位后，新 Leader 的日志覆盖旧 Leader 在分区期间接受的未提交日志（以 Leader 日志为准）——保证已提交数据不丢失。
 
 <div class="dgm"><div class="dgm-tree">分区 A (Node1-2, 含旧 Leader Node1)        分区 B (Node3-5)
 ─────────────────────────────────────────────────────────────────────
@@ -410,24 +407,12 @@ Node1 (Leader):                           Node3 (Follower):
   │                                          │
   │  ← 网络中断 →                            │
   │                                          │
-  │                                          ├── 选举超时 (150ms)
+  │                                          ├── 选举超时
   │                                          │
-  │                                          ├── Pre-Vote RPC → Node4
-  │                                          │   Q: 愿意投票给我吗？
-  │                                          │   Node4 检查:
-  │                                          │   Layer 1 (Term): ✅ Node3.term &gt; mine
-  │                                          │   Layer 2 (Leader存活): ✅ 150ms 内
-  │                                          │       未收到 Leader 心跳
-  │                                          │   Layer 3 (日志最新): ✅ Node3 日志
-  │                                          │       不比我的旧
-  │                                          │   → Pre-Vote GRANTED ✅
-  │                                          │
-  │                                          ├── Pre-Vote RPC → Node5
-  │                                          │   → Pre-Vote GRANTED ✅
-  │                                          │
-  │                                          ├── 获得多数派 Pre-Vote (2/3)
-  │                                          │
-  │                                          ├── 正式 RequestVote RPC → Node4,5
+  │                                          ├── 直接转为 Candidate (无 Pre-Vote)
+  │                                          │   → CurrentTerm++ (Term=N+1)
+  │                                          │   → RequestVote RPC → Node4, Node5
+  │                                          │   → 获得多数派投票 (3/5)
   │                                          │   → 当选为新 Leader (Term=N+1)
   │                                          │
   │  ← 网络恢复 →                            │
@@ -435,22 +420,20 @@ Node1 (Leader):                           Node3 (Follower):
   ├── 收到 Node3 的 AppendEntries RPC         │
   │   (Term=N+1 &gt; 自己的 Term=N)              │
   │   → Step Down (退位为 Follower)          │
-  │   → 覆盖未提交日志                     │</div></div>
+  │   → 覆盖未提交日志                       │</div></div>
 
-如果没有 Pre-Vote 机制，Node3 在网络分区后直接发起 RequestVote RPC——即使成功当选为新 Leader（获得多数派投票），旧 Leader Node1 在分区 A 中仍认为自己是 Leader（因为在分区 A 中 Node1 仍能收到 Node2 的心跳响应）——导致双 Leader 持续时间更长（直到网络恢复）。
-
-**Pre-Vote 的实际效果**：即使网络分区导致双 Leader，Pre-Vote 确保新 Leader 的 Term 更高——网络恢复后旧 Leader 发现新 Leader 的 Term > 自己的 Term → 自动退位 → 双 Leader 自动收敛为单 Leader。**Pre-Vote 不能完全阻止双 Leader，但确保双 Leader 在网络恢复后立即自动收敛**。
+**关键结论**：Raft 的多数派约束本身保证了同一 Term 下不可能出现两个 Leader；旧 Leader 的写入因未获得多数派确认永远不会提交。双 Leader 只在"旧 Leader 仍认为自己是 Leader"的窗口内存在——网络恢复后 Term 比较使旧 Leader 自动退位。
 
 ### Trade-off 分析
 
-**Pre-Vote vs 无 Pre-Vote**：
+**Pre-Vote 开启 vs 未开启**：
 
-| 维度 | 有 Pre-Vote (JRaft 实际) | 无 Pre-Vote (标准 Raft) |
+| 维度 | 开启 Pre-Vote（JRaft 库能力，Nacos 未用） | 未开启（Nacos 2.5.3 实际） |
 |------|--------------------------|------------------------|
-| 无效选举次数 | 少（Pre-Vote 过滤无效 Candidate） | 多（可能多次无效选举） |
+| 无效选举次数 | 少（Pre-Vote 过滤无效 Candidate） | 多（可能多次无效选举，Term 递增） |
 | 双 Leader 收敛速度 | 网络恢复后立即收敛 | 取决于旧 Leader 何时发现新 Leader |
 | 选举延迟 | 增加 1 RTT（Pre-Vote RPC 往返） | 无额外延迟 |
-| 网络分区恢复后行为 | 旧 Leader 自动退位 | 旧 Leader 可能继续保持 Leader（直到收到新 Leader 心跳） |
+| GC 停顿场景 | "Leader 存活即拒绝选举"层可阻止 | 无该保护层——GC 停顿仍可能触发真实选举 |
 
 **3 节点 vs 5 节点集群的脑裂风险**：
 
@@ -460,74 +443,80 @@ Node1 (Leader):                           Node3 (Follower):
 | 最小双 Leader 分区节点数 | N/A | 分区 A: 2 节点（含旧 Leader），分区 B: 3 节点 |
 | 双 Leader 自动收敛时间 | N/A | 网络恢复后 < 10ms（旧 Leader 收到新 Leader 心跳） |
 
-### Pre-Vote 配置参数
+### JRaft 相关配置参数
 
-JRaft 中与 Pre-Vote 相关的关键配置参数（在 Nacos 的 `application.properties` 中配置）：
+JRaft 关键配置参数（在 Nacos 的 `application.properties` 中配置）：
 
 ```properties
 # JRaft 选举超时（毫秒）
-# 默认 5000ms - Follower 在此时间内未收到 Leader 心跳 → 触发 Pre-Vote
-nacos.cp.election.timeoutMs=5000
+# 默认 5000ms - Follower 在此时间内未收到 Leader 心跳 → 触发选举
+nacos.core.protocol.raft.data.election_timeout_ms=5000
 
 # JRaft Leader 心跳间隔（毫秒）
 # 默认 500ms - Leader 向 Follower 发送心跳的频率
-# 建议设置为 election.timeoutMs / 10（确保在超时前至少有 10 次心跳）
-# 默认 5000/10 = 500ms
+# 建议设置为 election_timeout_ms / 10（确保在超时前至少有 10 次心跳）
 
 # JRaft Snapshot 间隔（秒）
-# 默认 3600s - Raft 日志压缩间隔
-nacos.cp.snapshot.intervalSecs=3600
+# 默认 1800s - Raft 日志压缩间隔
+nacos.core.protocol.raft.data.snapshot_interval_secs=1800
 ```
 
-**Pre-Vote 调优建议**：
+**选举调优建议**：
 
 | 参数 | 推荐值 | 理由 |
 |------|--------|------|
-| `election.timeoutMs` | 5000ms | 跨 DC 部署适中的选举超时——太短则网络抖动频繁触发选举，太长则故障检测慢 |
-| Leader 心跳间隔 | 500ms | = election.timeoutMs / 10，确保超时前至少有 10 次心跳 |
-| RTT 上限 | election.timeoutMs / 3 ≈ 1500ms | 确保选举超时不因跨 DC 网络延迟误触发 |
+| `election_timeout_ms` | 5000ms | 跨 DC 部署适中的选举超时——太短则网络抖动频繁触发选举，太长则故障检测慢 |
+| Leader 心跳间隔 | 500ms | = election_timeout_ms / 10，确保超时前至少有 10 次心跳 |
+| RTT 上限 | election_timeout_ms / 3 ≈ 1500ms | 确保选举超时不因跨 DC 网络延迟误触发 |
 
 ### 设计模式分析
 
-1. **预投票模式（Pre-Vote Pattern）**：Pre-Vote 在正式投票前增加预筛选阶段——避免无效 Candidate 发起正式选举，减少集群震荡。类似两阶段提交（2PC）的思想：先询问"是否愿意投票"（Pre-Vote），再正式发起投票（RequestVote）
+1. **Term 单调递增模式（Monotonic Term）**：Raft 的 Term 全局单调递增——任何节点发现 Term > 自己的 Term → 立即退位转为 Follower。这是 Raft 协议最简洁但最核心的安全机制：无论集群处于何种分裂状态，最高的 Term 最终会"征服"所有节点
 
-2. **Term 单调递增模式（Monotonic Term）**：Raft 的 Term 全局单调递增——任何节点发现 Term > 自己的 Term → 立即退位转为 Follower。这是 Raft 协议最简洁但最核心的安全机制：无论集群处于何种分裂状态，最高的 Term 最终会"征服"所有节点
+2. **多数派仲裁模式（Quorum Arbitration）**：同一 Term 下只有获得多数派投票的节点才能成为 Leader——这从根本上保证了单 Term 单 Leader。旧 Leader 的写入因无法获得多数派确认而永不提交
 
-3. **3 层过滤链模式（Filter Chain）**：Pre-Vote 的 3 层检查（Layer 1: Term → Layer 2: Leader 存活 → Layer 3: 日志最新）构成链式过滤器——任一层 REJECT 则终止检查，只有全通过才 GRANT。类似 Java Servlet Filter Chain 的责任链模式
+3. **日志新鲜度模式（Log Freshness）**：Raft 选举的投票约束要求 Candidate 的日志至少与投票者一样新——保证新 Leader 包含所有已提交日志，分区恢复后不会丢已提交数据
 
 ### 小结
 
 - 5 节点集群在 2-3 网络分裂模式下可能出现双 Leader：分区 A (2 节点含旧 Leader) + 分区 B (3 节点选新 Leader)
 - 双 Leader 场景需同时满足：网络分区恰好产生两个多数派分区 + 旧 Leader 恰好在少数派分区
-- JRaft 的 Pre-Vote 机制通过 3 层检查（Term / Leader 存活 / 日志最新）过滤无效 Candidate，减少无效选举
-- Pre-Vote 不能完全阻止双 Leader，但确保网络恢复后旧 Leader 自动退位（Term 单调递增强制收敛）
+- JRaft 库支持 Pre-Vote 机制，但 Nacos 2.5.3 未开启（`enablePreVote` 默认 false）——选举遵循标准 Raft 流程
+- 分区恢复后的收敛由 Term 单调递增 + 退位机制保证：旧 Leader 发现更高 Term → 自动 Step Down
+- 由于未开启 Pre-Vote，"Leader 存活即拒绝选举"的保护层不存在——GC 停顿仍可能触发真实选举
 - 3 节点集群天然免疫双 Leader——任何分裂均无法产生两个多数派分区（每个分区最多 1-2 节点，均 < 2/3 quorum）
 
 ---
 
-## 11.4 Raft Pre-Vote 防脑裂机制：3 层检查（term / Leader 存活 / 日志最新）
+## 11.4 Raft 选举安全机制：Term 单调递增 + 日志新鲜度检查（JRaft Pre-Vote 未开启）
 
 ### 设计背景
 
-Raft 协议的标准 Leader 选举流程中，Follower 在选举超时（Election Timeout）后直接转为 Candidate 状态，增加自己的 CurrentTerm，给自己投票，然后向所有其他节点发送 RequestVote RPC。这个流程在正常情况下工作良好——但在网络分区场景下可能产生严重问题：
+Raft 协议的标准 Leader 选举流程中，Follower 在选举超时（Election Timeout）后直接转为 Candidate 状态，增加自己的 CurrentTerm，给自己投票，然后向所有其他节点发送 RequestVote RPC。这个流程在正常情况下工作良好——但在网络分区场景下可能产生一个已知问题：
 
 **问题场景**：一个网络分区的少数派节点（无法获得多数派投票）反复超时 → 反复转为 Candidate → 反复增加 Term → 反复发起选举。即使每次选举都失败（无法获得多数派投票），Term 仍在不断递增。当网络恢复后，这个少数派节点带着极高的 Term 重新加入集群——迫使集群中的合法 Leader 退位（因为 Term 落后），触发不必要的 Leader 切换。
 
-**Pre-Vote 的核心思想**：在正式增加 Term 和发起 RequestVote RPC 之前，先发起一轮 Pre-Vote RPC 试探其他节点是否愿意投票。只有获得多数派 Pre-Vote 同意后，才正式增加 Term 和发起 RequestVote。这避免了上述"少数派节点反复增加 Term"的问题——因为在网络分区中，少数派节点的 Pre-Vote 无法获得多数派同意，因此永远不会进入正式选举流程。
+Raft 论文第 9.6 节提出的 **Pre-Vote（预投票）** 机制可以解决上述问题：在正式增加 Term 和发起 RequestVote RPC 之前，先发起一轮 Pre-Vote RPC 试探其他节点是否愿意投票，只有获得多数派 Pre-Vote 同意后才进入正式选举。
 
-JRaft 实现了完整的 Pre-Vote 机制（参考 Raft 论文第 9.6 节），通过 3 层检查确保 Pre-Vote 的安全性。
+**但必须明确：JRaft 库实现了 Pre-Vote 能力，而 Nacos 2.5.3 并未启用**——全代码库中没有任何对 `setEnablePreVote(true)` 的调用，JRaft `NodeOptions` 默认 `enablePreVote=false`。因此 Nacos 2.5.3 的 CP 集群运行的是**标准 Raft 选举**，其安全性由 Term 单调递增 + 日志新鲜度检查这两层内建机制保证。本节围绕这两个真实生效的机制展开。
 
 ### 核心流程图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JRaft Pre-Vote 3 层检查完整流程</span><span class="s">Follower (选举超时 150ms)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. 不立即增加 Term！先进入 Pre-Candidate 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 向所有节点发送 Pre-Vote RPC</div><div class="dgm-note" style="border:none;background:none;padding:0;">(lastLogTerm, lastLogIndex)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">接收方 3 层检查 (每个节点独立执行)</span><span class="s">Layer 1: Term 检查</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm &lt; myLastLogTerm)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志落后，不应该成为 Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm == myLastLogTerm &amp;&amp;</div><div class="dgm-note" style="border:none;background:none;padding:0;">Candidate.lastLogIndex &lt; myLastLogIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志不够新</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 2: Leader 存活检查</span><span class="s">if (timeSinceLastHeartbeat &lt; ElectionTimeout)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Leader 仍存活，不需要新选举</div><div class="dgm-note" style="border:none;background:none;padding:0;">说明：如果我在最近 ElectionTimeout 时间内收到过</div><div class="dgm-note" style="border:none;background:none;padding:0;">Leader 的心跳 → Leader 仍然存活 → 没有选举必要</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Layer 3: 日志最新检查</span><span class="s">if (myLastLogTerm &gt; Candidate.lastLogTerm)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: 我的日志比 Candidate 更新</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (myLastLogTerm == Candidate.lastLogTerm &amp;&amp;</div><div class="dgm-note" style="border:none;background:none;padding:0;">myLastLogIndex &gt; Candidate.lastLogIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: 我的日志更长</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">3 层全通过？</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">REJEC</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Pre-Candidate 收集结果</span><span class="s">if (GRANTED 票数 &gt;= 多数派 (⌊N/2⌋+1)):</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 正式进入 Candidate 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 增加 CurrentTerm</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 向所有节点发送 RequestVote RPC (正式投票)</div><div class="dgm-note" style="border:none;background:none;padding:0;">else:</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 保持 Follower 状态</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Term 不增加！(关键：避免无效 Term 递增)</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 实际选举流程 (标准 Raft, enablePreVote=false)</span><span class="s">Follower (选举超时)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">1. 立即增加 CurrentTerm (无 Pre-Vote 预筛选)</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 向所有节点发送 RequestVote RPC</div><div class="dgm-note" style="border:none;background:none;padding:0;">(lastLogTerm, lastLogIndex)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">接收方投票检查 (每个节点独立执行)</span><span class="s">检查 1: Term 检查</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.term &lt; myCurrentTerm)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate Term 落后</div><div class="dgm-note" style="border:none;background:none;padding:0;">一个 Term 只投一票 (first-come-first-served)</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">检查 2: 日志新鲜度检查</span><span class="s">lastLogTerm / lastLogIndex 比较</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm &lt; myLastLogTerm)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志落后，不应成为 Leader</div><div class="dgm-note" style="border:none;background:none;padding:0;">if (Candidate.lastLogTerm == myLastLogTerm &amp;&amp;</div><div class="dgm-note" style="border:none;background:none;padding:0;">Candidate.lastLogIndex &lt; myLastLogIndex)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ REJECT: Candidate 日志不够新</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">两检查通过 → GRANT 投票</span><span class="s">获得多数派 (⌊N/2⌋+1) 投票 → 当选 Leader</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">else: 保持 Follower / 等待下轮选举超时</div></div></div></div></div></div>
 
-### 3 层检查逐一详解
+### 投票检查逐一详解
 
-#### Layer 1：Term 检查——"你的日志比我旧吗？"
+#### 检查 1：Term 检查——"你的 Term 比我旧吗？"
 
-这是最基本的日志新鲜度检查。Raft 协议要求 Leader 必须拥有集群中最新的日志——否则已提交的日志可能被新 Leader 覆盖。
+这是最基本的选举约束。每个节点在一个 Term 内最多投一票（先到先得），且拒绝 Term 比自己小的 Candidate。
 
-检查逻辑（JRaft `NodeImpl.java` 中的 `handlePreVoteRequest` 方法）：
+这一约束直接保证了**单 Term 单 Leader**：要当选 Leader 必须获得多数派投票，而多数派节点在同一 Term 内各只有一票——两个 Candidate 不可能同时获得多数派。
+
+#### 检查 2：日志新鲜度检查——"你的日志比我旧吗？"
+
+Raft 要求 Leader 必须拥有集群中最新的已提交日志——否则已提交的日志可能被新 Leader 覆盖。
+
+检查逻辑（JRaft 投票处理中的比较规则）：
 
 ```
 if (Candidate.lastLogTerm < myLastLogTerm) {
@@ -544,142 +533,94 @@ if (Candidate.lastLogTerm == myLastLogTerm &&
 
 假设 Node3 因网络分区被隔离，其日志落后于集群中的多数派节点。如果 Node3 可以成为 Leader，它将用落后日志覆盖集群中已提交的日志——这是 Raft 协议绝对要避免的。
 
-#### Layer 2：Leader 存活检查——"Leader 还活着吗？"
+### 标准选举的调用链
 
-这是 Pre-Vote 特有的检查——防止在 Leader 存活时触发无效选举。
-
-检查逻辑：
-
-```
-if (timeSinceLastHeartbeat < ElectionTimeout) {
-    → REJECT: 我在最近 ElectionTimeout 时间内收到过 Leader 的心跳
-}
-```
-
-**为什么这一层很重要？**
-
-假设 Follower 因为 GC 停顿导致选举超时——但实际上 Leader 仍存活并正常发送心跳。如果没有这一层检查，Follower 会发起 Pre-Vote → 获得多数派同意 → 正式选举新 Leader → 不必要的 Leader 切换（旧 Leader 退位 → 新 Leader 当选 → 集群震荡）。
-
-这一层检查等价于："Leader 还活着吗？如果还活着，不要发起选举。"
-
-#### Layer 3：日志最新检查——"我的日志比 Candidate 更新吗？"
-
-这是 Layer 1 的反向检查——接收方的日志比 Candidate 的日志更新。
-
-检查逻辑：
-
-```
-if (myLastLogTerm > Candidate.lastLogTerm) {
-    → REJECT: 我的日志 Term 比 Candidate 更高 → 我更适合成为 Leader
-}
-
-if (myLastLogTerm == Candidate.lastLogTerm &&
-    myLastLogIndex > Candidate.lastLogIndex) {
-    → REJECT: 同 Term 下我的日志更长 → 我更适合成为 Leader
-}
-```
-
-**为什么这一层很重要？**
-
-这一层确保 Candidate 的日志至少不比接收方差——如果接收方自己的日志更新，说明 Candidate 不适合成为 Leader（因为它需要从接收方同步落后日志，效率更低）。
-
-### Pre-Vote 源码实现调用链
-
-JRaft 中 Pre-Vote 核心实现位于 `JRaftProtocol` 依赖的 JRaft 库中，Nacos 端的关键集成点如下：
+Nacos 端的关键集成点：
 
 ```
 Follower 选举超时触发
   → NodeImpl.handleElectionTimeout()
-     → NodeImpl.preVote()
-        → 向所有 Peer 发送 Pre-Vote RPC (requestPreVote)
-           → Peer.handlePreVoteRequest(lastLogTerm, lastLogIndex)
-              → 执行 3 层检查 (Layer 1→2→3)
+     → (enablePreVote=false → 跳过 Pre-Vote 阶段)
+     → NodeImpl.electSelf()
+        → CurrentTerm++
+        → 向所有 Peer 发送 RequestVote RPC
+           → Peer.handleVoteRequest(lastLogTerm, lastLogIndex)
+              → 执行 Term 检查 + 日志新鲜度检查
               → 返回 GRANTED / REJECT
-        → 收集多数派 Pre-Vote 结果
-        → if GRANTED >= 多数派:
-              → NodeImpl.electSelf()
-                 → CurrentTerm++
-                 → 向所有 Peer 发送 RequestVote RPC
+        → 收集多数派投票结果
+        → if GRANTED >= 多数派: 当选 Leader
 ```
 
-JRaft 中 RequestVote 处理的核心方法位于 JRaft 库的 `NodeImpl.java`（JRaft 源码不在 Nacos 仓库中，由 `consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftProtocol.java:85-132` 初始化 JRaft 节点）。Nacos 端通过 `JRaftServer.createMultiRaftGroup()`（`consistency/src/main/java/com/alibaba/nacos/consistency/cp/JRaftServer.java:156-201`）创建 Multi-Raft Group，传入 `ElectionTimeoutMs`（默认 5000ms）、`SnapshotIntervalSecs`（默认 3600s）等配置参数。
+JRaft 节点由 `JRaftProtocol`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java:178`，写入入口 `write()`）初始化，`JRaftServer.createMultiRaftGroup()`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java:221-273`）创建 Multi-Raft Group，传入 `election_timeout_ms`（默认 5000ms）、`snapshot_interval_secs`（默认 1800s）等配置参数。
 
-### Pre-Vote vs 标准 Raft 选举的定量对比
+### 无 Pre-Vote 下的风险场景定量对比
 
-假设 5 节点集群，单个节点因 GC 停顿 300ms（超过 ElectionTimeout=150ms）导致选举超时：
+假设 5 节点集群，单个节点因 GC 停顿超过 ElectionTimeout 导致选举超时：
 
-| 步骤 | 有 Pre-Vote | 无 Pre-Vote (标准 Raft) |
+| 步骤 | 若开启 Pre-Vote | Nacos 2.5.3 实际（无 Pre-Vote） |
 |------|-----------|----------------------|
 | 超时后行为 | 进入 Pre-Candidate → 发送 Pre-Vote RPC | 直接转为 Candidate → Term++ → 发送 RequestVote |
-| Leader 存活时的处理 | Layer 2 检查拒绝 Pre-Vote → 选举终止 | RequestVote 可能获得多数派 → 合法 Leader 被迫退位 |
+| Leader 存活时的处理 | Layer 2 检查拒绝 Pre-Vote → 选举终止 | 无该保护层 → 可能获得多数派 → 合法 Leader 被迫退位 |
 | 网络恢复后 Term | Term 不变（未进入正式选举） | Term 已增加（无效选举导致 Term 递增） |
-| 集群震荡次数 | 0（Pre-Vote 过滤了无效选举） | 1-3 次（可能反复） |
+| 集群震荡次数 | 0（Pre-Vote 过滤了无效选举） | 可能 1-3 次（反复选举） |
 
-### Pre-Vote 的边缘场景分析
+**结论**：Nacos 2.5.3 下 GC 停顿仍可能触发真实选举并引发 Leader 切换——这是当前配置下的已知行为，运维上应关注节点 GC 表现。
 
-**场景 1：Pre-Vote 阶段网络分区恢复**
+### 分票（Split-Vote）场景分析
 
-假设 Node1 在 Pre-Vote 阶段获得 3/5 的 GRANTED 票 → 准备正式转为 Candidate → 但此时网络分区恢复，旧 Leader Node3 的 AppendEntries 到达 Node1。由于 Node1 尚未正式增加 Term（仍在 Pre-Vote 阶段），Node1 收到 Node3 的心跳 → 发现 Leader 仍存活 → 放弃选举 → 保持 Follower。**Pre-Vote 的 "延迟 Term 递增"设计确保了网络分区恢复后可以安全放弃选举。**
+假设 5 节点集群中 2 个节点同时超时（选举超时随机窗口恰好重叠）。每个节点发送 RequestVote → 各自获得部分投票 → 都未达到多数派（3 票）→ 都进入下一个选举超时等待。选举超时的随机化（Election Timeout 带随机扰动）保证下一轮分票概率大幅降低，最终必然有一个 Candidate 获得多数派。
 
-**场景 2：Pre-Vote 分票（Split-Vote）**
+### 安全性保证
 
-假设 5 节点集群中 2 个节点同时超时（例如 Node1 和 Node2 的选举超时随机窗口恰好重叠）。每个节点发送 Pre-Vote → 各自获得 2 票（包括自己的投票）→ 都未达到多数派（3 票）→ 都进入下一个选举超时等待。**Pre-Vote 减少但不能完全消除分票问题——但 Pre-Vote 避免了分票过程中的 Term 递增（因为只有 Pre-Vote 不增加 Term）。**
+当前标准 Raft 配置下，选举安全性由以下不变量保证：
 
-### Pre-Vote 安全性保证
+**不变量 1：单 Term 单 Leader**
 
-Pre-Vote 机制的安全性由以下不变量保证：
+多数派投票约束（每节点每 Term 一票）保证同一 Term 下不可能选出两个 Leader。
 
-**不变量 1：Term 只在获得多数派 Pre-Vote 后才增加**
+**不变量 2：已提交日志不会被新 Leader 覆盖**
 
-这意味着在网络分区中，少数派节点无法增加 Term（因为 Pre-Vote 无法获得多数派同意）。这避免了"少数派节点反复增加 Term → 网络恢复后迫使合法 Leader 退位"的问题。
+日志新鲜度检查保证新 Leader 的日志至少包含所有已提交的日志——这是 Raft 协议安全性的核心保证。即使无 Pre-Vote，此性质仍然成立。
 
-**不变量 2：(lastLogTerm, lastLogIndex) 在 Pre-Vote 阶段未改变**
+**不变量 3：Term 单调递增强制收敛**
 
-因为 Pre-Vote 期间节点尚未正式转为 Candidate → 未追加任何新日志 → lastLogIndex 不变。这保证了 Pre-Vote 的日志新鲜度判断基于节点的真实状态，不会因 Pre-Vote 过程中追加新日志而误判。
+任何节点发现 Term > 自己的 Term → 立即退位转为 Follower。即使网络分区产生"事实上的双 Leader"，网络恢复后最高 Term 的 Leader 会自动收敛全集群。
 
-**不变量 3：CommitIndex 不因 Pre-Vote 而改变**
+**已知风险（无 Pre-Vote 的代价）**：少数派分区内反复失败选举会推高 Term；GC 停顿可能触发不必要的 Leader 切换。Pre-Vote 可消除这两点，但需要 Nacos 显式开启（2.5.3 未开启）。
 
-Pre-Vote 不包含任何日志复制操作——Leader 仍然正常向 Follower 发送 AppendEntries → Follower 仍然正常提交日志 → CommitIndex 不受 Pre-Vote 影响。
+### 与标准 Raft 选举对比
 
-**不变量 2：Pre-Vote 通过的 Candidate 在正式选举中必定获得多数派投票**
-
-因为 Pre-Vote 的 3 层检查比正式 RequestVote 更严格（Layer 2: Leader 存活检查仅在 Pre-Vote 中存在），因此 Pre-Vote 通过意味着正式 RequestVote 也会通过。
-
-**不变量 3：任何已提交的日志不会被新 Leader 覆盖**
-
-Layer 1 和 Layer 3 的日志新鲜度检查确保新 Leader 的日志至少包含所有已提交的日志——这是 Raft 协议的安全性的核心保证。
-
-### Pre-Vote vs 标准 Raft 选举对比
-
-| 维度 | 标准 Raft (无 Pre-Vote) | JRaft (有 Pre-Vote) |
+| 维度 | 标准 Raft（Nacos 2.5.3 实际） | 叠加 Pre-Vote（需显式开启） |
 |------|------------------------|----------------------|
 | 网络分区中少数派节点行为 | 反复增加 Term + 反复选举失败 | 停留在 Follower 状态（Pre-Vote 无法通过） |
-| 网络恢复后 Term | 少数派节点 Term 极高 → 迫使合法 Leader 退位 | 少数派节点 Term 未增加 → Leader 不受影响 |
-| 不必要的 Leader 切换 | 可能发生（如上） | 不会发生（少数派 Term 未增加） |
-| GC 停顿导致的选举 | 正常选举新 Leader → 旧 Leader 退位 | Layer 2 阻止：Leader 存活 → Pre-Vote REJECT |
+| 网络恢复后 Term | 少数派节点 Term 极高 → 可能迫使合法 Leader 退位 | 少数派节点 Term 未增加 → Leader 不受影响 |
+| 不必要的 Leader 切换 | 可能发生（GC 停顿场景） | 不会发生（Leader 存活层阻止） |
 | 选举延迟 | 1 RTT（RequestVote RPC） | 2 RTT（Pre-Vote RPC + RequestVote RPC） |
 
 ### Trade-off 分析
 
-**Pre-Vote 的代价：增加 1 RTT 选举延迟**
+**未开启 Pre-Vote 的代价与收益**：
 
-Pre-Vote 在正式选举前增加了 1 轮 RPC（Pre-Vote RPC 往返），导致选举延迟从 1 RTT 增加到 2 RTT。对于 Nacos 集群（同机房 RTT < 1ms），这 1 RTT 的增加可忽略（+1ms）。但对于跨地域集群（RTT ~30ms），选举延迟从 ~30ms 增加到 ~60ms。
+- **收益**：选举延迟少 1 RTT；配置与实现路径简单；Raft 核心安全性（单 Term 单 Leader、日志不覆盖已提交数据）不受影响
+- **代价**：GC 停顿 / 网络抖动可能触发不必要的选举与 Leader 切换；分区恢复后少数派高 Term 可能引发一次额外 Leader 切换
 
-**权衡**：牺牲 1 RTT 选举延迟 → 避免网络分区 + GC 停顿场景下的 Term 无限制递增和不必要的 Leader 切换。这是一个明显值得的 trade-off——1 RTT 延迟 vs 集群稳定性。
+**权衡结论**：Raft 的核心安全性（已提交数据不丢失、单 Term 单 Leader）并不依赖 Pre-Vote——Pre-Vote 只是"稳定性优化"。Nacos 2.5.3 选择默认关闭，对低频写入的 Config 模块而言，偶发的 Leader 切换是可接受的。
 
 ### 设计模式分析
 
-1. **两阶段提交模式（2PC）**：Pre-Vote + RequestVote 构成两阶段提交——Phase 1（Pre-Vote）：询问是否愿意投票（试探阶段）；Phase 2（RequestVote）：正式投票（提交阶段）。只有 Phase 1 多数派通过才进入 Phase 2——避免无效的 Phase 2（正式投票失败导致 Term 无意义递增）
+1. **单调时钟模式（Monotonic Clock）**：Term 作为全局单调递增的逻辑时钟——通过比较 Term 大小即可裁决"谁是当前合法 Leader"，无需分布式协商
 
-2. **门卫模式（Guard Pattern）**：3 层检查构成 Leader 选举的门卫——Candidate 必须通过全部 3 层检查（日志新鲜度 / Leader 存活 / 日志最新）才能进入正式选举。每一层是一个门卫，过滤不符合条件的 Candidate
+2. **多数派仲裁模式（Quorum Arbitration）**：每 Term 一票 + 多数派当选，构成防双 Leader 的核心仲裁机制——从数学上排除同 Term 双 Leader
+
+3. **日志新鲜度门卫模式（Freshness Guard）**：日志新鲜度检查构成 Leader 资格的门卫——日志落后的节点即使获得多数派投票也无法当选，保护已提交数据
 
 ### 小结
 
-- JRaft Pre-Vote 在正式 RequestVote 前增加 Pre-Vote RPC 阶段，通过 3 层检查（Term / Leader 存活 / 日志最新）过滤无效 Candidate
-- Layer elta2 (Leader 存活检查) 是 Pre-Vote 特有的——防止 Leader 存活时的无效选举（GC 停顿导致的选举超时）
-- Pre-Vote 的核心价值：防止网络分区中少数派节点反复增加 Term → 网络恢复后迫使合法 Leader 退位
-- Pre-Vote 不能完全阻止双 Leader，但确保：(a) 网络分区中少数派节点 Term 不增加 (b) 网络恢复后双 Leader 自动收敛
-- Pre-Vote 代价：增加 1 RTT 选举延迟（同机房 < 1ms，跨地域 ~30ms）——换取集群稳定性
+- Nacos 2.5.3 运行标准 Raft 选举流程：JRaft 库支持 Pre-Vote，但 Nacos 未开启（`enablePreVote` 默认 false，全代码库无 `setEnablePreVote` 调用）
+- 选举安全性由两层内建检查保证：Term 检查（单 Term 单 Leader）+ 日志新鲜度检查（已提交日志不被覆盖）
+- 由于未开启 Pre-Vote，"Leader 存活即拒绝选举"的保护层不存在——GC 停顿仍可能触发真实选举
+- 分区恢复后的收敛由 Term 单调递增 + 退位机制保证：旧 Leader 发现更高 Term → 自动 Step Down
+- 选举延迟为 1 RTT（RequestVote RPC）；若未来开启 Pre-Vote 将增加 1 RTT，但可消除无效选举与 Term 膨胀
 
 ---
 
@@ -743,7 +684,7 @@ Follower 收到 AppendEntries RPC:
 
 **为什么 Leader 的版本总是覆盖 Follower 的版本？**
 
-因为 Leader 的 Term > Follower 的 Term（否则 Follower 不会接受 Leader 的 AppendEntries）。Raft 的安全性质保证：已提交的日志永远不会被覆盖——因为 Leader 的日志包含所有已提交的日志（Leader 选举时 Layer 1/3 检查保证新 Leader 的日志至少包含所有已提交日志）。
+因为 Leader 的 Term > Follower 的 Term（否则 Follower 不会接受 Leader 的 AppendEntries）。Raft 的安全性质保证：已提交的日志永远不会被覆盖——因为 Leader 的日志包含所有已提交的日志（Leader 选举时的日志新鲜度检查保证新 Leader 的日志至少包含所有已提交日志）。
 
 ### 阶段 3：数据合并（Data Reconciliation）
 
@@ -767,8 +708,8 @@ Follower 收到 AppendEntries RPC:
 **未提交日志丢失 vs 客户端重试成本**：
 
 分区期间旧 Leader 接受的未提交写入丢失，客户端重试成本：
-- 配置发布：客户端 `configService.publishConfig()` 自动重试 3 次（默认），重试间隔 1s → 最多 3s 恢复
-- 服务注册：客户端心跳 5s 间隔自动重新注册 → 最多 5s 恢复
+- 配置发布：客户端 `configService.publishConfig()` 依赖传输层默认重试 3 次（RpcClient retryTimes）自动重试，对客户端透明
+- 服务注册：客户端断线后由 `NamingGrpcRedoService` + `RedoScheduledTask`（默认 3000ms 周期）自动重新注册 → 最多 3s 恢复
 
 ### 客户端感知数据丢失的处理
 
@@ -778,20 +719,20 @@ Follower 收到 AppendEntries RPC:
 
 ```java
 // 客户端 configService.publishConfig() 内部自动重试
-// 源码位置: client/src/main/java/com/alibaba/nacos/client/config/NacosConfigService.java:218-345
+// 源码位置: client/src/main/java/com/alibaba/nacos/client/config/NacosConfigService.java:227-244 (publishConfigInner)
 try {
     configService.publishConfig(dataId, group, content);
 } catch (NacosException e) {
-    // SDK 自动重试 3 次，重试间隔 1s
+    // 传输层默认重试 3 次 (RpcClient retryTimes)
     // 若 Leader 已切换，重试请求自动路由到新 Leader
 }
 ```
 
-服务端 `ConfigController.publishConfig()`（`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:144-235`）接收配置发布请求。如果当前节点已退位为 Follower（不再接受写入），gRPC 层自动转发请求到 Leader。
+服务端 `ConfigController.publishConfig()`（`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:158-219`）经 `ConfigOperationService` 落库；外置 MySQL 部署直接写 MySQL，embedded (Derby) 部署经 `JRaftProtocol.write()` 由 Leader 提交。
 
 **服务注册写入丢失与恢复**：
 
-临时实例（AP/Distro）不受 Leader 切换影响——每个节点独立接受注册请求。持久实例（CP/JRaft）受 Leader 切换影响：分区期间持久实例注册请求写入旧 Leader → 分区恢复后这些写入被 Leader 覆盖 → 丢失。客户端心跳（默认 5s）自动触发重新注册：`BeatReactor.addBeatInfo()` 在心跳超时后自动重新注册实例。
+临时实例（AP/Distro）不受 Leader 切换影响——每个节点独立接受注册请求。持久实例（CP/JRaft）受 Leader 切换影响：分区期间持久实例注册请求写入旧 Leader → 分区恢复后这些写入被 Leader 覆盖 → 丢失。客户端断线重注册由 `NamingGrpcRedoService` + `RedoScheduledTask` 周期扫描自动重做（重做周期 `redoDelayTime` 默认 3000ms）。
 
 ### 脑裂恢复对 Nacos Config 模块的影响
 
@@ -799,7 +740,7 @@ Config 模块（JRaft CP 模式）的配置发布写入在脑裂恢复期间的�
 
 1. 分区期间：旧 Leader（少数派分区）仍接受配置发布请求 → 写入未提交日志 → 返回客户端成功（因为 Leader 认为自己是 Leader）
 2. 网络恢复：旧 Leader 退位 → 未提交日志被新 Leader 覆盖 → 这些配置发布写入永久丢失
-3. 客户端重试：`configService.publishConfig()` 抛出 `NacosException`（Leader 切换期间服务不可用）→ 自动重试 3 次 → 重试请求路由到新 Leader → 写入成功
+3. 客户端重试：`configService.publishConfig()` 抛出 `NacosException`（Leader 切换期间服务不可用）→ 传输层（RpcClient retryTimes，默认 3 次）自动重试 → 重试请求路由到新 Leader → 写入成功
 
 **配置读取的一致性**：Config 模块读取 Leader 保证读取到最新配置——但分区期间旧 Leader 仍可接受读取请求（返回旧 Leader 的数据）→ 分区期间可能读到旧配置数据。网络恢复后读取自动路由到新 Leader → 读取到最新配置。
 
@@ -809,13 +750,13 @@ Config 模块（JRaft CP 模式）的配置发布写入在脑裂恢复期间的�
 
 2. **覆盖写模式（Overwrite Pattern）**：仲裁阶段通过 Leader 日志覆盖 Follower 日志——类似 Git 的 force push（强制推送）——以权威版本覆盖本地版本
 
-3. **自动重试模式（Automatic Retry）**：Nacos SDK 客户端自动重试写入丢失——配置发布重试 3 次（间隔 1s），服务注册心跳重新注册（间隔 5s）——对客户端透明
+3. **自动重试模式（Automatic Retry）**：Nacos SDK 客户端自动重试写入丢失——配置发布经传输层 RpcClient 重试（默认 3 次），服务注册由 `NamingGrpcRedoService` 重做机制自动重新注册（默认 3000ms 周期）——对客户端透明
 
 ### 小结
 
 - Nacos 2.5.3 脑裂恢复全自动 3 阶段：(1) 检测：旧 Leader 发现新 Leader Term > 自己 → Step Down (< 500ms) (2) 仲裁：Leader AppendEntries → 日志冲突以 Leader 为准覆盖 (< 10ms) (3) 数据合并：State Machine 应用已提交日志 → 全集群一致 (< 5ms)
 - 核心仲裁规则：Leader.Term > Follower.Term → Leader 日志覆盖 Follower 日志（Raft 安全性质保证）
-- 数据丢失：分区期间旧 Leader 未提交写入永久丢失——客户端自动重试恢复（配置 < 3s, 服务 < 5s）
+- 数据丢失：分区期间旧 Leader 未提交写入永久丢失——客户端自动重试恢复（配置经 RpcClient 重试，服务经 redo 机制 ~3s 重新注册）
 - 恢复总耗时 < 520ms（检测 500ms + 仲裁 10ms + 合并 5ms）——全自动零人工干预
 
 ---
@@ -1185,12 +1126,12 @@ gRPC Stream 流量切换的特殊性：gRPC 连接是长连接（persistent conn
 
 Nacos 2.x 客户端在 gRPC 连接断开后自动重连：
 
-1. `RpcClient.onDisconnect()`（`client/src/main/java/com/alibaba/nacos/client/naming/remote/gprc/redo/GrpcRedoService.java:98-142`）：检测到 gRPC 连接断开
-2. `RpcClient.reconnectToServer()`（`client/src/main/java/com/alibaba/nacos/common/remote/client/RpcClient.java:212-286`）：尝试重连到健康的 Nacos 节点
-3. 重连策略：随机延迟 0-3000ms + 递增退避（每次重连间隔增加 1s）→ 最多重连 10 次 → 全部节点不可达则抛异常
+1. `NamingGrpcRedoService.onDisConnect()`（`client/src/main/java/com/alibaba/nacos/client/naming/remote/gprc/redo/NamingGrpcRedoService.java:94-104`）：标记连接断开、将注册/订阅置为待重做
+2. 断线重连由 `RpcClient` 事件循环执行，重试间隔 100ms 起步逐轮递增至 5s 封顶（`client/src/main/java/com/alibaba/nacos/common/remote/client/RpcClient.java:560-562`），不设最大次数
+3. 连接健康检查失败触发 `switchServer`（`RpcClient.java:276-294`）——切换到健康的 Nacos 节点
 
 客户端在 GeoDNS 切换期间：
-- DNS TTL 过期前：客户端仍解析到旧 VIP → gRPC 连接仍指向旧集群 → 旧集群宕机 → gRPC 连接断开 → 触发客户端重连 → 客户端重新 DNS 解析 → 解析到新 VIP → 重连到新集群（总耗时 ≈ DNS TTL 过期时间 + gRPC 重连退避时间 ≈ 60s + 3s ≈ 63s）
+- DNS TTL 过期前：客户端仍解析到旧 VIP → gRPC 连接仍指向旧集群 → 旧集群宕机 → gRPC 连接断开 → 触发客户端重连 → 客户端重新 DNS 解析 → 解析到新 VIP → 重连到新集群（总耗时 ≈ DNS TTL 过期时间 + gRPC 重连退避时间 ≈ 60s + 数秒）
 
 ### 设计模式分析
 
@@ -1198,7 +1139,7 @@ Nacos 2.x 客户端在 gRPC 连接断开后自动重连：
 
 2. **断路器模式（Circuit Breaker）**：Nginx 的 `max_fails + fail_timeout` 构成标准的断路器——阈值内连续失败 → 熔断（标记 DOWN）→ 冷却期后自动探测恢复（Half-Open → Closed）
 
-3. **退避重试模式（Backoff Retry）**：Nacos 客户端的 gRPC 重连采用随机延迟 + 递增退避——避免所有客户端同时重连引发"重连风暴"（类似注册风暴的缓解机制）
+3. **退避重试模式（Backoff Retry）**：Nacos 客户端的 gRPC 重连采用 100ms 起步、5s 封顶的递增退避——避免所有客户端同时重连引发"重连风暴"（类似注册风暴的缓解机制）
 
 ### 小结
 
@@ -1206,7 +1147,7 @@ Nacos 2.x 客户端在 gRPC 连接断开后自动重连：
 - Nginx 单节点切换耗时 ≈ 11s（3 次请求失败 × 5s 连接超时）——推荐 `proxy_connect_timeout=5s`
 - GeoDNS 切换瓶颈在 DNS TTL（60s）——TTL 过期前客户端仍解析到旧 VIP
 - gRPC Stream 切换需 TCP 连接超时（5s）→ 总切换 ≈ 16s（TCP 超时 5s + 3 次失败 × 5s）
-- 客户端断线重连：随机延迟 0-3s + 递增退避 → DNS TTL 过期后约 63s 重连到新集群
+- 客户端断线重连：100ms 起步、5s 封顶的递增退避（不设最大次数）→ DNS TTL 过期后数秒内重连到新集群；注册/订阅由 redo 机制自动重做
 - 双中心同时故障需提升异地 MySQL Slave 为 Master（~1min）→ 总切换 < 10min
 
 ---
@@ -1343,18 +1284,18 @@ SHOW STATUS LIKE 'Rpl_semi_sync_slave_status';
 
 ### 半同步复制与 Nacos Config 模块集成
 
-Nacos Config 模块依赖 MySQL 存储配置数据。Config 模块写入通过 `EmbeddedStoragePersistServiceImpl`（`config/src/main/java/com/alibaba/nacos/config/server/service/repository/embedded/EmbeddedStoragePersistServiceImpl.java:85-176`）执行 SQL INSERT/UPDATE。MySQL 半同步复制确保至少 1 个 Slave 实时同步配置数据：
+Nacos Config 模块依赖 MySQL 存储配置数据。Config 持久化层已拆分：`ConfigInfoPersistService` 接口 + embedded/External 双实现。外置 MySQL 部署下配置发布直接写本地 MySQL（无 JRaft 参与）。MySQL 半同步复制确保至少 1 个 Slave 实时同步配置数据：
 
 ```
 Client → Nacos 中心A (Master) publishConfig(dataId, group, content)
-  → EmbeddedStoragePersistServiceImpl.insertOrUpdate()
+  → ConfigOperationService → ExternalConfigInfoPersistServiceImpl
     → MySQL Master INSERT INTO config_info ...
       → Master 等待 Slave B ACK (rpl_semi_sync_master_timeout=1000ms)
       → Slave B 返回 ACK → Master 提交成功 → 返回客户端成功
     → Nacos 中心B 读取本地 MySQL Slave → 配置自动同步（延迟 RTT ~1ms）
 ```
 
-Nacos 集群不跨 DC 共享 Raft 集群——每个中心独立的 JRaft CP 组仅管理本中心内 Config 模块的一致性。配置跨 DC 一致性完全依赖 MySQL 半同步/异步复制。这意味着：
+Nacos 集群不跨 DC 共享 Raft 集群——外置 MySQL 部署下配置写入不经过 JRaft，跨 DC 一致性完全依赖 MySQL 半同步/异步复制。这意味着：
 - 同城中心 B 配置 RPO ≈ 0（半同步实时同步）
 - 异地中心 C 配置 RPO = MySQL 异步复制延迟（< 1s）
 
@@ -1481,38 +1422,17 @@ Nacos 2.5.3 提供了 `shutdown.sh` 脚本实现优雅停机。流程分为 4 �
 
 ### shutdown.sh 详解
 
-Nacos 的 `shutdown.sh` 脚本位于 `${NACOS_HOME}/bin/shutdown.sh`。核心关闭逻辑：
+Nacos 的 `shutdown.sh` 脚本位于 `${NACOS_HOME}/bin/shutdown.sh`。脚本核心逻辑非常简单：
 
 ```
-1. 发送 SIGTERM 给 Nacos 进程 (kill -15 <pid>)
-2. 等待 Nacos JVM 进程退出 (默认等待 30s)
-3. 若超时 → 强制 kill -9
+1. 通过 ps/存储的 pid 定位 Nacos 进程
+2. 执行 kill ${pid} (发送 SIGTERM)
+3. 等待 JVM 自行退出
 ```
 
-Nacos JVM 注册了 Shutdown Hook (`Runtime.getRuntime().addShutdownHook`)，在收到 SIGTERM 后按序执行：
+**注意**：官方 `shutdown.sh`（`distribution/bin/shutdown.sh:18-28`）仅执行 `kill ${pid}`（SIGTERM），**没有** 30s 超时等待与 `kill -9` 分级——超时强杀需要运维脚本自行实现（参见下文 graceful-shutdown.sh）。
 
-```java
-// NacosShutdownHook.java (简化)
-Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-    // 1. 关闭 gRPC Server
-    grpcServer.shutdown();
-    
-    // 2. 关闭 HTTP Server
-    httpServer.shutdown();
-    
-    // 3. 关闭 JRaft Node
-    raftNode.shutdown();
-    
-    // 4. 关闭 MySQL 连接池
-    dataSource.close();
-    
-    // 5. 刷盘 Raft Log
-    raftLog.flush();
-    
-    // 6. 等待 Distro 同步任务完成
-    distroTaskManager.awaitTermination(5, TimeUnit.SECONDS);
-}));
-```
+关闭次序由各组件自身注册的 JVM Shutdown Hook 完成（如 gRPC 服务端的 `BaseRpcServer.java:59` 注册的钩子：收到 SIGTERM 后按各自注册顺序关闭 gRPC Server、连接、线程池等资源），**不存在统一的 `NacosShutdownHook` 类**。各组件的 Hook 按注册逆序执行，确保依赖方先于被依赖方关闭。
 
 ### 完整优雅停机脚本
 
@@ -1618,7 +1538,7 @@ echo "============================================================"
 
 - Nacos 优雅停机 4 步骤：(1) 从 LB 摘除 → (2) 等待现有连接完成 → (3) shutdown.sh → (4) kill -15 (最后手段)
 - LB 摘除：Nginx upstream 标记节点 `down` + reload → 新连接不路由到该节点
-- shutdown.sh 内部按序关闭：gRPC → HTTP → JRaft → MySQL → Distro → Raft Log 刷盘
+- shutdown.sh 仅执行 `kill ${pid}`（SIGTERM）；关闭次序由各组件自身 Shutdown Hook（如 BaseRpcServer.java:59）完成，无统一 NacosShutdownHook 类
 - 等待连接关闭：HTTP < 5s，gRPC < 120s (proxy_timeout)
 - kill -9 仅作为最后手段——SIGKILL 不留任何清理机会（JRaft 日志可能丢失）
 
@@ -1633,34 +1553,30 @@ Nacos 集群版本升级、配置变更或安全补丁需要重启集群节点�
 Nacos 2.5.3 集群的滚动重启需要考虑以下特殊因素：
 
 1. **JRaft 选举影响**：重启 Follower 节点不影响集群——Leader 仍正常。但重启 Leader 节点会触发 Leader 选举——短暂期间（< 1s）集群不接受写入
-2. **Distro 异步同步中断**：重启节点上的 Distro 异步同步任务中断——临时实例注册信息在重启期间无法同步到该节点。但 Naming 模块的 Distro 通过 Checksum 校验恢复后自动追平
-3. **gRPC 连接迁移**：重启节点上的 gRPC 连接断开——客户端自动重连到其他节点。gRPC 客户端内置重连机制（默认 3 次重试，间隔 1s）
+2. **Distro 异步同步中断**：重启节点上的 Distro 异步同步任务中断——临时实例注册信息在重启期间无法同步到该节点。但 Naming 模块的 Distro 通过 `(clientId, revision)` 周期校验（默认 5s）在节点恢复后自动追平——同步失败任务也会以 3s 间隔无限重试持续补发
+3. **gRPC 连接迁移**：重启节点上的 gRPC 连接断开——客户端自动重连到其他节点。重试分为两层：请求级重试默认 3 次（`RpcClient.request` 的 retryTimes，适用于单次请求超时/失败场景）；连接级重连不设次数上限，按 100ms 起步、逐轮递增至 5s 封顶的退避策略持续重连（`RpcClient.java:560-581`）
 4. **MySQL 连接池重启**：重启后 HikariCP 连接池重新建立 MySQL 连接——短暂期间（< 1s）该节点无法读写 MySQL
 
 ### 核心流程图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 3 节点集群滚动重启完整流程</span><span class="s">初始状态: Node1 (Leader), Node2 (Follower), Node3 (Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream: [Node1, Node2, Node3]</div><div class="dgm-note" style="border:none;background:none;padding:0;">═══════════════════════════════════════════════════════════════════</div><div class="dgm-note" style="border:none;background:none;padding:0;">Round 1: 重启 Node3 (Follower)</div><div class="dgm-note" style="border:none;background:none;padding:0;">Phase 1: 摘除 Node3</div><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream 标记 Node3 down → reload</div><div class="dgm-note" style="border:none;background:none;padding:0;">等待 5s → Nginx 健康检查生效</div></div></div><div class="dgm-note">Phase 2: 优雅停机 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash graceful-shutdown.sh (参见 11.9 节)</span><span class="s">→ 关闭 gRPC Server/HTTP Server/JRaft/MySQL</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Phase 3: 启动 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash bin/startup.sh</span><span class="s">→ JRaft 重新加入集群 (作为 Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从 Leader 同步日志 (追上最新日志)</div></div></div><div class="dgm-note">Phase 4: 验证 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">curl http://192.168.1.103:8848/nacos/v1/core/cluster/nodes</span><span class="s">→ 确认 Node3 state = UP</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认 role = FOLLOWER</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认集群节点数 = 3</div></div></div><div class="dgm-note">Phase 5: 恢复 Node3 LB</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx upstream 移除 Node3 down 标记 → reload</span><span class="s">→ Node3 重新加入 LB</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Round 1 完成 ✅  集群状态: [Node1, Node2, Node3] 全 UP                                                                                                ═══════════════════════════════════════════════════════════════════                                                                                   Round 2: 重启 Node2 (Follower)                                                    同 Round 1 流程 → Phase 1~5                                               Round 2 完成 ✅                                                                                                                                        ═══════════════════════════════════════════════════════════════════                                                                                   Round 3: 重启 Node1 (Leader) - 特殊处理！                                                                                                                    ⚠️ 重启 Leader 前先主动退位！                                                                                                                          Phase 0: Leader 主动退位 (Step Down)</div><div class="dgm-box"><div class="dgm-box-h"><span class="t"># 通过 JRaft API 触发 Leader Step Down</span><span class="s">curl -X POST http://192.168.1.101:7848/jraft/stepDown</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Node1 主动退位为 Follower</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ Raft 自动选举新 Leader (Node2 或 Node3)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 选举耗时 &lt; 1s</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 3 节点集群滚动重启完整流程</span><span class="s">初始状态: Node1 (Leader), Node2 (Follower), Node3 (Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream: [Node1, Node2, Node3]</div><div class="dgm-note" style="border:none;background:none;padding:0;">═══════════════════════════════════════════════════════════════════</div><div class="dgm-note" style="border:none;background:none;padding:0;">Round 1: 重启 Node3 (Follower)</div><div class="dgm-note" style="border:none;background:none;padding:0;">Phase 1: 摘除 Node3</div><div class="dgm-note" style="border:none;background:none;padding:0;">Nginx upstream 标记 Node3 down → reload</div><div class="dgm-note" style="border:none;background:none;padding:0;">等待 5s → Nginx 健康检查生效</div></div></div><div class="dgm-note">Phase 2: 优雅停机 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash graceful-shutdown.sh (参见 11.9 节)</span><span class="s">→ 关闭 gRPC Server/HTTP Server/JRaft/MySQL</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Phase 3: 启动 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">bash bin/startup.sh</span><span class="s">→ JRaft 重新加入集群 (作为 Follower)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 从 Leader 同步日志 (追上最新日志)</div></div></div><div class="dgm-note">Phase 4: 验证 Node3</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">curl http://192.168.1.103:8848/nacos/v1/core/cluster/nodes</span><span class="s">→ 确认 Node3 state = UP</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认 role = FOLLOWER</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 确认集群节点数 = 3</div></div></div><div class="dgm-note">Phase 5: 恢复 Node3 LB</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nginx upstream 移除 Node3 down 标记 → reload</span><span class="s">→ Node3 重新加入 LB</span></div><div class="dgm-box-b"></div></div><div class="dgm-note">Round 1 完成 ✅  集群状态: [Node1, Node2, Node3] 全 UP                                                                                                ═══════════════════════════════════════════════════════════════════                                                                                   Round 2: 重启 Node2 (Follower)                                                    同 Round 1 流程 → Phase 1~5                                               Round 2 完成 ✅                                                                                                                                        ═══════════════════════════════════════════════════════════════════                                                                                   Round 3: 重启 Node1 (Leader) - 特殊处理！                                                                                                                    ⚠️ Leader 重启需特殊处理！                                                                                                                          Phase 0: Leader 重启特殊处理（Nacos 无主动退位 API）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t"># 无主动退位 API - 直接重启 Leader 节点</span><span class="s">→ Raft 自动选举新 Leader，耗时约 election_timeout_ms 量级</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ Raft 自动选举新 Leader (Node2 或 Node3)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 选举耗时 ≈ election_timeout_ms (默认 5000ms) 量级</div></div></div></div>
 
 ### Leader 重启的特殊处理
 
-重启 Leader 节点与重启 Follower 节点有本质区别——Leader 重启会触发 Raft Leader 选举，短暂期间（< 1s）集群不接受写入。推荐**先主动退位再重启**：
+重启 Leader 节点与重启 Follower 节点有本质区别——Leader 重启会触发 Raft Leader 选举，短暂期间（约 election_timeout_ms 量级）集群不接受写入。Nacos 2.5.3 无主动退位 API，只能选择"直接重启（Raft 自动选举）"或"先从成员列表摘除再重启"：
 
 **对比：主动退位 vs 直接重启 Leader**：
 
-| 维度 | 主动退位 (推荐) | 直接重启 Leader |
+| 维度 | 从成员列表摘除后重启 (推荐) | 直接重启 Leader |
 |------|----------------|---------------|
-| **Leader 选举耗时** | < 1s (预先选举) | ~15s (等待心跳超时 + 选举) |
-| **写入中断时间** | < 1s (选举期间) | ~15s (心跳超时 + 选举) |
-| **客户端感知** | 无感 (gRPC 自动重连到新 Leader) | ~15s 写入失败 (Leader 不可达) |
-| **Raft 日志安全** | Leader 主动刷盘后退位 → 日志完整 | Leader 突然宕机 → 未刷盘日志可能丢失 |
+| **Leader 选举耗时** | 重启后自动加入再选举 | ~5s 量级（等待 election_timeout_ms + 选举） |
+| **写入中断时间** | 摘除期间由其余节点承担 | ~5s 量级（选举期间） |
+| **客户端感知** | gRPC 自动重连到其他节点 | 选举期间写入失败（Leader 不可达） |
+| **Raft 日志安全** | 正常停机刷盘 → 日志完整 | 突然宕机 → 未刷盘日志可能丢失 |
 
-**主动退位 API**：
+**主动退位的替代方案**：
 
-```bash
-# 通过 JRaft HTTP API 触发 Leader Step Down
-curl -X POST http://192.168.1.101:7848/jraft/stepDown
-# 预期响应: {"status":"OK","newLeader":"192.168.1.102:7848"}
-```
+Nacos 2.5.3 **未提供 Leader 主动退位 API**（不存在 `/jraft/stepDown` 端点，`CoreOpsController.java:46` 仅提供成员变更类 ops API）。重启 Leader 前应先通过 `/v1/core/cluster` 从成员列表移除该节点，或直接重启由 Raft 自动选举——选举耗时约等于 `election_timeout_ms`（默认 5000ms）量级。
 
 ### 完整滚动重启脚本
 
@@ -1683,18 +1599,23 @@ for NODE_IP in "${NODES[@]}"; do
     echo "------------------------------------------------------"
     
     # =====================================================================
-    # Phase 0: 检查是否为 Leader → 主动退位
+    # Phase 0: 检查是否为 Leader → 先摘除成员再重启（无主动退位 API）
     # =====================================================================
     LEADER_CHECK=$(curl -s http://${NODE_IP}:8848/nacos/v1/core/cluster/nodes | \
-        python3 -c "import sys,json; nodes=json.load(sys.stdin); \
-        leader=[n['ip'] for n in nodes if n.get('extendInfo',{}).get('role')=='LEADER']; \
-        print(leader[0] if leader else '')" 2>/dev/null)
+        python3 -c "import sys,json; body=json.load(sys.stdin); nodes=body.get('data', body); \
+        leaders=[]; \
+        for n in nodes: \
+            meta=(n.get('extendInfo') or {}).get('raftMetaData') or {}; \
+            leaders += [str(g.get('leader')) for g in meta.values() if isinstance(g, dict) and g.get('leader')]; \
+        print(leaders[0] if leaders else '')" 2>/dev/null)
     
-    if [ "${LEADER_CHECK}" = "${NODE_IP}" ]; then
-        echo "[Phase 0] ${NODE_IP} 是 Leader → 主动退位..."
-        curl -X POST http://${NODE_IP}:7848/jraft/stepDown
+    # Leader 地址格式为 "ip:raft端口"（如 192.168.1.101:7848，NacosStateMachine.onLeaderStart）
+    if [[ "${LEADER_CHECK}" == "${NODE_IP}":* ]]; then
+        echo "[Phase 0] ${NODE_IP} 是 Leader → 先从成员列表移除该节点再重启"
+        # Nacos 2.5.3 无 Leader 主动退位 API（/jraft/stepDown 不存在）
+        # 方案: 通过 /v1/core/cluster 移除成员，或直接重启由 Raft 自动选举
+        # (选举耗时约等于 election_timeout_ms 量级)
         sleep 2
-        echo "Leader 已退位 → 新 Leader 已选举"
     fi
     
     # =====================================================================
@@ -1768,12 +1689,12 @@ echo "============================================================"
 
 1. **滚动更新模式（Rolling Update）**：逐个节点重启——类似 K8s StatefulSet 的 `RollingUpdate` 策略——每次只更新 1 个 Pod，保持集群 quorum 可用
 
-2. **主动退位模式（Voluntary Stepdown）**：Leader 主动退位而非直接重启——避免 Leader 突然宕机导致的 Raft 选举延迟（心跳超时 15s vs 主动退位 < 1s）
+2. **平滑摘除模式（Graceful Removal）**：Leader 重启前先从集群成员列表摘除，避免 Leader 突然宕机触发的 Raft 选举延迟（election_timeout_ms 量级）
 
 ### 小结
 
 - Nacos 集群滚动重启 5 阶段：(1) 从 LB 摘除 → (2) 优雅停机 → (3) 启动 → (4) 验证集群状态 → (5) 恢复 LB
-- Leader 重启特殊处理：先通过 JRaft API 主动退位（`/jraft/stepDown`）→ 选举新 Leader < 1s → 再重启旧 Leader
+- Leader 重启特殊处理：Nacos 2.5.3 无主动退位 API——先通过 /v1/core/cluster 摘除成员或直接重启由 Raft 自动选举（耗时约 election_timeout_ms 量级）
 - 滚动重启始终保持集群 quorum 可用——3 节点集群每次只重启 1 节点，仍有 2/3 多数派在线
 - 全流程脚本自动化——逐个节点执行 5 阶段，无需人工介入
 

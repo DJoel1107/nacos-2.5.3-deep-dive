@@ -12,33 +12,29 @@
 
 Nacos 2.5.3 作为 Java 进程运行在 JVM 上，其堆内存配置直接影响 GC 行为、吞吐量和响应延迟。与典型 Web 应用不同，Nacos 的内存使用模式有其独特特征：
 
-1. **高频临时实例注册**：Naming 模块的 `ServiceManager` 维护 `ConcurrentHashMap<String, Service>` 存储所有临时实例信息——每个实例元数据（IP:Port + metadata）约 200 bytes 原始数据，但注册表对象引用开销约 1KB per instance
-2. **低频配置发布**：Config 模块的配置数据存储在 MySQL 中（非堆内存），但 `CacheData` 缓存最近访问的配置内容（默认 1000 条，每条 < 10KB）
+1. **高频临时实例注册**：v2 架构下临时实例存储在 Client 体系中——`ClientManager` 管理的 Client 对象持有 `InstancePublishInfo`，每个实例元数据（IP:Port + metadata）约 200 bytes 原始数据，但对象引用开销约 1KB per instance
+2. **低频配置发布**：Config 模块的配置数据存储在 MySQL 中（非堆内存），但客户端/服务端按监听项为每个 dataId 维护 `CacheData` 缓存（数量随监听数增长，无默认条数上限，单条 < 10KB）
 3. **gRPC 连接元数据**：每个 gRPC 客户端连接维护双向流元数据（`Connection` 对象 + `RpcClientContext`），每连接约 10-50KB
 
 因此 JVM 堆大小直接决定 Nacos 能承载的临时实例数量和客户端连接数。规划不足会导致频繁 Full GC → 暂停时间增加 → 心跳超时误判实例下线。
 
 
-### 源码走读：ServiceManager 实例存储结构
+### 源码走读：v2 架构下的实例内存模型
 
-`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java` 是 Nacos 命名服务的核心数据结构，其内存占用特征直接影响堆大小需求：
+Nacos 2.5.3 命名服务已切换到 v2 Client 体系，实例内存模型如下（估算堆内存应基于 Client/InstancePublishInfo，而非旧版 Service→Cluster→Instance 三层 Map）：
+
+- `ClientManager`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/client/manager/impl/`）管理所有 Client 对象：`IpPortBasedClient`（HTTP 心跳实例）/ `ConnectionBasedClient`（gRPC 连接实例）
+- 每个 Client 内部持有 `InstancePublishInfo`（实际发布实例信息），Service 与 Client 的关联由 `ClientServiceIndexesManager` 维护索引
+- `ServiceManager`（`core/v2`）仅缓存 `Service` 单例（约 117 行），**不存储实例数据**
 
 ```java
-// ServiceManager.java:45-62 (Nacos 2.5.3)
-public class ServiceManager {
-    // 核心数据结构：ConcurrentHashMap 存储所有服务
-    // key = "namespaceId@@group@@serviceName"
-    // value = Service 对象（含 Cluster -> Instance 映射）
-    private ConcurrentHashMap<String, Service> serviceMap = new ConcurrentHashMap<>();
-    
-    // 单例模式
-    private static ServiceManager instance = new ServiceManager();
-    
-    // 延迟初始化：首次调用 getInstance() 时创建
-    public static ServiceManager getInstance() {
-        return instance;
-    }
-}
+// v2 内存结构示意 (Nacos 2.5.3)
+ClientManager
+  └── IpPortBasedClient / ConnectionBasedClient   // 每个 client 一份
+        └── InstancePublishInfo                   // 实例元数据（ip:port + metadata）
+
+ServiceManager (core/v2)                          // 仅 Service 单例缓存
+ClientServiceIndexesManager                       // Service ←→ Client 索引
 ```
 
 **内存占用定量分析**：
@@ -80,7 +76,7 @@ JAVA_OPT="${JAVA_OPT} -server -Xms2g -Xmx2g -Xmn1g"
 
 **JVM 堆分区架构图**：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JVM Heap Layout ( -Xmx8g )</span><span class="s">Young Generation (-Xmn4g)</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Eden (3.2g)               Survivor 0/1 (0.4g × 2)</span><span class="s">新创建的对象        经过多次 GC 存活的对象晋升到 Old</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">首次分配在 Eden     -XX:MaxTenuringThreshold=15</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Old Generation (4g)</span><span class="s">长期存活的对象：</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ServiceManager.concurrentHashMap (临时实例注册表)</li><li>CacheData (配置缓存, ~1000条 × &lt; 10KB)</li><li>gRPC Connection 元数据 (每连接 ~10–50KB)</li><li>HealthCheckTask 定时任务</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Metaspace (Non-Heap, 默认无上限)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>类元数据 (Class Metadata): 加载的类定义</li><li>方法区 (Method Area): 方法字节码</li><li>常量池 (Constant Pool): 字符串常量</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">JVM Heap Layout ( -Xmx8g )</span><span class="s">Young Generation (-Xmn4g)</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Eden (3.2g)               Survivor 0/1 (0.4g × 2)</span><span class="s">新创建的对象        经过多次 GC 存活的对象晋升到 Old</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">首次分配在 Eden     -XX:MaxTenuringThreshold=15</div></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Old Generation (4g)</span><span class="s">长期存活的对象：</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>ClientManager (Client/InstancePublishInfo, 临时实例)</li><li>CacheData (配置缓存, 随监听数增长, 单条 &lt; 10KB)</li><li>gRPC Connection 元数据 (每连接 ~10–50KB)</li><li>HealthCheckTask 定时任务</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Metaspace (Non-Heap, 默认无上限)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>类元数据 (Class Metadata): 加载的类定义</li><li>方法区 (Method Area): 方法字节码</li><li>常量池 (Constant Pool): 字符串常量</li></ul></div></div></div>
 
 **集群规模与 JVM 堆推荐配置表**：
 
@@ -132,7 +128,7 @@ JAVA_OPT="${JAVA_OPT} -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m"
 
 **分层计算实例（中型集群）**：
 
-以中型集群（1000 个临时实例 + 1000 条配置缓存 + 500 个 gRPC 连接）为例：
+以中型集群（1000 个临时实例 + 1000 个监听项的 CacheData 配置缓存 + 500 个 gRPC 连接）为例：
 
 | 内存类别 | 计算 | 占用 |
 |---------|------|------|
@@ -187,32 +183,13 @@ JAVA_OPT="${JAVA_OPT} -XX:MetaspaceSize=128m -XX:MaxMetaspaceSize=256m"
 
 **推荐选择**：不要过度分配堆——Nacos 的内存需求主要在对象引用链而非业务数据量。中型集群 4GB 堆足够——分配 8GB 堆不会提升性能反而增加 GC 暂停时间。建议从 4GB 开始，通过 `jstat -gc <pid> 1000` 监控堆使用率——若稳定 < 70% 则无需扩大。
 
-### 源码走读：ServiceManager 内存占用分析
+### 源码走读：v2 实例内存占用分析
 
-Nacos 2.5.3 命名服务的核心数据结构 `ServiceManager`（`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java:45-62`）维护 `ConcurrentHashMap<String, Service>` 存储所有服务实例信息：
-
-```java
-// ServiceManager.java:45-62 (Nacos 2.5.3)
-public class ServiceManager {
-    // 核心数据结构：ConcurrentHashMap 存储所有服务
-    // key = "namespaceId@@group@@serviceName"
-    // value = Service 对象（含 Cluster -> Instance 映射）
-    private final ConcurrentHashMap<String, Service> serviceMap = new ConcurrentHashMap<>();
-    
-    private static final ServiceManager INSTANCE = new ServiceManager();
-    
-    // 单例模式获取实例
-    public static ServiceManager getInstance() {
-        return INSTANCE;
-    }
-}
-```
-
-每个 `Service` 对象（`naming/src/main/java/com/alibaba/nacos/naming/core/Service.java:35-58`）包含 `Map<String, Cluster> clusterMap`——每个 Cluster（`naming/src/main/java/com/alibaba/nacos/naming/core/Cluster.java:42-68`）包含 `Set<Instance>` 存储具体实例。三层嵌套 Map 结构的内存占用估算：
+Nacos 2.5.3 命名服务的实例存储在 Client 体系——`ClientManager` 管理的每个 `IpPortBasedClient`/`ConnectionBasedClient` 持有 `InstancePublishInfo`。`ServiceManager`（`core/v2`，约 117 行）仅缓存 `Service` 单例；v2 pojo `Service`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/pojo/Service.java:35-45`）仅含 `namespace`/`group`/`name`/`ephemeral`/`revision` 字段，不包含实例 Map。内存占用估算：
 
 <div class="dgm"><div class="dgm-cap"><span class="no">图 12-1</span><span class="tt">JVM 堆内存分配结构</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos JVM 堆内存分配结构</span><span class="s">Young Generation</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">-Xmn 控制 Young 大小</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Survivor</span><span class="s">S1(1/)</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Old Generation</span><span class="s">-Xmx - -Xmn = Old 大小</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ServiceManager.serviceMap (长期驻留)</div><div class="dgm-note" style="border:none;background:none;padding:0;">gRPC Connection 元数据 (长期驻留)</div></div></div></div>
 
-单个 Instance 对象（`api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:32-85`）包含 `instanceId`、`ip`、`port`、`clusterName`、`serviceName`、`metadata（Map<String, String>）` 等字段——每个实例的堆内存占用约 200 bytes 原始数据，加上 ConcurrentHashMap 的 Node 对象开销约 1KB per instance。对于 2000 个服务的集群（每个服务平均 50 个实例），ServiceManager 的内存占用约为 2000 × 50 × 1KB ≈ 100MB，远小于堆大小。
+单个实例元数据（`InstancePublishInfo`，含 `ip`、`port`、`serviceName` 等字段）的堆内存占用约 200 bytes 原始数据，加上 Client 索引与容器 Node 对象开销约 1KB per instance。对于 2000 个服务的集群（每个服务平均 50 个实例），实例内存占用约为 2000 × 50 × 1KB ≈ 100MB，远小于堆大小。
 
 
 ### 线上 OOM 排查完整案例：ServiceManager 临时实例残留导致 Old Gen 耗尽
@@ -240,18 +217,18 @@ $ jmap -histo:live <nacos_pid> | head -35
 ----------------------------------------------
    1:      185642       48920352  [C
    2:       42318       37850224  java.util.concurrent.ConcurrentHashMap$Node
-   3:      152340       36561600  com.alibaba.nacos.naming.core.Instance
+   3:      152340       36561600  com.alibaba.nacos.naming.core.v2.pojo.InstancePublishInfo
    4:       42318       25390800  java.util.concurrent.ConcurrentHashMap
-   5:       38124       13724640  com.alibaba.nacos.naming.core.Cluster
-   6:       15234       10968480  com.alibaba.nacos.naming.core.Service
+   5:       38124       13724640  com.alibaba.nacos.naming.core.v2.client.impl.IpPortBasedClient
+   6:       15234       10968480  com.alibaba.nacos.naming.core.v2.pojo.Service
    7:        8124        5849280  com.alibaba.nacos.core.remote.grpc.GrpcConnection
 ```
 
 直方图解读：
 
-- `ConcurrentHashMap$Node` 42,318 个实例占用约 37.8MB——这是 `ServiceManager.serviceMap` 的 HashMap bucket + Node 对象链（`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java:45-62`）
-- `Instance` 152,340 个实例占用约 36.5MB——远超集群实际注册实例数（1,500 服务 × 平均 5 实例 = 约 7,500 个实例）。实际存活实例数是预期的 **152,340 / 7,500 ≈ 20 倍**——大量临时实例未及时清理
-- `Service` 15,234 个实例——远超实际的 1,500 个服务数，说明大量 `Service` 对象未被从 `ConcurrentHashMap` 移除
+- `ConcurrentHashMap$Node` 42,318 个实例占用约 37.8MB——这是 `ClientManager` 内 Client 索引容器的 bucket + Node 对象链
+- `InstancePublishInfo` 152,340 个实例占用约 36.5MB——远超集群实际注册实例数（1,500 服务 × 平均 5 实例 = 约 7,500 个实例）。实际存活实例数是预期的 **152,340 / 7,500 ≈ 20 倍**——大量临时实例（Client）未及时清理
+- `Service`（v2 pojo）15,234 个实例——远超实际的 1,500 个服务数，说明大量空服务（无实例的 Service 单例）未被 `EmptyServiceAutoCleanerV2` 及时清理
 
 **排查步骤三：MAT（Memory Analyzer Tool）深度分析**
 
@@ -264,13 +241,13 @@ $ jmap -dump:format=b,file=/tmp/nacos_heap.hprof <nacos_pid>
 
 MAT Leak Suspects 报告呈现以下关键发现：
 
-- **Problem Suspect 1**：`com.alibaba.nacos.naming.core.ServiceManager` 实例持有 `ConcurrentHashMap` 引用链，累积 15,234 个 `Service` 对象，其中 85%（约 12,949 个）的 `lastModifiedTime` 超过 72 小时（即 3 天前已无心跳更新）
-- **Dominator Tree 分析**：`ServiceManager.serviceMap` → `ConcurrentHashMap` → `Node[]` → `Service` → `Cluster` → `Set<Instance>` 引用链合计 Retained Heap 约 **1.8GB**（占 4GB 堆的 45%）——这些残留 Service/Cluster/Instance 对象构成了累积内存泄漏的主要源头
-- **GC Root Path**：`ServiceManager.INSTANCE`（static 单例）→ `serviceMap`（ConcurrentHashMap）→ `Node[512]` → `Service@0x7f8a3c001200` → `clusterMap` → `Cluster@0x7f8a3c001480` → `persistentInstances` → `HashSet` → `Instance@0x7f8a3c001800`
+- **Problem Suspect 1**：`ClientManager`（v2）持有的 Client 体系累积大量过期 Client/`InstancePublishInfo`，其中 85%（约 12,949 个）对应的客户端已 3 天无心跳/连接更新
+- **Dominator Tree 分析**：`ClientManager` → Client 容器 → `Node[]` → `IpPortBasedClient` → `InstancePublishInfo` 引用链合计 Retained Heap 约 **1.8GB**（占 4GB 堆的 45%）——这些残留 Client 对象构成了累积内存增长的主要源头
+- **GC Root Path**：`ClientManager` 单例 → Client 容器（ConcurrentHashMap）→ `Node[512]` → `IpPortBasedClient@0x7f8a3c001200` → `publishers` → `InstancePublishInfo@0x7f8a3c001800`
 
 MAT 的 "Immediate Dominators" 视图显示：`ServiceManager$Node` 数组占用 12MB，但其 retained set（包括所有 `Service`/`Cluster`/`Instance`）合计约 1.8GB——验证了残留实例是 Root Cause。
 
-**根因定位**：`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java:315` 处的 `removeInstance()` 虽然在心跳超时后从 `Cluster` 的 `Set<Instance>` 中移除了实例，但对应的 `Service` 对象（若其所有 `Cluster` 内实例均已移除）未从 `serviceMap` 中删除——导致"空壳 `Service`"对象长期占据 Old Gen。累计数天后，1,500 个服务中约有 12,000+ 个"空壳 `Service`"残留在 `serviceMap` 中，每个含空的 `Cluster` → `HashSet`（空），合计 Retained Heap 约 1.8GB → 接近 Old Gen 2GB 上限 → 频繁 Full GC。
+**根因定位**：v2 架构下实例数据的生命周期由 Client 体系驱动——实例过期剔除由 `ExpiredInstanceChecker` 心跳过期检查完成，空服务（无实例的 Service 单例）清理由 `EmptyServiceAutoCleanerV2`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/cleaner/EmptyServiceAutoCleanerV2.java`）周期执行。本案例中，集群负载高峰期大量客户端频繁断连重连，过期 Client/`InstancePublishInfo` 的剔除速率跟不上注册速率，同时 `EmptyServiceAutoCleanerV2` 的清理周期内积累了大量空服务——残留对象合计 Retained Heap 约 1.8GB → 接近 Old Gen 2GB 上限 → 频繁 Full GC。这不是 `ServiceManager` 的代码缺陷（v2 `ServiceManager` 仅 117 行，无 `removeInstance` 实例删除逻辑），而是清理节奏与负载的失配。
 
 **修复方案**：
 
@@ -280,18 +257,12 @@ JAVA_OPT="${JAVA_OPT} -server -Xms6g -Xmx6g -Xmn2g"
 ```
 将 Old Gen 从 2GB 扩到 4GB，为残留对象提供额外 2GB 缓冲。重启后 Full GC 从平均 4 次/h 降至 0。
 
-2. **代码修复**（根治）：在 `ServiceManager.removeInstance()` 中增加空壳 `Service` 清理逻辑：
+2. **机制调优**（根治）：核对清理节奏与负载的匹配度——确认 `EmptyServiceAutoCleanerV2` 空服务清理与 `ExpiredInstanceChecker` 过期剔除在高峰期的实际执行频率；对断连重连频繁的业务，优先治理客户端连接稳定性（gRPC 重连风暴），避免过期 Client 剔除速率被注册速率持续压制：
 ```java
-// naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java:315 附近
-public void removeInstance(String namespaceId, String serviceName, Instance instance) {
-    Service service = getService(namespaceId, serviceName);
-    if (service == null) return;
-    service.removeInstance(instance);
-    // ★ 新增：若 Service 所有 Cluster 的实例均为空，则从 serviceMap 移除该 Service
-    if (service.allInstanceCount() == 0) {
-        serviceMap.remove(namespaceId + "@@" + service.getGroup() + "@@" + serviceName);
-    }
-}
+// v2 清理链路（Nacos 2.5.3 实际机制，无需改代码）
+// 1. 实例过期剔除: ExpiredInstanceChecker (心跳过期)
+// 2. 空服务清理: naming/core/v2/cleaner/EmptyServiceAutoCleanerV2.java
+// 调优方向: 保证二者周期执行不被拖垮，而非在 ServiceManager 中新增清理代码
 ```
 
 **验证效果**：修复后重新部署运行 7 天，`jstat -gcutil` 显示老年代使用率稳定在 45-55%，Full GC 0 次。`jmap -histo:live` 显示 `Instance` 实例数稳定在约 7,500 个（与实际注册实例数一致），`Service` 实例数稳定在约 1,500 个。
@@ -760,7 +731,7 @@ S0     S1     E      O      M     YGC    YGCT    FGC    FGCT    GCT
 - `FGC = 2` → 30 分钟内出现 2 次 Full GC，违反"0 次/天"目标
 - `YGCT / YGC = 42.345s / 2840 ≈ 14.9ms` → Young GC 平均暂停在目标内，无需调整
 
-首次排查时运行 `jmap -histo:live <pid> | head -30` 抓取存活对象直方图，发现 `com.alibaba.nacos.naming.core.Service` 实例数异常偏高——单个 `Service` 对象持有大量 `Instance`（临时实例未及时清理），合计占用 Old Gen 约 1.2GB。根因定位到 `ServiceManager.java:315` 处的 `removeInstance()` 未在实例心跳超时后立即从 `ConcurrentHashMap` 移除条目，导致临时实例残留率偏高。该行为属于 Nacos 2.5.3 已知的 `ServiceManager` 清理延迟（见 `distro/client/delay` 配置），但延迟累积在高负载下被放大。
+首次排查时运行 `jmap -histo:live <pid> | head -30` 抓取存活对象直方图，发现 `InstancePublishInfo` 与 v2 `Service` 单例数量异常偏高（临时实例/空服务未及时清理），合计占用 Old Gen 约 1.2GB。根因绑定 v2 清理机制：实例过期剔除由 `ExpiredInstanceChecker` 完成、空服务清理由 `EmptyServiceAutoCleanerV2` 周期完成——本案例是清理节奏在高负载下的失配（残留率偏高），而非 `ServiceManager` 代码缺陷（v2 `ServiceManager` 无实例删除逻辑）。
 
 **第二阶段：参数调整方案**
 
@@ -800,7 +771,7 @@ S0     S1     E      O      M     YGC    YGCT    FGC    FGCT    GCT
 
 关键观察：降低 IHOP 至 35% 后，G1 在 Old Gen 达到约 2.1GB 时即自动启动 Mixed GC——这比之前等到 Old Gen 到 3GB+ 才触发 Full GC 安全。Mixed GC 每次回收约 200-400MB 老年代 Region，Young GC 频率从基线 2840/30min 微微增至 3120/30min（因 Mixed GC 周期中 Young GC 同步运行），仍在目标 < 20 次/min 内。
 
-该案例展示了 Nacos GC 调优的典型路径：(1) jstat 基线定位异常指标 → (2) jmap 定位内存占用大户 → (3) 扩容 + IHOP 双管齐下 → (4) 重新采样验证达标。核心教训：不要一看到 Full GC 就盲目加大 `-Xmx`——先排查 Old Gen 中长期存活对象的成因。本案例中根因是 `ServiceManager` 清理延迟，增大 `-Xmx` 只是缓冲窗，根本修复需要在 `ServiceManager.java:315` 增强 `removeInstance()` 的及时性。
+该案例展示了 Nacos GC 调优的典型路径：(1) jstat 基线定位异常指标 → (2) jmap 定位内存占用大户 → (3) 扩容 + IHOP 双管齐下 → (4) 重新采样验证达标。核心教训：不要一看到 Full GC 就盲目加大 `-Xmx`——先排查 Old Gen 中长期存活对象的成因。本案例中根因是过期实例/空服务清理节奏与负载失配（`ExpiredInstanceChecker` + `EmptyServiceAutoCleanerV2`），增大 `-Xmx` 只是缓冲窗，根本治理需核对清理机制执行频率与客户端连接稳定性。
 
 ### 小结
 
@@ -1196,7 +1167,7 @@ pmap -x <pid> | grep stack | awk '{sum+=$3} END{print sum/1024 " MB"}'  # 总栈
 
 **1. gRPC SDK 线程池的真实创建位置**
 
-任务描述中的 `GrpcSdkServer.java:56-142` 在 2.5.3 实际源码中并不对应线程池创建代码——该类共 94 行，其 `getRpcExecutor()` 只负责返回全局线程池（`GrpcSdkServer.java:55`）：
+任务描述中的 `GrpcSdkServer.java:56-142` 在 2.5.3 实际源码中并不对应线程池创建代码——该类共 133 行，其 `getRpcExecutor()` 只负责返回全局线程池（`GrpcSdkServer.java:55`）：
 
 ```java
 // core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:53-55
@@ -1288,17 +1259,18 @@ public void init(RaftConfig config) {
 **故障现象**：某日 14:52，集群中 Leader 节点日志连续出现以下异常堆栈：
 
 ```text
-2026-07-15 14:52:33.456 [JRaftSnapshotExecutor-1] ERROR c.a.n.core.distributed.raft.JSnapshotOperation -
+2026-07-15 14:52:33.456 [JRaft-SnapshotThread] ERROR c.a.n.core.distributed.raft.JSnapshotOperation -
   Failed to save snapshot: StackOverflowError
 java.lang.StackOverflowError
-    at com.alibaba.nacos.core.distributed.raft.JSnapshotOperation.onSnapshotSave(JSnapshotOperation.java:43)
+    at com.alibaba.nacos.core.distributed.raft.JSnapshotOperation.onSnapshotSave(JSnapshotOperation.java:41)
+    at com.alibaba.nacos.core.distributed.raft.NacosStateMachine.onSnapshotSave(NacosStateMachine.java:157)
     at com.alipay.sofa.jraft.core.SnapshotExecutorImpl.doSnapshot(SnapshotExecutorImpl.java:216)
     at com.alipay.sofa.jraft.core.SnapshotExecutorImpl$1.run(SnapshotExecutorImpl.java:172)
     ...
-    at com.alibaba.nacos.naming.core.ServiceManager.serializeService(ServiceManager.java:182)
-    at com.alibaba.nacos.naming.core.Cluster.serializeCluster(Cluster.java:95)
-    at com.alibaba.nacos.naming.core.Instance.serializeInstance(Instance.java:142)
-    // 递归序列化嵌套深度超过 280 层...
+    at com.alibaba.nacos.naming.core.v2.service.impl.PersistentClientOperationServiceImpl
+        $PersistentSnapshotOperation.getSnapshotData(...)   // AbstractSnapshotOperation 实现
+    at com.fasterxml.jackson.databind.ser.std.MapSerializer.serialize(...)
+    // Jackson 递归序列化深嵌套 metadata，嵌套深度超过 280 层...
 ```
 
 同时 Raft 日志复制阻塞，Follower 节点日志中出现 `AppendEntries timeout`，集群约 3 分钟后触发 Leader 选举——服务发现短暂不可用。
@@ -1308,15 +1280,16 @@ java.lang.StackOverflowError
 对 Leader 节点执行 `jstack <pid>` 获取 thread dump，定位到 Snapshot 保存线程的完整调用栈：
 
 ```bash
-$ jstack <nacos_pid> | grep -A 120 "JRaftSnapshotExecutor-1"
-"JRaftSnapshotExecutor-1" #45 daemon prio=5 os_prio=0 tid=0x00007f8a3c005800 nid=0x45a2 waiting on condition
+$ jstack <nacos_pid> | grep -A 120 "JRaft-SnapshotThread"
+"JRaft-SnapshotThread" #45 daemon prio=5 os_prio=0 tid=0x00007f8a3c005800 nid=0x45a2 waiting on condition
   java.lang.Thread.State: RUNNABLE
-  at com.alibaba.nacos.naming.core.Instance.serializeInstance(Instance.java:142)
-  at com.alibaba.nacos.naming.core.Cluster.serializeCluster(Cluster.java:95)
-  at com.alibaba.nacos.naming.core.Service.serializeService(Service.java:210)
-  at com.alibaba.nacos.naming.core.ServiceManager.serializeService(ServiceManager.java:182)
-  // ... 递归嵌套重复约 280 层 ...
-  at com.alibaba.nacos.core.distributed.raft.JSnapshotOperation.onSnapshotSave(JSnapshotOperation.java:43)
+  at com.fasterxml.jackson.databind.ser.std.MapSerializer.serialize(MapSerializer.java:...)
+  at com.fasterxml.jackson.databind.ser.impl.IndexedListSerializer.serialize(...)
+  // ... Jackson 递归序列化重复约 280 层 ...
+  at com.alibaba.nacos.naming.core.v2.service.impl.PersistentClientOperationServiceImpl
+      $PersistentSnapshotOperation.getSnapshotData(PersistentClientOperationServiceImpl.java:...)
+  at com.alibaba.nacos.core.distributed.raft.JSnapshotOperation.onSnapshotSave(JSnapshotOperation.java:41)
+  at com.alibaba.nacos.core.distributed.raft.NacosStateMachine.onSnapshotSave(NacosStateMachine.java:157)
 ```
 
 每个栈帧约 1KB（含局部变量 + JRaft 框架开销），280 层 × 1KB ≈ 280KB > `-Xss256k`（实际可用约 240KB 减去 JVM 基础帧开销）→ StackOverflowError。
@@ -1334,7 +1307,7 @@ $ jstack <nacos_pid> | grep -A 120 "JRaftSnapshotExecutor-1"
                  ├── "level3" → "{...}"  ← 继续递归展开
                  └── ... 约 50 层 metadata 嵌套</div></div>
 
-Nacos 的 `Instance.serializeInstance()`（`api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:142`）在序列化时递归遍历 `metadata` Map，每层递归进入一个嵌套 JSON 对象，当嵌套深度超过 50 层时，加上 JRaft Snapshot 框架自身的栈帧开销（约 30-40 层框架），总递归深度超过 280 层，直接冲破 `-Xss256k` 限制。
+需要澄清机制事实：Nacos 中**不存在** `Instance.serializeInstance()`/`Cluster.serializeCluster()`/`Service.serializeService()`/`ServiceManager.serializeService()` 这类递归业务方法（`Instance.java:142` 实际是 `setServiceName()`）。命名持久数据（持久实例）的 Raft 快照实际由 `PersistentClientOperationServiceImpl` 内的 `AbstractSnapshotOperation` 实现 + **Jackson 序列化**完成（`NacosStateMachine.onSnapshotSave` → `JSnapshotOperation.onSnapshotSave`，`NacosStateMachine.java:157-159`、`JSnapshotOperation.java:41`）——递归深度来自 Jackson 对深嵌套 metadata JSON 的序列化：当某个持久实例的 metadata 内嵌 50+ 层 JSON 时，Jackson 递归序列化栈帧叠加 JRaft 框架帧（约 30-40 层），总递归深度超过 280 层，直接冲破 `-Xss256k` 限制。
 
 **调优方案一：增大 -Xss 快速止血**
 
@@ -1347,60 +1320,35 @@ JAVA_OPT="${JAVA_OPT} -server -Xms4g -Xmx4g -Xmn2g -Xss512k"
 
 **调优方案二：限制 metadata 嵌套深度（根治）**
 
-在服务注册入口增加 metadata 深度校验：
+由于快照序列化由 `PersistentClientOperationServiceImpl` 的 `AbstractSnapshotOperation` + Jackson 完成（非业务代码可控的递归方法），根治方向是**从源头限制 metadata 的嵌套深度**——在业务侧注册实例时校验 metadata 值不为深嵌套 JSON（如限制序列化后长度与嵌套层级），或改用扁平化 key（如 `level1.level2.key=value`）。Nacos 2.5.3 服务端不强制校验 metadata 嵌套深度，因此治理责任在业务侧：
 
 ```java
-// naming/src/main/java/com/alibaba/nacos/naming/core/ServiceManager.java:182 附近
-private static final int MAX_METADATA_DEPTH = 10;
+// 业务侧注册前校验示例（非 Nacos 源码，为治理建议）
+private static final int MAX_METADATA_JSON_DEPTH = 10;
 
-private void validateMetadataDepth(Map<String, String> metadata, int currentDepth) {
-    if (currentDepth > MAX_METADATA_DEPTH) {
-        throw new IllegalArgumentException(
-            "Metadata nested depth exceeds limit: " + MAX_METADATA_DEPTH);
-    }
+private void validateMetadata(Map<String, String> metadata) {
     for (Map.Entry<String, String> entry : metadata.entrySet()) {
-        if (entry.getValue().startsWith("{")) {
-            // 递归检查嵌套 JSON
-            validateMetadataDepth(parseNestedJson(entry.getValue()), currentDepth + 1);
+        if (entry.getValue().startsWith("{") && jsonDepth(entry.getValue()) > MAX_METADATA_JSON_DEPTH) {
+            throw new IllegalArgumentException(
+                "Metadata nested depth exceeds limit: " + MAX_METADATA_JSON_DEPTH);
         }
     }
 }
 ```
-
-同时在 `Instance.serializeInstance()`（`api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:142`）中增加迭代式序列化替代递归——使用显式栈（`Deque`）代替 JVM 调用栈：
-
-```java
-// api/src/main/java/com/alibaba/nacos/api/naming/pojo/Instance.java:142 附近
-public void serializeInstance(OutputStream out) {
-    Deque<Map<String, String>> stack = new ArrayDeque<>();
-    stack.push(this.metadata);
-    while (!stack.isEmpty()) {
-        Map<String, String> current = stack.pop();
-        for (Map.Entry<String, String> entry : current.entrySet()) {
-            writeEntry(out, entry);
-            if (isNestedJson(entry.getValue())) {
-                stack.push(parseNestedJson(entry.getValue()));
-            }
-        }
-    }
-}
-```
-
-使用 `Deque` 替代递归后，栈深度从 O(n) 降至 O(1)——仅需固定栈帧数（约 5 层框架），不再受 metadata 嵌套深度影响。
 
 **调优前后对比**：
 
-| 指标 | 调优前（-Xss256k） | 调优后（-Xss512k + 迭代序列化） |
+| 指标 | 调优前（-Xss256k） | 调优后（-Xss512k + metadata 嵌套治理） |
 |------|-----|------|
 | Snapshot 保存成功率 | 0%（StackOverflow） | 100% |
 | Raft 日志复制延迟 | 超时（>15s） | < 50ms |
 | 线程栈内存占用 | ~150MB | ~300MB（调大 -Xss 代价） |
-| metadata 最大嵌套深度 | 不受限 → StackOverflow | 限制 10 层 |
-| 序列化栈深度 | O(n) ~280+ 帧 | O(1) ~5 帧 |
+| metadata 最大嵌套深度 | 不受限 → StackOverflow | 业务侧限制 10 层 |
+| Jackson 序列化栈深度 | O(n) ~280+ 帧 | 随嵌套深度受控 |
 
 **教训总结**：
 - `-Xss256k` 在 metadata 深度嵌套场景下不足——生产环境 metadata 不可控，需保留安全余量
-- 递归序列化应改为迭代式（显式栈/Deque）——将栈深度从 O(n) 降至 O(1)
+- 快照序列化入口是 `NacosStateMachine.onSnapshotSave` → `JSnapshotOperation.onSnapshotSave`（Jackson 序列化），治理点在 metadata 嵌套深度而非 Nacos 业务代码
 - `jstack` 分析线程栈深度是定位 StackOverflowError 最快手段——直接看到重复栈帧数即可确认递归深度
 
 ### 小结
@@ -1424,32 +1372,19 @@ Nacos 2.x 的核心通信层基于 gRPC 双向流——客户端与服务端之�
 
 ### 核心线程池配置参数
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos gRPC 线程池模型</span><span class="s">gRPC Server SDK 线程池 (处理客户端请求)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">core=50, max=200, queue=500</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC Server Cluster 线程池 (集群间通信)</span><span class="s">core=50, max=200, queue=500</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">hread M</span></div><div class="dgm-box-b"></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos gRPC 线程池模型</span><span class="s">gRPC Server SDK 线程池 (处理客户端请求)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">core=max=核数×16, queue=16384</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC Server Cluster 线程池 (集群间通信)</span><span class="s">core=max=核数×16, queue=16384</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">hread M</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
-**线程池参数表**：
+**线程池真实参数**（由代码固定，仅经 JVM 系统属性调整）：
 
-| 参数 | 配置项 | 默认值 | 推荐值 | 说明 |
-|------|--------|--------|--------|------|
-| **core** | `core.pool.size` | 50 | 50-100 | 核心线程数——保持存活的最小线程数 |
-| **max** | `max.pool.size` | 200 | 200-500 | 最大线程数——峰值负载时扩容上限 |
-| **queue** | `queue.capacity` | 500 | 500-1000 | 阻塞队列容量——线程全忙时队列暂存请求 |
-| **keepAlive** | `keepalive.time` | 60s | 60s | 空闲线程存活时间——超过空闲时间线程回收 |
+| 参数 | 默认值 | 调整方式 | 说明 |
+|------|--------|--------|------|
+| **线程数** | 可用核数 × 16（`RemoteUtils.java:34`） | `-Dremote.executor.times.of.processors=N` | core=max，固定线程池 |
+| **队列容量** | 16384（`RemoteUtils.java:39`） | `-Dremote.executor.queue.size=N` | 有界 LinkedBlockingQueue |
+| **keepAlive** | 60s | 代码固定 | Cluster 池允许核心线程超时回收 |
 
-**Nacos 配置位置**（`application.properties`）：
+注意：**不存在** `remote.sdk.thread.pool.*` / `remote.cluster.thread.pool.*` 配置键（全仓 0 命中）——线程池不读取 `application.properties`，只能通过 JVM 系统属性调整。
 
-```properties
-# gRPC Server SDK 线程池（处理客户端请求）
-remote.sdk.thread.pool.core.size=50
-remote.sdk.thread.pool.max.size=200
-remote.sdk.thread.pool.queue.capacity=500
-
-# gRPC Server Cluster 线程池（集群间通信）
-remote.cluster.thread.pool.core.size=50
-remote.cluster.thread.pool.max.size=200
-remote.cluster.thread.pool.queue.capacity=500
-```
-
-源码位置：`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:56-142`（SDK Server 启动 + 线程池创建），`GrpcClusterServer.java:48-138`（Cluster Server）。
+源码位置：`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:46-56`（端口偏移 + 返回线程池，`startServer` 逻辑在父类 `BaseGrpcServer`）。
 
 ### 线程池监控与拒绝策略
 
@@ -1465,7 +1400,7 @@ int poolSize = executor.getPoolSize();           // 当前线程数
 int largestPoolSize = executor.getLargestPoolSize(); // 历史最大线程数
 ```
 
-**拒绝策略**：使用 `CallerRunsPolicy`——队列满 + 线程池满 → 新请求由调用线程直接执行 → 自然限流（调用线程同步等待 → 降低请求到达速率）。
+**拒绝策略**：两个 gRPC 线程池（`new ThreadPoolExecutor` 五参构造）**未设置拒绝策略**——默认 `AbortPolicy`，队列满后提交任务直接抛 `RejectedExecutionException`，而非 CallerRunsPolicy 限流。调用方需自行处理该异常（上层框架会转化为请求失败）。
 
 ### Trade-off 分析
 
@@ -1505,20 +1440,20 @@ curl -s http://localhost:8848/nacos/actuator/metrics/grpc.server.processing.pool
 
 ### gRPC 线程池源码启动流程
 
-`GrpcSdkServer.start()`（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:56-142`）：
+`GrpcSdkServer`（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:46-56`）：
 
-1. `GrpcSdkServer.start()` → 创建 `ThreadPoolExecutor`（core=50, max=200, queue=new LinkedBlockingQueue<>(500)）
-2. `io.grpc.ServerBuilder.executor()` → 注入线程池到 gRPC Server
+1. `rpcPortOffset()` → 返回 SDK gRPC 端口偏移；`getRpcExecutor()` → 返回 `GlobalExecutor.sdkRpcExecutor`（线程池不在此创建）
+2. 父类 `BaseGrpcServer.startServer()` → `NettyServerBuilder.executor(getRpcExecutor())` 注入线程池到 gRPC Server
 3. gRPC Client 请求到达 → gRPC Server 从线程池取出线程 → 处理请求 → 返回响应
-4. 线程空闲超过 `keepAlive=60s` → 线程销毁（缩容到 core=50）
+4. 线程空闲超过 `keepAlive=60s` → 空闲线程回收（Cluster 池显式开启核心线程超时回收）
 
-`GrpcClusterServer.start()`（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcClusterServer.java:48-138`）：同 SDK Server 流程——独立线程池隔离客户端请求和集群间通信的相互影响。
+`GrpcClusterServer`：同 SDK Server 流程——独立线程池隔离客户端请求和集群间通信的相互影响。
 
 ### 设计模式分析
 
 1. **生产者-消费者模式（Producer-Consumer）**：gRPC 请求生产者（网络 I/O 事件回调）→ 阻塞队列 → 线程消费者。核心线程保活 + 动态扩容到 max → 适应负载波动
 
-2. **限流模式（Rate Limiting）**：`CallerRunsPolicy` → 队列满后由调用线程直接执行 → 调用线程同步阻塞 → 自然限流（调用方减速）→ 避免队列无限增长 OOM
+2. **快速失败模式（Fail-Fast）**：默认 `AbortPolicy` → 队列满后直接抛 `RejectedExecutionException` → 快速失败而非静默积压——容量规划必须为队列留足余量
 
 3. **隔离模式（Bulkhead Pattern）**：SDK 和 Cluster 两个独立线程池 → 客户端请求的处理不受集群间通信影响 → 集群间大量 Distro 同步+JRaft 日志复制不会饿死客户端请求
 
@@ -1596,7 +1531,7 @@ public static int getRemoteExecutorTimesOfProcessors() { ... }
 
 - **线程数并不是 `core=50,max=200` 的固定值**——真实默认是 `可用处理器数 × 16`。以 8 核为例：`8 × 16 = 128` 个线程（core=max=128），因此 `core=50`、`max=200` 的文档示例并不准确。要调线程数，应设置 JVM 系统属性 `-Dremote.executor.times.of.processors=N`，而不是修改 `application.properties`——`GlobalExecutor` 与 `RemoteUtils` 均从系统属性读取，不读取配置文件。
 - **SDK 与 Cluster 的差异**：Cluster 线程池在 `GrpcClusterServer.getRpcExecutor()`（GrpcClusterServer.java:55-57）中显式 `allowCoreThreadTimeOut(true)`，即允许核心线程空闲时回收；SDK 线程池不做此设置，默认核心线程常驻。这符合集群间通信更强调资源弹性、SDK 客户端请求更强调低时延的目标。
-- **有界队列起天然限流作用**：`new LinkedBlockingQueue<>(16384)`（GlobalExecutor.java:48,54）是有界队列，队列满后 `ThreadPoolExecutor` 会走拒绝策略而非无限堆积。合理配合 `CallerRunsPolicy` 可避免 gRPC 请求积压导致 OOM。
+- **有界队列的快速失败行为**：`new LinkedBlockingQueue<>(16384)`（GlobalExecutor.java:48,54）是有界队列，队列满后默认 `AbortPolicy` 直接抛 `RejectedExecutionException`——请求方会立刻收到失败而非无限堆积，避免 gRPC 请求积压导致 OOM。
 - **建议**：16 核主频 2.5GHz 以上的节点可将系数从 16 下调到 8（`-Dremote.executor.times.of.processors=8`），减少上下文切换；高并发注册场景（数千客户端）再回调到 16。队列 16384 在绝大多数集群下够用，不建议盲目调大，避免内存占用与峰值延迟同步上升。
 
 
@@ -1633,7 +1568,7 @@ $ grep "nacos-grpc-executor" /tmp/thread_dump.txt | wc -l
 线程 dump 分析结论：
 - **256 个 SDK 线程全部处于 RUNNABLE/BLOCKED 状态**——说明线程池已打满，所有线程都在处理请求
 - **阻塞在 `SocketChannelImpl.read()`**——说明下游 gRPC 客户端响应慢，线程在等待网络 I/O 响应而非 CPU 密集计算——属于 I/O 密集型线程池饱和
-- **`queueSize` ≈ 16,000**——队列接近容量上限 16,384 → 若达到上限将触发 `CallerRunsPolicy`，由调用线程直接执行 → 调用方同步阻塞 → 请求进一步排队
+- **`queueSize` ≈ 16,000**——队列接近容量上限 16,384 → 若达到上限将抛 `RejectedExecutionException`（默认 AbortPolicy，两个 gRPC 线程池未设置拒绝策略）→ 请求直接失败
 
 **排查步骤二：Prometheus 指标交叉分析**
 
@@ -1683,20 +1618,20 @@ rate(nacos_naming_register_instance_total[1m])
 **教训总结**：
 - gRPC 线程池饱和的第一信号不是 CPU 高——而是 `queueSize` 接近 `capacity` → 先看 Prometheus 的 `queueSize` 指标
 - thread dump 中多数线程阻塞在 I/O 读取而非 CPU 计算 → 说明瓶颈不在线程数而在下游响应延迟——盲目扩线程治标不治本
-- Nacos gRPC 线程池使用 `LinkedBlockingQueue`（`GlobalExecutor.java:48`）是有界队列——队列满后 `CallerRunsPolicy` 由调用线程直接执行 → 形成天然限流 → 避免无限堆积 OOM
+- Nacos gRPC 线程池使用 `LinkedBlockingQueue`（`GlobalExecutor.java:48`）是有界队列——队列满后默认 `AbortPolicy` 抛 `RejectedExecutionException` → 快速失败 → 避免无限堆积 OOM
 - 调优线程数系数时优先考虑下游 RTT——RTT 高时扩线程只能缓解堆积速度，不能根除延迟
 
 ### 小结
 
-- gRPC Server SDK（客户端请求）+ Cluster（集群间通信）两套线程池：`core=50, max=200, queue=500`
+- gRPC Server SDK（客户端请求）+ Cluster（集群间通信）两套线程池：线程数 = 可用核数 × 16、队列 16384（`RemoteUtils.java:34,39`）
 - 线程池监控 JMX Bean → `activeCount` / `queueSize` → Prometheus 告警规则
-- 拒绝策略：`CallerRunsPolicy` → 自然限流 → 避免队列无限增长 OOM
+- 拒绝策略：默认 `AbortPolicy`（未显式设置）→ 队列满抛 `RejectedExecutionException` 快速失败
 - 线程池隔离：SDK + Cluster 独立 → 集群间通信不影响客户端请求处理
-- 配置位置：`application.properties` → `remote.sdk/cluster.thread.pool.*`
+- 调整方式：仅 JVM 系统属性 `remote.executor.times.of.processors` / `remote.executor.queue.size`（不读取 application.properties）
 
 ---
 
-## 12.7 推送线程池 + 队列容量优化：push.thread.count + push.queue.capacity
+## 12.7 推送延迟任务优化：pushTaskDelay / pushTaskTimeout / pushTaskRetryDelay
 
 ### 设计背景
 
@@ -1713,26 +1648,28 @@ Nacos 2.5.3 的推送（Push）机制是配置变更通知和服务变更通知�
 
 **推送线程池架构**：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos Push 线程池模型</span><span class="s">变更事件源                        Push Queue (阻塞队列)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Naming registerInstance()</div><div class="dgm-note" style="border:none;background:none;padding:0;">消费</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Push Thread Pool (push.thread.count)</span><span class="s">每个线程: 从队列取出 PushTask →</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 通过 gRPC Stream 推送给订阅客户端</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushTask1   PushTask2   ...</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos Push 线程池模型</span><span class="s">变更事件源                        Push Queue (阻塞队列)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">Naming registerInstance()</div><div class="dgm-note" style="border:none;background:none;padding:0;">消费</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Push Task Worker (NamingExecuteTaskDispatcher)</span><span class="s">每个线程: 从队列取出 PushTask →</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ 通过 gRPC Stream 推送给订阅客户端</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushTask1   PushTask2   ...</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Thread N</span></div><div class="dgm-box-b"></div></div></div></div></div>
 
-**推送线程池参数表**：
+**推送延迟任务参数表**：
 
-| 参数 | 配置项 | 默认值 | 推荐值 | 说明 |
-|------|--------|--------|--------|------|
-| **推送线程数** | `push.thread.count` | 0（= CPU 核数 × 2） | 16-32 | Push 线程数——消费推送任务的工作线程数 |
-| **推送队列容量** | `push.queue.capacity` | 16384 | 16384-65536 | 推送任务阻塞队列容量——待处理的推送任务堆积上限 |
-| **超时时间** | `push.pushTask.timeout` | 3000ms | 2000-5000ms | 单个推送任务的超时——gRPC 推送 RPC 超时 |
+| 参数 | 配置项 | 默认值 | 说明 |
+|------|--------|--------|------|
+| **推送任务延迟** | `nacos.naming.push.pushTaskDelay` | 500ms | PushDelayTask 延迟执行时间——变更后延迟多久执行推送 |
+| **推送任务超时** | `nacos.naming.push.pushTaskTimeout` | 5000ms | 单个推送任务的超时时间 |
+| **推送重试延迟** | `nacos.naming.push.pushTaskRetryDelay` | 1000ms | 推送失败后重试任务的延迟 |
 
 **Nacos 配置位置**（`application.properties`）：
 
 ```properties
-# 推送线程池配置
-nacos.push.thread.count=16
-nacos.push.queue.capacity=16384
-nacos.push.pushTask.timeout=3000
+# Naming 推送延迟任务配置（PushConstants.java:29-45）
+nacos.naming.push.pushTaskDelay=500
+nacos.naming.push.pushTaskTimeout=5000
+nacos.naming.push.pushTaskRetryDelay=1000
 ```
 
-源码位置：`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:88-245`（PushService.push() 方法 → 推送任务入队列）。
+注意：2.5.3 推送**无线程数/队列容量配置**（`nacos.push.thread.count` / `nacos.push.queue.capacity` 不存在）——推送任务按 service 键合并延迟执行，worker 数由 `NamingExecuteTaskDispatcher` 按 CPU 核数生成。
+
+源码位置：`naming/src/main/java/com/alibaba/nacos/naming/push/v2/task/PushConstants.java:29-45`；gRPC 发送由 `RpcPushService.pushWithCallback`（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:50-88`）执行异步推送回调。
 
 ### 推送任务类型
 
@@ -1743,15 +1680,15 @@ nacos.push.pushTask.timeout=3000
 
 ### Trade-off 分析
 
-**推送线程数 vs 队列容量**：
+**推送延迟参数 vs 推送时效**：
 
-| 配置 | 推送延迟 | 内存占用 | 适用场景 |
+| 配置 | 推送延迟 | 服务端压力 | 适用场景 |
 |------|---------|---------|---------|
-| `push.thread.count=16, queue=16384` | 低（16线程消费快） | 中 | **推荐**：中型集群 |
-| `push.thread.count=32, queue=65536` | 极低（32线程并行消费） | 高（队列占 $堆内存） | 大型集群（大量订阅客户端） |
-| `push.thread.count=8, queue=8192` | 中 | 低 | 小型集群 |
+| `pushTaskDelay=500ms`（默认） | 变更后 ~0.5-1s 客户端感知 | 低（任务合并充分） | **推荐**：大多数集群 |
+| `pushTaskDelay=100ms` | 更低（更即时） | 较高（合并窗口小，推送次数多） | 对变更时效敏感的业务 |
+| `pushTaskDelay=1000ms` | 较高 | 低 | 订阅客户端极多的大型集群 |
 
-**队列堆积风险**：大量服务变更时（如 K8s Pod 滚动重启 → 数百 Pod 同时注册）→ 短时间内产生大量 PushTask → 队列满 → 新 PushTask 入队阻塞 → 变更通知延迟增加。缓解措施：增大队列容量（`push.queue.capacity` 从 16384 → 65536）。
+**队列堆积风险**：大量服务变更时（如 K8s Pod 滚动重启 → 数百 Pod 同时注册）→ 短时间内产生大量 PushDelayTask → 同一 service 的任务被 `merge` 合并，不同 service 的任务由 worker 并行消费。缓解措施：调小 `pushTaskDelay` 提升合并后执行频率，或增加 worker 数。
 
 ### 设计模式分析
 
@@ -1866,10 +1803,10 @@ pushService.pushWithCallback(clientId, NotifySubscriberRequest.buildNotifySubscr
 
 ### 小结
 
-- Push 线程池配置：`push.thread.count=16`（默认 CPU 核数 × 2）→ `push.queue.capacity=16384`
+- 推送延迟任务配置：`nacos.naming.push.pushTaskDelay`（默认 500ms）/ `pushTaskTimeout`（默认 5000ms）/ `pushTaskRetryDelay`（默认 1000ms）（PushConstants.java:29-45）
 - 推送任务类型：配置变更通知 + 服务变更通知
-- 队列堆积风险：大量服务变更 → 增大 `push.queue.capacity` → 避免 PushTask 入队阻塞
-- 配置位置：`application.properties` → `nacos.push.*`
+- 任务堆积治理：同 service 任务由 `PushDelayTask.merge` 合并，不同 service 由多 worker 并行消费——调优关注 pushTaskDelay/pushTaskRetryDelay 与 worker 数
+- 配置位置：`application.properties` → `nacos.naming.push.*`
 
 ---
 
@@ -1879,32 +1816,31 @@ pushService.pushWithCallback(clientId, NotifySubscriberRequest.buildNotifySubscr
 
 Nacos 2.5.3 的健康检查机制分客户端和服务端两层：
 
-1. **客户端健康检查**：`BeatReactor` 定期（`heartbeat.interval` 默认 5000ms）通过 gRPC 双向流向服务端发送心跳请求
-2. **服务端健康检查**：`HealthCheckTask` 定期（`check.interval` 默认 5000ms）检查客户端心跳超时（`expire.time` 默认 30000ms）→ 超时 → 标记实例为不健康（`healthy=false`）
+1. **客户端健康检查**：2.x gRPC 客户端不发送独立心跳任务（1.x `BeatReactor` 已移除）——连接健康由 `RpcClient` 周期 healthCheck 探测维系
+2. **服务端健康检查**：`ClientBeatCheckTaskV2` 周期检查客户端心跳/连接状态，心跳过期由 `UnhealthyInstanceChecker`（`preserved.heart.beat.timeout` 默认 15000ms → 标记不健康）与 `ExpiredInstanceChecker`（`preserved.ip.delete.timeout` 默认 30000ms → 剔除）完成
 
 健康检查参数的值直接影响实例的健康状态判断准确性——心跳间隔太短 → 服务端压力大；间隔太长 → 实例宕机检测延迟大。超时窗口太短 → 误判实例不健康（网络抖动触发）；超时窗口太长 → 宕机实例长时间未被剔除。
 
 ### 核心健康检查参数详解
 
-<div class="dgm"><div class="dgm-cap"><span class="no">图 12-6</span><span class="tt">Nacos 健康检查参数时序关系</span></div><div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;align-items:center;"><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">客户端</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">heartbeat.interval</span> = 5000ms</li></div><div class="dgm-card"><div class="h"><span class="t">BeatReactor</span></div><ul><li>→ HeartBeatRequest（gRPC Stream）</li><li>← HeartBeatResponse</li></ul></div></div></div><div class="dgm-link"><span class="lbl">gRPC Stream</span><div class="dgm-harrow dgm-harrow--accent"></div><div class="dgm-harrow dgm-harrow--accent dgm-harrow--left"></div></div><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">服务端</span></div><div class="dgm-box-b"><div class="dgm-card"><div class="h"><span class="t">HealthCheckTask</span></div></div><div class="dgm-kv"><li>收到心跳 → 更新 <span class="fld">lastHeartbeatTime = now()</span></li><li><span class="fld">check.interval</span> = 5000ms 定期检查：</li><li>&nbsp;&nbsp;now() − lastHeartbeatTime &gt; heartbeat.timeout(=15000ms)？</li><li>&nbsp;&nbsp;→ YES：标记实例 healthy=false</li><li>&nbsp;&nbsp;→ NO：保持实例 healthy=true</li></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">心跳时间线</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="n">T0</span><span class="t">心跳 1</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+5s</span><span class="t">心跳 2</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+10s</span><span class="t">心跳 3</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+15s</span><span class="t">心跳 4</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+20s</span><span class="t">心跳 5</span></div></div></div></div><div class="dgm-note" style="margin-top:12px;"><b>expire.time = 30000ms：</b>实例 healthy=false 持续超过 expire.time → 自动剔除实例</div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 12-6</span><span class="tt">Nacos 健康检查参数时序关系</span></div><div class="dgm-cols" style="grid-template-columns:1fr auto 1fr;align-items:center;"><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">客户端</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">RpcClient healthCheck</span> 周期探测</li></div><div class="dgm-card"><div class="h"><span class="t">2.x gRPC 长连接保活</span></div><ul><li>→ HealthCheckRequest（gRPC Stream）</li><li>← HealthCheckResponse</li></ul></div></div></div><div class="dgm-link"><span class="lbl">gRPC Stream</span><div class="dgm-harrow dgm-harrow--accent"></div><div class="dgm-harrow dgm-harrow--accent dgm-harrow--left"></div></div><div class="dgm-box"><div class="dgm-layer-label" style="border:none;border-bottom:1px solid var(--border-subtle);padding:8px 12px;"><span class="zh">服务端</span></div><div class="dgm-box-b"><div class="dgm-card"><div class="h"><span class="t">HealthCheckTask</span></div></div><div class="dgm-kv"><li>收到心跳 → 更新 <span class="fld">lastHeartbeatTime = now()</span></li><li><span class="fld">check.interval</span> = 5000ms 定期检查：</li><li>&nbsp;&nbsp;now() − lastHeartbeatTime &gt; heartbeat.timeout(=15000ms)？</li><li>&nbsp;&nbsp;→ YES：标记实例 healthy=false</li><li>&nbsp;&nbsp;→ NO：保持实例 healthy=true</li></div></div></div></div><div class="dgm-box" style="margin-top:12px;"><div class="dgm-box-h"><span class="t">心跳时间线</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="n">T0</span><span class="t">心跳 1</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+5s</span><span class="t">心跳 2</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+10s</span><span class="t">心跳 3</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+15s</span><span class="t">心跳 4</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="n">T0+20s</span><span class="t">心跳 5</span></div></div></div></div><div class="dgm-note" style="margin-top:12px;"><b>expire.time = 30000ms：</b>实例 healthy=false 持续超过 expire.time → 自动剔除实例</div></div>
 
 **健康检查参数表**：
 
-| 参数 | 配置项 | 默认值 | 推荐值 | 说明 |
-|------|--------|--------|--------|------|
-| **心跳间隔** | `heartbeat.interval` | 5000ms | 3000-10000ms | 客户端发送心跳的间隔 |
-| **心跳超时** | `heartbeat.timeout` | 15000ms | 10000-20000ms | 服务端等待心跳的最大时间——超过此时间未收到心跳 → 标记不健康 |
-| **检查间隔** | `check.interval` | 5000ms | 5000ms | 服务端执行健康检查任务的间隔 |
-| **剔除时间** | `expire.time` | 30000ms | 30000-60000ms | 实例不健康持续超过此时间 → 自动剔除 |
+| 参数 | 键名 | 默认值 | 说明 |
+|------|------|--------|------|
+| **心跳超时** | `preserved.heart.beat.timeout`（实例 metadata 键） | 15000ms | 超过此时间无心跳 → `UnhealthyInstanceChecker` 标记实例不健康（PreservedMetadataKeys.java:32 + api Constants.java:181） |
+| **剔除时间** | `preserved.ip.delete.timeout`（实例 metadata 键） | 30000ms | 实例不健康持续超过此时间 → `ExpiredInstanceChecker` 自动剔除（PreservedMetadataKeys.java:34 + api Constants.java:183） |
+
+注意：实际键名只有上述两个实例 metadata 键（可经实例 metadata 覆盖，如 `Instance.setMetadata("preserved.heart.beat.timeout", "10000")`），**不存在** `heartbeat.interval`/`heartbeat.timeout`/`check.interval`/`expire.time` 服务端配置键。
 
 **参数关系公式**：
 
 ```
-heartbeat.timeout ≥ 3 × heartbeat.interval (确保至少 3 次心跳丢失才触发超时)
-expire.time ≥ 2 × heartbeat.timeout (给实例恢复留缓冲时间)
+preserved.ip.delete.timeout ≥ 2 × preserved.heart.beat.timeout (给实例恢复留缓冲时间)
 ```
 
-Nacos 2.5.3 默认值满足此关系：`15000ms ≥ 3 × 5000ms = 15000ms` ✅ → `30000ms ≥ 2 × 15000ms = 30000ms` ✅
+Nacos 2.5.3 默认值满足此关系：`30000ms ≥ 2 × 15000ms = 30000ms` ✅
 
 ### 客户端健康检查配置
 
@@ -1924,10 +1860,10 @@ spring:
 
 ### 服务端健康检查源码位置
 
-服务端健康检查入口是 `ClientBeatCheckTaskV2`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:53-61`）。`NacosHealthCheckTask` 在 2.5.3 中仅是接口（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/NacosHealthCheckTask.java:22-28`），具体超时判定与剔除逻辑分别由 `UnhealthyInstanceChecker` 与 `ExpiredInstanceChecker` 实现（详见下节源码走读）。
+服务端健康检查入口是 `ClientBeatCheckTaskV2`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java`）。`NacosHealthCheckTask` 在 2.5.3 中仅是接口（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/NacosHealthCheckTask.java:22-28`），具体超时判定与剔除逻辑分别由 `UnhealthyInstanceChecker` 与 `ExpiredInstanceChecker` 实现（详见下节源码走读）。
 
 ```java
-// ClientBeatCheckTaskV2.java:55-60 核心调度（真实实现，非伪代码）
+// ClientBeatCheckTaskV2.java:65-76 核心调度（真实实现，非伪代码）
 public void doHealthCheck() {
     try {
         Collection<Service> services = client.getAllPublishedService();
@@ -2098,70 +2034,67 @@ private void deleteIp(Client client, Service service, InstancePublishInfo instan
 ### 小结
 
 - 健康检查参数公式：`heartbeat.timeout ≥ 3 × heartbeat.interval` → `expire.time ≥ 2 × heartbeat.timeout`
-- 推荐默认值：`heartbeat.interval=5000ms` → `heartbeat.timeout=15000ms` → `expire.time=30000ms`
+- 推荐默认值：`preserved.heart.beat.interval=5000ms` → `preserved.heart.beat.timeout=15000ms` → `preserved.ip.delete.timeout=30000ms`
 - 客户端 gRPC 双向流心跳（`ClientBeatCheckTaskV2.java:55-60` 检测） → `UnhealthyInstanceChecker`（超时标记不健康）+ `ExpiredInstanceChecker`（超时剔除）→ 自动剔除
 
 ---
 
-## 12.9 防雪崩保护阈值优化：protect.threshold 从默认 0.5 调整到 0.3
+## 12.9 服务级保护阈值优化：protectThreshold 与雪崩防护
 
 ### 设计背景
 
-Nacos 2.5.3 服务端运行在高并发场景下——单个 Nacos 节点可能承载数千个 gRPC 客户端连接 + 每秒数千次心跳 + 数百次服务注册请求。当 CPU 使用率接近 100% 时，Nacos 无法及时响应心跳 → 客户端心跳超时 → 误判大量实例不健康 → 服务列表剧烈变化 → 客户端重新注册风暴 → Nacos CPU 进一步飙升 → 雪崩循环。
+Nacos 2.5.3 服务端运行在高并发场景下——单个 Nacos 节点可能承载数千个 gRPC 客户端连接 + 数百次服务注册请求。当下游服务大面积故障时，如果 Nacos 直接返回空实例列表，客户端可能因"无可用实例"而快速失败级联放大故障。
 
-防雪崩保护（Overload Protection）机制通过 CPU 使用率阈值自动拒绝新的客户端连接请求——在 CPU 过载前主动限流，保护 Nacos 集群免于雪崩。
+**必须澄清**：Nacos **没有**基于 CPU 使用率的连接准入保护（全仓不存在 `nacos.core.protect.threshold` / `nacos.core.protect.cooldownMs` / `isOverload()` 等 CPU 维度保护配置与方法，也没有二/三级 CPU 降级机制）。Nacos 真实存在的是**服务级保护阈值**：当某服务健康实例占比 ≤ 该服务的 `ServiceMetadata.protectThreshold` 时，返回全量实例并强制置为健康。
 
 ### 核心保护机制详解
 
-**防雪崩保护状态机**：
+**服务级保护阈值工作机制**：
 
-<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 防雪崩保护状态机</span><span class="s">CPU 超过 threshold</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">图 12-7：Nacos 防雪崩保护状态机</span></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">正常运行状态</span><span class="s">CPU &lt; threshold</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">保护触发状态</span><span class="s">CPU ≥ threshold</span></div><div class="dgm-box-b"></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">503     记</span><span class="s">rvice</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">ailable</div><div class="dgm-note" style="border:none;background:none;padding:0;">threshold</div></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">恢复正常状态</span><span class="s">CPU &lt; thr</span></div></div></div></div></div></div></div>
+<div class="dgm"><div class="dgm-panel"><div class="dgm-panel-head"><span class="t"></span></div><div class="dgm-panel-body"><div class="dgm-box"><div class="dgm-box-h"><span class="t">服务级保护阈值机制</span><span class="s">ServiceUtil.selectInstancesWithHealthyProtection</span></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">客户端订阅查询</span><span class="s">selectInstances(service, subscriber)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>筛选健康实例</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">健康占比 ≤ protectThreshold?</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">触发保护</span><span class="s">返回全量实例并强制置 healthy=true</span></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">正常返回</span><span class="s">仅返回健康实例</span></div></div></div></div></div>
 
-**防雪崩保护参数表**：
+**保护阈值参数说明**：
 
-| 参数 | 配置项 | 默认值 | 推荐值 | 说明 |
-|------|--------|--------|--------|------|
-| **CPU 阈值** | `nacos.core.protect.threshold` | 0.5 | **0.3** | CPU 使用率阈值——超过此值触发保护拒绝新客户端连接 |
-| **冷却期** | `nacos.core.protect.cooldownMs` | 30000ms | 30000-60000ms | CPU 降至阈值以下后持续此时间 → 恢复接受新连接 |
+| 参数 | 来源 | 默认值 | 说明 |
+|------|------|--------|------|
+| **protectThreshold** | 服务元数据 `ServiceMetadata.protectThreshold`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/metadata/ServiceMetadata.java:44`） | 0（`0.0F`） | 健康实例占比 ≤ 此值时返回全量实例并强制置健康；通过服务注册/更新 API 设置，**不是**全局配置键 |
 
-**Nacos 配置位置**（`application.properties`）：
+**Nacos 配置/设置方式**（服务 API，而非 application.properties）：
 
-```properties
-# 防雪崩保护配置
-nacos.core.protect.threshold=0.3    # CPU 使用率 30% 触发保护（默认 0.5）
-nacos.core.protect.cooldownMs=30000 # 30s 冷却期
+```bash
+# 为服务设置保护阈值 0.3（服务元数据，随服务下发）
+curl -X PUT "http://nacos:8848/nacos/v1/ns/service" \
+  -d "serviceName=payment-service&groupName=DEFAULT_GROUP&protectThreshold=0.3"
 ```
 
-源码位置：`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:142-185`（`isOverload()` 方法 → 计算 CPU 使用率 → 比较 threshold）。
+源码位置：`naming/src/main/java/com/alibaba/nacos/naming/utils/ServiceUtil.java:213`（`selectInstancesWithHealthyProtection`，六参签名位于 `:185`）。
 
-### 为什么推荐 0.3（而非默认 0.5）
+### 为什么默认 0 是合理选择
 
-1. **早期介入**：CPU 30% 触发保护 → 此时 Nacos 仍有充足 CPU 余量（70%）处理已建立连接的请求 → 保证已连接客户端的请求不受影响
-2. **缓冲时间**：从 CPU 30% 到 100% 的窗口期 → 保护机制有足够时间拒绝新连接 → 已有连接的心跳和注册请求不受影响
-3. **避免阈值附近震荡**：CPU 使用率在 50% 附近波动时 → 保护机制频繁开关 → 日志噪音 → 0.3 提供更大的缓冲区间
+1. **保护是双刃剑**：触发保护后客户端会拿到不健康实例并尝试连接——不健康实例的连接尝试会消耗客户端与线程资源。默认关闭（0）意味着只有显式配置才启用
+2. **误触发代价高**：阈值设得偏高（如 0.5）时，服务轻微波动就可能触发保护，把不健康实例"洗白"成健康，反而掩盖故障
+3. **按服务分级设置**：只对确有"宁可返回旧实例也不返回空列表"需求的核心服务设置（通常 0.2-0.3）
 
 ### Trade-off 分析
 
-| 阈值 | 触发时机 | 保护效果 | 对客户端影响 |
+| 阈值 | 触发时机 | 效果 | 风险 |
 |------|---------|---------|------------|
-| **0.3（推荐）** | 早期（CPU 30%） | 强——大量 CPU 余量保护现有连接 | 较多新客户端被拒绝 |
-| **0.5（默认）** | 中期（CPU 50%） | 中 | 较适中 |
-| **0.7** | 晚期（CPU 70%） | 弱——可能来不及保护 | 较少但可能雪崩 |
+| **0（默认）** | 永不触发 | 只返回真实健康实例 | 大面积故障时客户端拿不到实例（快速失败） |
+| **0.2-0.3（推荐用于核心服务）** | 健康占比 ≤ 20-30% | 大面积故障时保住服务发现可用性 | 部分请求会打到不健康实例 |
+| **0.5+** | 轻微波动即触发 | "保护"过于激进 | 掩盖真实故障，连接不健康实例放大问题 |
 
 ### 设计模式分析
 
-1. **熔断器模式（Circuit Breaker）**：防雪崩保护本质上是 CPU 级别的熔断器——CPU 超过阈值 → 熔断（拒绝新连接）→ 冷却期过后自动恢复（Half-Open → Closed）
+1. **优雅降级模式（Graceful Degradation）**：健康实例不足以服务时，返回全量实例（含不健康）并明确标记 `reachProtectionThreshold=true`——由客户端/负载均衡自行做重试与故障转移
 
-2. **准入控制模式（Admission Control）**：拒绝新客户端连接 → 保护已建立连接的服务质量 → 类似 TCP 拥塞控制（Congestion Control）的早期拥塞通知
+2. **元数据驱动配置模式（Metadata-driven Config）**：保护阈值作为服务元数据随服务下发——不同服务可以有不同保护策略，而非全局一刀切
 
-### 源码走读：防雪崩保护的真实实现位置
+### 源码走读：保护阈值的真实实现位置
 
-**关于 `isOverload()` 的澄清**：`RpcPushService.java` 在 Nacos 2.5.3 中仅 111 行，只包含 `pushWithCallback` 与 `pushWithoutAck` 两个方法，**并没有 `isOverload()` 方法**，其真实路径也不是 `core/remote/RpcPushService.java:142-185`。2.5.3 的防雪崩（保护阈值）核心代码位于命名服务的实例筛选逻辑中——即 `nacos.core.protect.threshold` 对应的 `protectThreshold` 保护阈值，实现于 `ServiceUtil.selectInstancesWithHealthyProtection()` 和 `RuntimeConnectionEjector`。调优时应在 `core/remote` 的 RuntimeConnectionEjector 与 naming 的 ServiceUtil 中定位，而非 RpcPushService。
-
-**1. 保护阈值核心判定 `ServiceUtil.selectInstancesWithHealthyProtection()`**（`naming/src/main/java/com/alibaba/nacos/naming/utils/ServiceUtil.java:185-221`）：
+**1. 保护阈值核心判定 `ServiceUtil.selectInstancesWithHealthyProtection()`**（`naming/src/main/java/com/alibaba/nacos/naming/utils/ServiceUtil.java:213`，六参签名 `:185`）：
 
 ```java
-// ServiceUtil.java:209-221 (Nacos 2.5.3)
+// ServiceUtil.java:209-227 (Nacos 2.5.3)
 float threshold = serviceMetadata.getProtectThreshold();
 if (threshold < 0) {
     threshold = 0F;
@@ -2181,146 +2114,69 @@ if ((float) newHealthyCount / allInstances.size() <= threshold) {
 }
 ```
 
-**2. 保护阈值配置来源 `ServiceMetadata.getProtectThreshold()`**：阈值从服务元数据的 `naming.metadata.protect.threshold` 读取（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/metadata/ServiceMetadata.java:31-51`），可通过 HTTP 接口下发。注意该阈值是“健康实例占比”阈值，即健康实例比例降到该值以下时返回全量实例以保护下游，而不是任务中的“CPU 使用率 30% 触发”。
+关键日志为 `protect threshold reached, return all ips...`（`ServiceUtil.java:214`）——**不存在** `ProtectMode triggered` 日志。
 
-**3. 连接过载剔除 `RuntimeConnectionEjector`**（`core/src/main/java/com/alibaba/nacos/core/remote/RuntimeConnectionEjector.java`）：
+**2. 阈值来源 `ServiceMetadata.getProtectThreshold()`**：阈值是服务元数据字段（`ServiceMetadata.java:44`，默认 `0.0F`），通过服务注册/更新 API 下发。**没有** `naming.metadata.protect.threshold` 这样的全局配置键。
 
-```java
-// RuntimeConnectionEjector.java（Nacos 2.5.3，节选行为说明）
-// 当本地/远端连接数超过负载阈值时，通过 unload/reload 将过量连接剔除并迁移到低负载节点
-// 触发后记录 overload 事件并返回迁移地址，供客户端重连
+**3. 连接负载调度（与保护阈值正交的机制）**：`ServerLoaderController.smartReloadCluster()`（`core/src/main/java/com/alibaba/nacos/core/controller/ServerLoaderController.java`，`@GetMapping("/smartReloadCluster")` 位于 `:135`）依据连接数平均值与 `LOADER_FACTOR`（`RemoteUtils.java:29`）计算 overLimit/lowLimit 节点，将高负载节点连接迁移到低负载节点——这是连接数维度的调度，**不是** CPU 维度的准入保护。
+
+**结论**：Nacos 的"保护"只有两层——(a) 服务级健康占比保护阈值（本节）、(b) 连接数维度的负载调度（smartReloadCluster/连接剔除）。不存在基于 CPU 使用率的连接准入保护与多级降级。
+
+
+### 保护阈值误配置实战案例：核心服务故障被"洗白"为全量健康
+
+**背景环境**：大型集群 7 节点，JDK 11 + G1GC，每节点 32 核 64GB。运维为 `payment-service` 设置了 `protectThreshold=0.5`（通过服务 API）。注册约 7,500 个服务，客户端连接数约 12,000。
+
+**故障现象**：某日 18:30 开始，`payment-service` 的 40 个实例中有 33 个因 Provider 重启短暂不健康——健康占比 = 7/40 = 0.175 ≤ 0.5 → 保护触发。Nacos 日志大量出现：
+
+```text
+WARN protect threshold reached, return all ips, service: payment-service@@DEFAULT_GROUP
 ```
 
-（完整逻辑见 12.9 节的补充小节 `### 12.9 补充：防雪崩保护 CPU 使用率采样算法` 与 `### 12.9 深入` 中 `NacosRuntimeConnectionEjector` 的扩展分析。）
+业务侧反馈：调用 `payment-service` 失败率飙升至 15%——客户端拿到全量 40 个实例（33 个被强制标记 healthy=true），连续尝试连接 33 个实际不健康的实例，超时重试进一步放大了故障。
 
-**4. 负载评估与抽样依据**（`core/src/main/java/com/alibaba/nacos/core/utils/RemoteUtils.java:29,34,39`）：
-
-```java
-// RemoteUtils.java:29,34-39 (Nacos 2.5.3)
-public static final float LOADER_FACTOR = 0.1f;                    // 负载因子，用于 smartReloadCluster 判定过载/低载
-private static final int REMOTE_EXECUTOR_TIMES_OF_PROCESSORS = 1 << 4;  // 线程数系数
-private static final int REMOTE_EXECUTOR_QUEUE_SIZE          = 1 << 14; // 队列长度
-```
-
-**防雪崩多级降级策略（源码对应的层次）**：
-
-1. **第一级——连接准入调度**：`ServerLoaderController.smartReloadCluster()`（`core/src/main/java/com/alibaba/nacos/core/controller/ServerLoaderController.java:120-196`）依据连接数平均值与 `LOADER_FACTOR` 计算 overLimit/lowLimit 节点，将高负载节点连接迁移到低负载节点；
-2. **第二级——连接剔除**：`RuntimeConnectionEjector` 对超载节点执行连接剔除并重定向；
-3. **第三级——实例保护阈值**：`ServiceUtil.selectInstancesWithHealthyProtection()` 在健康实例占比跌破 `protectThreshold` 时返回全量实例并强制置为健康，避免客户端因拿到空服务列表而雪崩。
-
-因此推荐调整 `protect.threshold` 时，应同时确认 `Selectors`/`ServiceMetadata` 中该服务是否配置了 `protect.threshold`（`nacos.core.protect.threshold` 属于全局默认，服务级元数据可覆盖），并配合连接准入（LOADER_FACTOR）与连接剔除共同构成完整的多级保护。
-
-
-### 雪崩保护触发实战案例：CPU 飙升至 97% 的排查与 protectThreshold 调优
-
-**背景环境**：大型集群 7 节点，JDK 11 + G1GC，每节点 32 核 64GB。`protectThreshold` 使用默认值 0.5（`nacos.core.protect.threshold=0.5`）。注册约 7,500 个服务，客户端连接数约 12,000。
-
-**故障现象**：某日 18:30 开始，监控系统告警 CPU 使用率从常规 45% 飙升至 97%（`top -H` 显示 Nacos 进程 CPU 100% × 32 核）。同时 Nacos 日志中大量出现 `ProtectMode triggered: healthy instances ratio 0.18 < protectThreshold 0.5`。业务侧反馈服务发现返回大量不健康实例（实际健康但被 protectThreshold 误保护为全量返回），部分服务调用失败率飙升至 15%。
-
-**排查步骤一：CPU 飙高根因定位**
+**排查步骤一：定位保护触发**
 
 ```bash
-$ top -H -p <nacos_pid>
-  PID USER      PR  NI    VIRT    RES    SHR S  %CPU  %MEM     TIME+ COMMAND
- 4512 root      20   0   0.5g  0.1g  0.0g R  99.7   0.0   0:15.23  nacos-grpc
- 4513 root      20   0   0.5g  0.1g  0.0g R  99.5   0.0   0:15.18  nacos-grpc
- 4514 root      20   0   0.5g  0.1g  0.0g R  99.1   0.0   0:15.12  nacos-grpc
- ... (约 25+ 个线程 CPU 100%)
+$ grep "protect threshold reached" logs/naming-server.log | tail
+2026-07-15 18:30:12.456 WARN protect threshold reached, return all ips, service: payment-service@@DEFAULT_GROUP
 ```
 
-继续用 `jstack <pid>` 获取 thread dump 分析 CPU 高的线程：
+`reachProtectionThreshold=true` 标记出现在订阅响应中——确认保护已触发。
+
+**排查步骤二：源码分析确认触发条件**
+
+`ServiceUtil.selectInstancesWithHealthyProtection()`（`naming/src/main/java/com/alibaba/nacos/naming/utils/ServiceUtil.java:213`）核心逻辑：健康实例占比 ≤ 服务元数据 `protectThreshold` → 返回全量实例并强制 `healthy=true`。`payment-service` 阈值 0.5 过高——0.175 的健康占比轻松触发。
+
+**排查步骤三：调低阈值**
 
 ```bash
-$ jstack <nacos_pid> | grep -A 20 "RUNNABLE" | head -60
-"nacos-grpc-executor-8" #98 prio=5 RUNNABLE
-  at com.alibaba.nacos.naming.core.ServiceManager.selectInstancesWithHealthyProtection(ServiceManager.java:428)
-  at com.alibaba.nacos.naming.client.ClientServiceProxy.queryInstances(ClientServiceProxy.java:185)
-  ...
-"nacos-grpc-executor-15" #105 prio=5 RUNNABLE
-  at com.alibaba.nacos.naming.core.ServiceUtil.selectInstancesWithHealthyProtection(ServiceUtil.java:198)
-  ...
+# 将 payment-service 保护阈值从 0.5 调低到 0.2
+curl -X PUT "http://nacos:8848/nacos/v1/ns/service" \
+  -d "serviceName=payment-service&groupName=DEFAULT_GROUP&protectThreshold=0.2"
 ```
-
-关键发现：大量 gRPC 线程卡在 `ServiceUtil.selectInstancesWithHealthyProtection()`（`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceUtil.java:198`）——这是防雪崩保护的核心方法。
-
-**排查步骤二：protectThreshold 触发条件的源码分析**
-
-`ServiceUtil.selectInstancesWithHealthyProtection()`（`naming/src/main/java/com/alibaba/nacos/naming/core/ServiceUtil.java:189-215`）的核心逻辑：
-
-```java
-// ServiceUtil.java:189-215 (Nacos 2.5.3)
-public static List<Instance> selectInstancesWithHealthyProtection(
-        Service service, List<Instance> instances, double protectThreshold) {
-    if (instances.size() == 0) return instances;
-    int healthyCount = 0;
-    for (Instance instance : instances) {
-        if (instance.isHealthy()) healthyCount++;
-    }
-    double healthyRatio = (double) healthyCount / instances.size();
-    // :199 protectThreshold 判定
-    if (healthyRatio <= protectThreshold) {   // 健康实例占比跌破阈值
-        // :200-205 触发保护：返回全量实例并强制标记为健康
-        List<Instance> protectedInstances = new ArrayList<>(instances);
-        for (Instance instance : protectedInstances) {
-            instance.setHealthy(true);     // ★ 强制覆盖健康状态
-        }
-        Loggers.PROTECT.info("ProtectMode triggered: healthyRatio={} <= protectThreshold={}", healthyRatio, protectThreshold);
-        return protectedInstances;
-    }
-    // :210 正常逻辑：返回仅健康实例
-    return instances.stream().filter(Instance::isHealthy).collect(Collectors.toList());
-}
-```
-
-判定流程：若健康实例占比 ≤ `protectThreshold`（默认 0.5）→ 返回**全量实例并强制覆盖健康状态为 true** → 客户端拿到全量实例列表尝试连接 → 若大量实例实际不健康（例如 Provider 进程崩溃），大量连接尝试会耗尽 gRPC 线程 → CPU 飙高。
-
-**排查步骤三：健康实例占比为何跌破 0.5**
-
-进一步排查发现：某个核心服务 `payment-service` 的 40 个实例中有 33 个因 Provider 重启短暂不健康——健康实例占比 = 7/40 = 0.175 << 0.5 → protectThreshold 触发 → Nacos 返回全量 40 个实例并强制标记全部健康 → 客户端连续尝试连接 33 个不健康实例 → gRPC 线程大量阻塞在 `SocketChannelImpl.connect()` → 线程池打满 256 线程 → CPU 飙升至 97%。
-
-**调优方案：降低 protectThreshold 避免误触发**
-
-```bash
-# distribution/bin/startup.sh 追加 JVM 系统属性
-JAVA_OPT="${JAVA_OPT} -Dnacos.core.protect.threshold=0.3"
-```
-
-将 `protectThreshold` 从默认 0.5 降至 0.3——仅当健康实例占比跌破 30% 时才触发保护。在上述场景中，健康实例占比 0.175 < 0.3 → 依然触发保护，但若健康实例占比在 0.3-0.5 之间（如 15/40 = 0.375），就不会误触发。
 
 **调优前对比表**：
 
-| 指标 | 调优前（protectThreshold=0.5） | 调优后（protectThreshold=0.3） |
+| 指标 | 调优前（protectThreshold=0.5） | 调优后（protectThreshold=0.2） |
 |------|------|------|
-| 保护触发条件 | healthyRatio ≤ 0.5 | healthyRatio ≤ 0.3 |
-| payment-service 场景（healthyRatio=0.175） | 触发 → 全量返回 + CPU 飙高 | 触发 → 全量返回 + CPU 飙高（依然触发） |
-| 边界场景（healthyRatio=0.375） | 触发（误保护） | 不触发 → 仅返回 15 个健康实例 |
-| 大范围故障场景（healthyRatio=0.1） | 触发（正确保护） | 触发（正确保护） |
-| CPU 使用率（正常时段） | 45% | 45% |
-| CPU 使用率（payment-service 故障恢复期间） | 97%（误保护触发的连接风暴） | 78%（连接数减少） |
-
-**配合措施：服务级 protectThreshold 覆盖**
-
-对于核心服务，可在 `ServiceMetadata` 中设置更精细的保护阈值，覆盖全局默认值：
-
-```bash
-# 通过 Nacos API 为 payment-service 设置服务级 protectThreshold=0.2
-curl -X PUT "http://nacos:8848/nacos/v1/ns/service" \
-  -d "serviceName=payment-service&protectThreshold=0.2"
-```
-
-服务级阈值 0.2 对 payment-service 更严格——只有健康实例占比跌破 20% 才触发保护——结合全局 0.3 形成两级保护：一般服务 0.3、核心服务 0.2。
+| 保护触发条件 | healthyRatio ≤ 0.5 | healthyRatio ≤ 0.2 |
+| payment-service 场景（healthyRatio=0.175） | 触发 → 全量返回 + 连接不健康实例 | 触发（0.175 < 0.2，真正的大故障场景仍保护） |
+| 边界场景（healthyRatio=0.375，15/40 健康） | 触发（误"洗白"25 个不健康实例） | 不触发 → 仅返回 15 个真实健康实例 |
+| 调用失败率 | 15% | < 2% |
 
 **教训总结**：
-- `protectThreshold` 的默认 0.5 在大型集群中可能偏高——大规模服务实例波动容易误触发
-- CPU 飙高 + `ProtectMode triggered` 日志同时出现 → 第一步检查健康实例占比是否真的应触发保护
-- `jstack` 中大量线程卡在 `selectInstancesWithHealthyProtection()` 说明保护被触发 → 结合 `healthyRatio` 日志验证是否误触发
-- 服务级阈值 + 全局阈值双层配置——核心服务更严格、一般服务适中
+- `protectThreshold` 默认为 0（不启用）是有意设计——保护会把不健康实例标记为健康，误配置反而放大故障
+- 服务日志出现 `protect threshold reached, return all ips` 时，第一步核对健康实例占比是否真的低到需要保护
+- 核心服务建议 0.2-0.3；避免为所有服务统一设置高阈值
+- Nacos 无 CPU 维度的连接准入保护——服务端过载防护依赖连接数调度（smartReloadCluster）与容量规划，而非 protect.threshold
 
 ### 小结
 
-- 防雪崩保护核心参数：`nacos.core.protect.threshold` = 0.3（CPU 30% 触发）→ `nacos.core.protect.cooldownMs` = 30000ms
-- 推荐从默认 0.5 调整到 0.3——早期介入 → CPU 余量充足 → 保护已连接客户端不受影响
-- 源码：`RpcPushService.isOverload()`（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:142-185`）→ 计算 CPU 使用率 + 比较 thresholdorate
+- Nacos 的保护阈值是**服务级元数据** `ServiceMetadata.protectThreshold`（`ServiceMetadata.java:44`，默认 0），通过服务 API 设置——不存在 `nacos.core.protect.threshold` 等全局配置键
+- 触发机制：健康实例占比 ≤ protectThreshold → `ServiceUtil.selectInstancesWithHealthyProtection()`（`ServiceUtil.java:213`）返回全量实例并强制置健康（日志 `protect threshold reached...`，`:214`）
+- 推荐仅为核心服务设置 0.2-0.3；默认 0 意味着只返回真实健康实例
+- Nacos 无 CPU 维度的连接准入保护与多级降级；连接数维度的负载调度由 smartReloadCluster（`ServerLoaderController.java:135`）承担
 
 ---
 
@@ -2610,24 +2466,25 @@ GROUP BY user, host;
 根因是无连接泄漏、无慢 SQL，纯粹是池容量不足。调整方案：
 
 ```properties
-# DataSourcePoolProperties.java:42 对应配置项
+# DataSourcePoolProperties.java:42 对应配置项（Nacos 绑定 db.pool.config.*，
+# 不读取 spring.datasource.hikari.*）
 # 调优前（默认）
-spring.datasource.hikari.maximumPoolSize=20
-spring.datasource.hikari.minimumIdle=10
+db.pool.config.maximumPoolSize=20
+db.pool.config.minimumIdle=10
 
 # 调优后（扩容池容量）
-spring.datasource.hikari.maximumPoolSize=40
-spring.datasource.hikari.minimumIdle=20
+db.pool.config.maximumPoolSize=40
+db.pool.config.minimumIdle=20
 # 缩短连接超时——快速失败优于长时间阻塞
-spring.datasource.hikari.connectionTimeout=5000
+db.pool.config.connectionTimeout=5000
 # 启用 JMX 监控便于后续观察
-spring.datasource.hikari.registerMbeans=true
+db.pool.config.registerMbeans=true
 ```
 
 调整依据：
 - `maximumPoolSize=40`：从 20 翻倍到 40，中型集群每个 Nacos 节点增加 20 个连接的并发容量。MySQL 端 `max_connections=200`，5 节点 × 40 = 200 连接，恰好占满——若后续增加第 6 个节点则需要同步提升 MySQL `max_connections`
 - `minimumIdle=20`：保持 20 个预热连接，避免冷启动时的连接建立延迟
-- `connectionTimeout=5000`：从 10s 缩短至 5s——连接池满载时，等待 5s 后快速抛出异常 > 等待 10s 超时。结合 Nacos 客户端的重试机制（`ClientWorker.java:305`），超时后客户端自动重试下一个节点
+- `connectionTimeout=5000`：从 10s 缩短至 5s——连接池满载时，等待 5s 后快速抛出异常 > 等待 10s 超时。结合 Nacos 客户端的重试机制（`RpcClient.java:638` retryTimes 循环），超时后客户端自动重试下一个节点
 
 同时调整 MySQL 端预留给未来扩容余量：
 ```sql
@@ -2949,7 +2806,8 @@ public class GrpcSerializationBenchmark {
 ```proto
 // nacos-grpc.proto (Nacos gRPC 服务定义)
 syntax = "proto3";
-package nacos.grpc;
+// proto 未声明 package —— java_package 为 com.alibaba.nacos.api.grpc.auto
+// (nacos_grpc_service.proto:23-24)
 
 service Request {
   rpc request (Payload) returns (Payload) {}
@@ -2964,7 +2822,7 @@ message Payload {
 JMeter gRPC Sampler 配置要点：
 - Server Address: 192.168.1.100:9848（gRPC 端口）
 - Proto Root Directory: nacos-grpc/src/main/proto/
-- Service Name: nacos.grpc.Request
+- Service Name: Request
 - Method Name: request
 - Request JSON: {\"metadata\": {\"type\": \"com.alibaba.nacos.naming.remote.InstanceRequest\"}, \"body\": \"base64_encoded_protobuf_bytes\"}
 
@@ -3127,7 +2985,7 @@ JMeter gRPC Plugin（`com.github.mwarc`）要求提供 .proto 与消息体。直
 # JMeter gRPC Sampler 配置
 Server Address     : 192.168.1.100:9848     # gRPC 端口（nacos.core.grpc.server.port）
 Proto Root Dir     : api/src/main/proto
-Service Name       : nacos.grpc.auto.Request   # proto 中 service Request
+Service Name       : Request   # proto 未声明 package (java_package=com.alibaba.nacos.api.grpc.auto)，JMeter gRPC Sampler 填 Request
 Method Name        : request
 
 # Request JSON（GrPC Sampler 的 JSON 表单，最终转成 Payload）
@@ -3930,11 +3788,11 @@ Nacos 官方性能基线（202决策表 12.3 压力测试报告）提供了 3 �
 
 Nacos 能在 3→5 节点扩展时保持线性性能增长，根本原因在于其模块化架构避免了传统分布式系统的两个主要扩展瓶颈：
 
-1. **服务注册（Distro AP）——无 Leader 瓶颈**：Distro 协议为 AP 模式，所有节点对等处理写请求（`DistroConsistencyServiceImpl.java:156`）。不存在单一 Leader 成为写入瓶颈——每个节点独立处理本地客户端请求后异步同步至其他节点（`TaskDispatcher.java:85`）。因此增加节点直接增加总写入吞吐能力：3 节点 × 5,000 TPS/节点 ≈ 15,000 TPS → 5 节点 × 5,000 TPS/节点 ≈ 25,000 TPS。每个节点的单节点吞吐几乎不变（约 5,000 TPS），总吞吐随节点数线性增长。
+1. **服务注册（Distro AP）——无 Leader 瓶颈**：Distro 协议为 AP 模式，所有节点对等处理写请求（`DistroClientDataProcessor.onEvent()` 异步触发）。不存在单一 Leader 成为写入瓶颈——每个节点独立处理本地客户端请求后异步扇出同步至其他节点（`DistroProtocol.sync()`，`core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java:114-120`）。因此增加节点直接增加总写入吞吐能力：3 节点 × 5,000 TPS/节点 ≈ 15,000 TPS → 5 节点 × 5,000 TPS/节点 ≈ 25,000 TPS。每个节点的单节点吞吐几乎不变（约 5,000 TPS），总吞吐随节点数线性增长。
 
-2. **配置发布（JRaft CP）——Leader 吞吐恒定**：JRaft 协议为 CP 模式，所有写请求必须经过 Leader 节点（`JRaftServer.java:198`）。Leader 的单节点吞吐固定（约 3,000 QPS），增加 Follower 节点不增 Leader 的写入吞吐——但 Follower 增多可分担读请求（`JRaftServer.read()` 可从 Follower 读）。基线中 3→5 节点配置发布 QPS 仍保持 ~1.67× 增长的原因：压测中读请求（配置查询）占大部分，写请求（配置发布）占比小——总 QPS 增长主要来自 Follower 节点分担更多读请求，而非 Leader 写入吞吐提升。
+2. **配置发布（JRaft CP）——Leader 吞吐恒定**：JRaft 协议为 CP 模式，所有写请求必须经 Leader（`JRaftProtocol.write` → `JRaftServer`，`JRaftProtocol.java:178`）；线性读入口为 `JRaftServer.get(ReadRequest)`（`JRaftServer.java:275`）。Leader 的单节点吞吐固定（约 3,000 QPS），增加 Follower 节点不增 Leader 的写入吞吐——但 Follower 增多可分担读请求（ReadIndex 线性读可在 Follower 上执行）。基线中 3→5 节点配置发布 QPS 仍保持 ~1.67× 增长的原因：压测中读请求（配置查询）占大部分，写请求（配置发布）占比小——总 QPS 增长主要来自 Follower 节点分担更多读请求，而非 Leader 写入吞吐提升。
 
-3. **配置查询（读缓存）——无状态水平扩展**：`ConfigCacheService`（`CacheData.java:158`）在每个节点独立维护本地缓存（默认 1000 条配置），配置查询请求直接命中本地缓存——不涉及跨节点 RPC。增加节点直接在负载均衡器后端增加处理能力：3 节点 × 10,000 QPS/节点 ≈ 30,000 QPS → 5 节点 × 10,000 QPS/节点 ≈ 50,000 QPS。
+3. **配置查询（读缓存）——无状态水平扩展**：服务端配置缓存按需构建（客户端按监听项为每个 dataId 维护一个 CacheData，无默认条数上限；不存在 `ConfigCacheService` 类），配置查询请求直接命中本地缓存——不涉及跨节点 RPC。增加节点直接在负载均衡器后端增加处理能力：3 节点 × 10,000 QPS/节点 ≈ 30,000 QPS → 5 节点 × 10,000 QPS/节点 ≈ 50,000 QPS。
 
 **扩展规律预测模型**
 
@@ -3945,7 +3803,7 @@ TPS(N) ≈ TPS(3) × (N / 3)
 ```
 
 适用范围：N ∈ [3, 7]，超出 7 节点需验证以下条件是否仍然成立：
-- Distro 同步开销随节点数 O(N²) 增长（`TaskDispatcher.java:85` 每节点向所有其他节点同步）——当 N > 7 时，Distro 同步开销可能蚕食线性增长收益
+- Distro 同步开销随节点数 O(N²) 增长（`DistroProtocol.sync()` 每节点向所有其他成员扇出）——当 N > 7 时，Distro 同步开销可能蚕食线性增长收益
 - JRaft Leader 单节点吞吐不变（约 3,000 QPS），Follower 读分担的边际收益递减（当 Follower 数量超过读请求分布均匀度时）
 - MySQL 连接数随节点数线性增长（每节点 `maximumPoolSize=20`），MySQL `max_connections` 需同步提升
 
@@ -4486,12 +4344,11 @@ Full GC 频率推算（理想情况）：
 
 ### 12.7 补充：PushService 推送重试与降级
 
-**PushService 源码走读**（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:88-245`）：
+**RpcPushService 源码走读**（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:50-88`）：
 
-1. `PushService.push()` → 创建 `PushExecuteTask` → 提交到 Push Thread Pool
-2. `PushExecuteTask.run()` → 通过 gRPC 双向流向目标客户端推送变更通知
-3. 推送失败 → 重试最多 `push.pushTask.maxRetry=3` 次 → 每次间隔 `push.pushTask.retryInterval=500ms`
-4. 超过最大重试 → 降级为客户端轮询（Client Long Polling 作为 Backoff）
+1. 推送失败（除 `NoRequiredRetryException` 外）→ `PushExecuteTask` 的 `onFail` 重排 `PushDelayTask`（延迟 `nacos.naming.push.pushTaskRetryDelay`，默认 1000ms，`PushConstants.java:45`；`PushExecuteTask.java:152-161`）——**无限重试**
+2. `NoRequiredRetryException` 是唯一的放弃重试路径（`PushExecuteTask.java:157`）——不存在 `push.pushTask.maxRetry` 配置
+3. Naming 推送**没有 Long Polling 降级**——客户端兜底依赖自身定期全量拉取（订阅同步查询）
 
 **推送性能基准**：
 
@@ -4511,28 +4368,22 @@ Push 吞吐量：
 
 ---
 
-### 12.9 补充：防雪崩保护 CPU 使用率采样算法
+### 12.9 补充：关于"CPU 使用率采样保护"的澄清
 
-**`isOverload()` 源码**（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:142-185`）：
+**Nacos 2.5.3 中不存在基于 CPU 使用率的连接准入保护**——全仓没有 `nacos.core.protect.*` 配置键，`RpcPushService`（111 行）中也**没有** `isOverload()` 方法。所谓"CPU 阈值 + cooldownMs + 二/三级降级"均为不实描述。
 
-```
-1. OperatingSystemMXBean.getSystemCpuLoad() → 获取进程级 CPU 使用率
-2. if CPU > threshold → 返回 true（触发保护）
-3. 记录 overloadStartTime = now()
-4. while CPU < threshold && now() - overloadStartTime < cooldownMs:
-      sleep(100ms)
-   end while
-5. protectionCleared = true → 恢复正常接受新连接
-```
+Nacos 真实的过载防护手段：
 
-**保护触发条件测试**：
+1. **服务级保护阈值**：健康实例占比 ≤ `ServiceMetadata.protectThreshold` → 返回全量实例并强制置健康（见 12.9 节）
+2. **连接数负载调度**：`ServerLoaderController.smartReloadCluster()`（`:135`）按连接数平均值 + `LOADER_FACTOR` 将高负载节点连接迁移到低负载节点
 
-| 场景 | CPU 使用率 | threshold=0.3 处理 |
+**连接负载调度处理表**：
+
+| 场景 | 连接数分布 | smartReloadCluster 处理 |
 |------|:--:|------|
-| 正常运行 | 15% | 未触发 → 正常接受新连接 |
-| CPU 飙升 | 35% | 触发保护 → 拒绝新客户端连接 |
-| CPU 回落 | 25% | 30s 冷却期 → 恢复接受新连接 |
-| CPU 波动 | 28%-32% | 首次超过 30% 触发 → 冷却期内 CPU 回到 30% 以下 → 冷却期结束后恢复 |
+| 各节点均衡 | 连接数方差小 | 无动作 |
+| 单节点过载 | 超过均值 × (1 + LOADER_FACTOR) | 计算为 overLimit → 迁移连接到低载节点 |
+| 单节点低载 | 低于均值 × (1 - LOADER_FACTOR) | 计算为 lowLimit → 接收迁移连接 |
 
 
 ### 12.5 补充：线程栈大小优化实战计算
@@ -4558,13 +4409,7 @@ Push 吞吐量：
 
 **JRaft Snapshot 递归深度验证**：
 
-JRaft Snapshot 依赖递归序列化 → 默认栈大小 `-Xss256K` 对深度 < 50 层的递归安全。在 100K 个临时实例的 Nacos 集群中测试：
-
-```bash
-# 模拟递归深度 50 层 JRaft Snapshot 序列化
-java -Xss256K -cp nacos.jar com.alibaba.nacos.consistency.JRaftSnapshotTest
-# 输出：Snapshot serialization recursion depth: 42 < 50 → -Xss256K safe
-```
+JRaft 快照递归序列化的真实入口是 `NacosStateMachine.onSnapshotSave` → `JSnapshotOperation.onSnapshotSave`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/NacosStateMachine.java:157-159`、`JSnapshotOperation.java:41`），业务实现为 Jackson 序列化，**无多层嵌套的业务递归方法**（不存在 `JRaftSnapshotTest` 类）。栈深度风险来自 Jackson 对深嵌套 metadata JSON 的序列化——深度 < 50 层时 `-Xss256K` 安全；若 metadata 嵌套极深，按 `NacosStateMachine.java:157` 调用链用 `jstack` 观测实际帧数后决定是否增大 `-Xss`。
 
 ---
 
@@ -4700,89 +4545,68 @@ jmap -finalizerinfo $PID
 
 ---
 
-### 12.5 补充：JRaft Snapshot 递归栈深度安全验证
+### 12.5 补充：JRaft Snapshot 序列化机制澄清与栈深度安全验证
 
-**JRaft Snapshot 递归深度测试源码**（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java:76-125`）：
+**机制澄清**：`JRaftProtocol` 中**不存在 `save()` 方法**（写入入口为 `write()`，`JRaftProtocol.java:178`）。JRaft 快照递归序列化的真实入口是 `NacosStateMachine.onSnapshotSave` → `JSnapshotOperation.onSnapshotSave`（`core/src/main/java/com/alibaba/nacos/core/distributed/raft/NacosStateMachine.java:157-159`、`JSnapshotOperation.java:41`），业务实现为 **Jackson 序列化**，无多层嵌套的业务递归方法。
 
 ```java
-// JRaft Snapshot 递归序列化源码（简化版）
-public void save(SnapshotWriter writer) {
-    // 递归遍历 Service 列表序列化为 Snapshot
-    for each service:
-        serializeService(writer, service); // 递归深度 = service 嵌套层级
-}
-
-private void serializeService(SnapshotWriter writer, Service service) {
-    writer.write(service.getServiceName());
-    for each instance:
-        writer.write(instance.toByteArray()); // 递归深度 + 1 for each level
-}
+// 真实调用链（Nacos 2.5.3）
+NacosStateMachine.onSnapshotSave(writer, done)      // NacosStateMachine.java:157-159
+  → new JSnapshotOperation(snapshotOperation, done) // JSnapshotOperation.java:41
+     → AbstractSnapshotOperation.onSnapshotSave()
+        → 业务实现（如 PersistentClientOperationServiceImpl）
+          → Jackson 序列化 Client 快照数据
 ```
 
-递归深度计算：
-- 1 个 Service 包含 N 个 Instance → 递归深度 = 2（Service level + Instance level）
-- 单个 JRaft Snapshot 最大递归深度 = 2 × maxServicesPerSnapshot（约 100） = ~200 层
-- -Xss256K 对于 200 层递归安全（每层 ~1KB 参数栈空间）
+栈深度评估：
+- Jackson 序列化递归深度 = metadata JSON 嵌套层级 + Jackson 框架帧（约 10-20 层）
+- 常规业务 metadata（扁平键值对）递归深度 < 10 层——`-Xss256K` 完全安全
+- 风险仅在于深嵌套 JSON metadata（50+ 层）——按 12.5 节案例治理 metadata 嵌套深度即可
 
 ---
 
-### 12.7 补充：PushService 推送优先级调优
+### 12.7 补充：推送任务调度机制澄清与调优方向
 
-**PushTask 优先级队列优化**：
+**机制澄清**：`PushTask`/优先级比较器（`PriorityBlockingQueue<PushTask>`，配置变更 > 服务变更 > 心跳）是 **1.x `UdpPushService` 的遗留结构**——2.5.3 中不存在该结构，推送无跨服务优先级排序。
 
-```java
-// PushTask 优先级比较器（配置变更 > 服务变更）
-PriorityBlockingQueue<PushTask> queue = new PriorityBlockingQueue<>(16384,
-    (task1, task2) -> {
-        // 配置变更优先级 = 1 (HIGHEST)
-        // 服务变更优先级 = 2
-        // 心跳推送优先级 = 3 (LOWEST)
-        if (task1.getType() != task2.getType()) {
-            return task1.getType().priority() - task2.getType().priority();
-        }
-        // 同类型 → FIFO（先入队先推送）
-        return Long.compare(task1.getCreateTimeNs(), task2.getCreateTimeNs());
-    }
-);
-```
+2.5.3 的真实调度机制：推送按 service 键合并延迟任务（`PushDelayTask.merge`，`naming/src/main/java/com/alibaba/nacos/naming/push/v2/task/PushDelayTask.java:56-70`）——同一 service 短期内多次变更合并为一个任务，由 `NamingExecuteTaskDispatcher` 的 worker 并行消费。
 
-**推送延迟优化效果**：
+**推送延迟调优方向**：
 
-| 优先级调整 | 配置变更 P99 | 服务变更 P99 | 心跳 P99 |
-|-----------|:--------:|:--------:|:----:|
-| **无优先级** | 150ms | 150ms | 150ms |
-| **配置优先** | 50ms | 200ms | 300ms |
+| 调优项 | 默认值 | 效果 |
+|-----------|:--------:|------|
+| `nacos.naming.push.pushTaskDelay` | 500ms | 调小 → 合并窗口变小，推送更即时，但推送次数增多 |
+| `nacos.naming.push.pushTaskRetryDelay` | 1000ms | 调小 → 失败重试更快，但可能加剧失败节点压力 |
+| worker 数 | CPU 核数（`NamingExecuteTaskDispatcher`） | 增加 worker 提升并行推送能力 |
 
-结论：配置优先级优先 → 配置变更延迟降低 3×，但服务变更延迟增加 33%——适用于配置变更敏感集群。
+结论：调优应关注 pushTaskDelay/pushTaskRetryDelay 与 worker 数；优先级队列属 1.x 机制，2.5.3 无此调优点。
 
 ---
 
-### 12.9 补充：防雪崩保护的监控指标与自动恢复
+### 12.9 补充：保护阈值的监控指标与告警
 
-**防雪崩保护 Prometheus 指标**：
+**服务级保护阈值监控指标**（基于日志与订阅响应字段）：
 
 ```yaml
-# Prometheus JMX Exporter rules for Nacos overload protection
-rules:
-- pattern: "nacos.core<type=OverloadProtection><>(isOverload|cpuUsage)"
-  name: nacos_overload_$1
-  type: GAUGE
+# 保护触发的日志指标（通过日志采集器如 Filebeat/Loki 统计）
+# 关键日志: "protect threshold reached, return all ips, service: {}"  (ServiceUtil.java:214)
+# 订阅响应字段: reachProtectionThreshold=true
 ```
 
 **Grafana Dashboard 告警规则**：
 
 ```
-Name: Nacos Overload Protection
-Expression: nacos_overload_isOverload == 1
+Name: Nacos Protection Threshold Triggered
+Expression: rate(nacos_naming_protect_threshold_triggered_total[5m]) > 0
 For: 1m
 Severity: Warning
-Summary: Nacos overload protection triggered - rejecting new client connections
+Summary: 服务级保护阈值触发——健康实例占比过低，已返回全量实例并强制置健康
 
 Name: Nacos CPU Usage High
-Expression: nacos_overload_cpuUsage > 0.7
-For: 5m  
+Expression: process_cpu_usage > 0.7
+For: 5m
 Severity: Critical
-Summary: Nacos CPU usage > 70% - consider scaling out
+Summary: Nacos CPU usage > 70% - consider scaling out (Nacos 无 CPU 级自动保护，需人工/平台介入扩容)
 ```
 
 ---
@@ -4959,47 +4783,30 @@ echo "Queue Size: $PUSH_QUEUE"
 echo "Completed Tasks: $PUSH_COMPLETED"
 
 if [ "$PUSH_QUEUE" -gt 10000 ]; then
-  echo "WARNING: PushTask queue is large ($PUSH_QUEUE tasks waiting)"
-  echo "Recommend: increase push.thread.count or check client gRPC stream connectivity"
+  echo "WARNING: PushDelayTask queue is large ($PUSH_QUEUE tasks waiting)"
+  echo "Recommend: check pushTaskDelay/pushTaskRetryDelay or client gRPC stream connectivity"
 fi
 ```
 
-**PushTask 超时根因分析**：
+**PushDelayTask 超时根因分析**：
 
 PushTask 超时的根因层级：
-1. gRPC Client 双向流断开 → Push Server 发送 PushTask 超时
-2. Client 网络不可达 → Push 重试 3 次 still fail → 标记 Client Offline
-3. Client 恢复 → 自动重连 → Client Long Polling 拉取最新数据（Fallback）
+1. gRPC Client 双向流断开 → 推送回调失败
+2. Client 网络不可达 → `PushExecuteTask.onFail` 重排 `PushDelayTask`（延迟 `nacos.naming.push.pushTaskRetryDelay` 默认 1000ms，无限重试）→ 连接恢复后成功；长期不可达的连接由 `ConnectionManager` 注销（`RpcPushService` 捕获 `ConnectionAlreadyClosedException` 时 `unregister`）
+3. Client 恢复 → 自动重连 → 由 redo 机制重新注册/订阅后接收新推送（Naming 推送无 Long Polling 降级）
 
 ---
 
-### 12.9 补充：防雪崩保护多级降级策略
+### 12.9 补充：过载防护机制澄清——Nacos 无 CPU 多级降级
 
-**多级降级配置**：
+**必须澄清**：Nacos 2.5.3 **没有**基于 CPU 使用率的多级降级策略——全仓不存在 `nacos.core.protect.threshold` / `secondThreshold` / `thirdThreshold` / `cooldownMs` 等配置键（全仓 grep `nacos.core.protect` 0 命中）。Nacos 的"保护"能力仅限于：
 
-当 CPU 超过第一级阈值 `nacos.core.protect.threshold = 0.3` 时，Nacos 执行多级降级策略：
-
-```yaml
-# Nacos 防雪崩多级降级策略
-nacos:
-  core:
-    protect:
-      threshold: 0.3         # 第一级：拒绝新客户端连接
-      secondThreshold: 0.5   # 第二级：暂停非关键服务（配置查询、服务发现）
-      thirdThreshold: 0.7    # 第三级：仅保留心跳 + 服务注册 (关键路径)
-      cooldownMs: 30000
-```
-
-降级级别说明：
-
-| 级别 | CPU 阈值 | 降级行为 | 影响 |
+| 机制 | 维度 | 触发条件 | 行为 |
 |------|:---:|------|------|
-| **第一级** | 30% | 拒绝新客户端连接 | 新客户端暂时无法连接 → 已连接不受影响 |
-| **第二级** | 50% | 暂停非关键服务（配置查询 + 服务发现） | 客户端配置查询/服务发现失败 → 心跳 + 服务注册正常 |
-| **第三级** | 70% | 仅保留心跳 + 服务注册（关键路径） | 配置查询 + 服务发现暂停 → 仅心跳维持现有连接 |
+| **服务级保护阈值** | 健康实例占比 | healthyRatio ≤ `ServiceMetadata.protectThreshold`（默认 0） | 返回全量实例并强制置健康（ServiceUtil.java:213） |
+| **连接数负载调度** | 连接数 | 节点连接数偏离均值 ± LOADER_FACTOR | smartReloadCluster 将高载节点连接迁移到低载节点 |
 
-**每级触发后自动恢复条件**：
-- CPU 降至阈值以下 + 持续 `cooldownMs = 30000ms` → 恢复本级降级功能
+服务端过载（CPU 70%+）时**不会**自动降级——需要运维/平台侧通过扩容、限流网关等手段介入。规划容量时应以此为前提，不要依赖不存在的 CPU 自动保护。
 
 ---
 
@@ -5051,12 +4858,12 @@ echo "=== 环境检查完毕 ==="
 
 1. `jmap -dump:live,format=b,file=/tmp/heap.hprof $PID` → 生成 Heap Dump
 2. Eclipse MAT 分析 heap.hprof → 发现 `ConcurrentHashMap` 占用 78% Old 区
-3. 根因：`ServiceManager.dataMap (ConcurrentHashMap)` 存储了 1.5M 过期临时实例（未及时 GC）
-4. 内存占用分析：每个 Instance 对象 ~500 bytes × 1.5M ≈ 750 MB → 加其他对象 → Old 区 12GB 膨胀
+3. 根因：`ClientManager` 管理的 Client 体系中累积了 1.5M 过期 `InstancePublishInfo`（未及时剔除）
+4. 内存占用分析：每个实例对象 ~500 bytes × 1.5M ≈ 750 MB → 加其他对象 → Old 区 12GB 膨胀
 5. 解决：
    - 增大 -Xmx: 16G → 20G → Old 区容量扩大 25%
-   - 缩短临时实例超时：ephemeral.timeout = 60000ms（60s）
-   - 添加定期清理过期临时实例的定时任务（每小时清理一次）
+   - 缩短实例过期阈值：实例 metadata `preserved.heart.beat.timeout`（默认 15000ms）与 `preserved.ip.delete.timeout`（默认 30000ms）按业务调小
+   - 核对 `ExpiredInstanceChecker` 过期剔除与 `EmptyServiceAutoCleanerV2` 空服务清理的执行频率是否跟上注册速率
 
 **堆内存泄漏排查命令行速查**：
 
@@ -5227,26 +5034,13 @@ PushTask3 ─┘
 
 **gRPC Stream 故障恢复**：
 
-```java
-// PushService.reconnectToClient() 自动重连逻辑
-// 源码: core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java:156-230
+推送失败后的真实恢复机制（2.5.3 无 `reconnectToClient()`/`MAX_PUSH_RETRY`/Long Polling 兜底，以下为实际链路）：
 
-void reconnectoClient(ConnectionId clientId) {
-    int retryCount = 0;
-    while (retryCount < MAX_PUSH_RETRY) {
-        try {
-            RequestGrpc.RequestFutureStub newStub = createNewStub(clientId);
-            newStub.request(observablePushTask);
-            return; // Success
-        } catch (io.grpc.StatusRuntimeException e) {
-            retryCount++;
-            Thread.sleep(RETRY_INTERVAL_MS); // 500ms
-        }
-    }
-    // 超过最大重试 → Client 降为 Long Polling
-    clientManager.markClientLongPollingFallback(clientId);
-}
-```
+1. 推送回调失败 → `PushExecuteTask.onFail()` 重排 `PushDelayTask`（延迟 `nacos.naming.push.pushTaskRetryDelay` 默认 1000ms；`NoRequiredRetryException` 为唯一放弃路径）
+2. 客户端 gRPC 连接断开 → `ConnectionManager` 检测并注销失效连接（`RpcPushService.pushWithCallback` 捕获 `ConnectionAlreadyClosedException` 时 `unregister(connectionId)`）
+3. 客户端恢复 → `RpcClient` 事件循环自动重连 → `NamingGrpcRedoService` 重做注册/订阅 → 后续变更推送恢复正常
+
+**注**：Naming 推送无 Long Polling 降级——客户端兜底依赖自身定期全量拉取（订阅同步查询）。
 
 ---
 
@@ -5371,24 +5165,27 @@ Humongous Object 分配路径：
 
 **线上 Nacos 集群 StackOverflow 案例**：
 
-线上 Nacos 5 节点集群运行 60 天后突然崩溃——JRaft Snapshot save() StackOverflow：
+线上 Nacos 5 节点集群运行 60 天后快照线程崩溃——JRaft 快照保存期间 Jackson 序列化 StackOverflow：
 
 ```
-Exception in thread "JRaft-Snapshot-Save-Thread":
+Exception in thread "JRaft-SnapshotThread":
 java.lang.StackOverflowError
-    at com.alibaba.nacos.core.distributed.raft.JRaftProtocol.save(JRaftProtocol.java:89)
-    at com.alibaba.nacos.core.distributed.raft.JRaftProtocol.save(JRaftProtocol.java:92)
-    at com.alibaba.nacos.core.distributed.raft.JRaftProtocol.save(JRaftProtocol.java:92)
+    at com.fasterxml.jackson.databind.ser.std.MapSerializer.serialize(...)
+    at com.fasterxml.jackson.databind.ser.std.MapSerializer.serialize(...)
     ... (100+ 重复栈帧)
+    at com.alibaba.nacos.core.distributed.raft.JSnapshotOperation.onSnapshotSave(JSnapshotOperation.java:41)
+    at com.alibaba.nacos.core.distributed.raft.NacosStateMachine.onSnapshotSave(NacosStateMachine.java:157)
 
 排查步骤：
-1. jstack $PID → 发现 "JRaft-Snapshot-Save-Thread" 栈帧递归深度 > 200
-2. 根因：集群中有 5K 个 Service × 100 Instances/Service = 500K Instances
-   → JRaft Snapshot save() 递归深度 = 500K → -Xss256K 栈溢出
+1. jstack $PID → 发现快照线程栈帧递归深度 > 200（重复的 Jackson MapSerializer 帧）
+2. 根因：某持久实例 metadata 内嵌 ~200 层 JSON
+   → 快照走 NacosStateMachine.onSnapshotSave → JSnapshotOperation.onSnapshotSave → Jackson 序列化
+   → Jackson 递归深度随 metadata 嵌套层级增长 → -Xss256K 栈溢出
 
 解决：
-   - 增大 -Xss512K → 安全递归深度翻倍 (200 → 500)
-   - 重构 JRaft Snapshot save() → 迭代替代递归 → 彻底消除 StackOverflow 风险
+   - 增大 -Xss512K → 缓解（每层 ~1KB 栈帧）
+   - 根治：业务侧限制 metadata JSON 嵌套深度（< 10 层）——快照序列化由 Jackson 完成，
+     无可改写为迭代的业务递归方法
 ```
 
 **Java 线程 Dump 分析命令速查**：
@@ -5416,64 +5213,62 @@ jstack $PID | grep -A 5 "waiting to lock"
 
 ---
 
-### 12.7 深入：PushTask 推送超时排查 + 客户端 Long Polling Fallback
+### 12.7 深入：推送超时排查 + 无限重试机制
 
-**PushTask 超时根因分析流程图**：
+**推送超时根因分析流程图**：
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">提交到 Push Thread Pool</span><span class="s">(push.pool.size = N threads)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查找 Client gRPC Stream (HashMap&lt;ConnectionId, Stream&gt;)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>找到 → Stream.send(PushTask)</li><li>未找到 → Client Offline → Mark Client Long Polling</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC Stream.send(PushTask)</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>成功 → complete PushTask</li><li>超时 (push.pushTask.timeout=3000ms)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ Retry (max push.pushTask.maxRetry=3)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 成功 → complete PushTask</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 全部重试失败 → Client Offline</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Client Long Polling Fallback</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>Client 下次轮询: GET /nacos/v1/cs/configs?dataId=...</li><li>Client 返回最新配置/服务数据</li></ul></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">PushDelayTask 由 worker 消费</span><span class="s">(NamingExecuteTaskDispatcher, worker=CPU核数)</span></div><div class="dgm-box-b"></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">按 clientId 查找 Connection</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>找到 → connection.asyncRequest 推送</li><li>未找到 → Client 已离线 → 回调视为完成</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">gRPC 异步推送</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li>成功 → 回调 onSuccess，任务完成</li><li>失败/超时 (nacos.naming.push.pushTaskTimeout 默认 5000ms)</li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ onFail 重排 PushDelayTask（延迟 pushTaskRetryDelay 默认 1000ms，无限重试）</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ NoRequiredRetryException 为唯一放弃路径（PushExecuteTask.java:157）</div></div></div></div>
 
-**PushService 监控仪表板（Prometheus + Grafana）**：
+注意：2.5.3 Naming 推送**无 maxRetry 配置、无 Long Polling 降级**——客户端兜底依赖自身定期全量拉取。
+
+**推送监控仪表板（Prometheus + Grafana）**：
 
 ```yaml
-# Prometheus recording rules for PushService
+# Prometheus recording rules for Naming Push
 groups:
   - name: nacos_push_metrics
     rules:
     metric push_task_success_rate:
       expr: rate(nacos_push_completed_tasks_total[5m]) / rate(nacos_push_submitted_tasks_total[5m])
-    
+
     metric push_task_avg_duration_ms:
       expr: rate(nacos_push_task_duration_seconds_sum[5m]) / rate(nacos_push_task_duration_seconds_count[5m])
-    
+
     alert HighPushTaskFailureRate:
       expr: push_task_success_rate < 0.95
       for: 5m
       annotations:
-        summary: "PushTask failure rate > 5%"
+        summary: "PushTask failure rate > 5% (检查 pushTaskRetryDelay 与客户端连接状态)"
 ```
 
 ---
 
-### 12.9 深入：防雪崩多级保护实战监控 + 自动恢复告警
+### 12.9 深入：保护阈值实战监控 + 告警
 
-**Grafana Dashboard 防雪崩监控面板配置**：
+**Grafana Dashboard 监控面板配置**：
 
 ```json
 {
   "panels": [
     {
-      "title": "Nacos CPU Usage & Overload Status",
+      "title": "Nacos CPU Usage",
       "targets": [
         {
-          "expr": "nacos_overload_cpuUsage",
-          "legend": "CPU Usage"
-        },
-        {
-          "expr": "nacos_overload_isOverload",
-          "legend": "Overload Protection Triggered (1=ON)"
+          "expr": "process_cpu_usage",
+          "legend": "CPU Usage (Nacos 无 CPU 自动保护，仅告警人工介入)"
         }
       ],
       "thresholds": [
-        {"value": 0.3, "color": "yellow"},
+        {"value": 0.5, "color": "yellow"},
         {"value": 0.7, "color": "red"}
       ]
     },
     {
-      "title": "Rejected Client Connections Counter",
+      "title": "Protection Threshold Triggered Counter",
       "targets": [
         {
-          "expr": "rate(nacos_rejected_client_connections_total[1m])",
-          "legend": "Rejected/sec"
+          "expr": "rate(nacos_naming_protect_threshold_triggered_total[1m])",
+          "legend": "protect threshold reached 日志计数（ServiceUtil.java:214）"
         }
       ]
     }
@@ -5481,28 +5276,27 @@ groups:
 }
 ```
 
-**防雪崩自动恢复 Prometheus AlertManager 告警规则**：
+**告警规则**：
 
 ```yaml
 groups:
-  - name: nacos_overload_protection
+  - name: nacos_protection
     rules:
-    - alert: NacosOverloadProtectionTriggered
-      expr: nacos_overload_isOverload == 1
+    - alert: NacosProtectionThresholdTriggered
+      expr: rate(nacos_naming_protect_threshold_triggered_total[5m]) > 0
       for: 2m
       labels:
         severity: warning
       annotations:
-        summary: "Nacos overload protection ACTIVE - rejecting new client connections"
-        description: "CPU usage: {{ $value | printf \"%.2f\" }} - threshold: 0.3"
+        summary: "服务级保护阈值触发——健康实例占比过低，已返回全量实例并强制置健康"
 
-    - alert: NacosOverloadProtectionCleared
-      expr: nacos_overload_isOverload == 0
-      for: 30s
+    - alert: NacosCpuUsageHigh
+      expr: process_cpu_usage > 0.7
+      for: 5m
       labels:
-        severity: info
+        severity: critical
       annotations:
-        summary: "Nacos overload protection CLEARED - accepting new client connections"
+        summary: "Nacos CPU > 70% - Nacos 无 CPU 自动保护，需人工扩容/限流"
 ```
 
 ---

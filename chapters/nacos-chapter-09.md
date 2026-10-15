@@ -47,7 +47,7 @@
 |--------|--------|------|------|---------|
 | `server.port` | `8848` | int | console | Nacos HTTP 服务端口 | 0.1.0 |
 | `server.servlet.contextPath` | `/nacos` | String | console | Web 上下文路径 | 0.1.0 |
-| `server.tomcat.uri-encoding` | `UTF-8` | String | console | Tomcat URI 字符编码 | 0.1.0 |
+| `server.tomcat.uri-encoding` | `UTF-8` | String | console | Tomcat URI 字符编码（非发行配置内置项，Tomcat/Spring Boot 默认行为，`distribution/conf/application.properties` 中无此键） | 0.1.0 |
 | `server.tomcat.accesslog.enabled` | `true` | boolean | console | 是否启用 Tomcat 访问日志 | 1.0.0 |
 | `server.tomcat.accesslog.rotate` | `true` | boolean | console | 访问日志是否按小时滚动 | 1.0.0 |
 | `server.tomcat.accesslog.file-date-format` | `.yyyy-MM-dd-HH` | String | console | 访问日志文件名时间格式 | 1.0.0 |
@@ -55,15 +55,15 @@
 | `server.tomcat.basedir` | `file:.` | String | console | Tomcat 基础工作目录 | 1.0.0 |
 | `server.tomcat.mbeanregistry.enabled` | `true` | boolean | console | 是否注册 Tomcat MBean | 2.0.0 |
 | `server.error.include-message` | `ALWAYS` | String | console | 是否在错误响应中包含异常消息 | 2.0.0 |
-| `spring.http.encoding.force` | `true` | boolean | sys | 是否强制 HTTP 请求编码 | 0.1.0 |
-| `spring.http.encoding.enabled` | `true` | boolean | sys | 是否启用 HTTP 编码 | 0.1.0 |
+| `spring.http.encoding.force` | `true` | boolean | sys | 是否强制 HTTP 请求编码（非发行配置内置项，Spring Boot 默认行为，`distribution/conf/application.properties` 中无此键） | 0.1.0 |
+| `spring.http.encoding.enabled` | `true` | boolean | sys | 是否启用 HTTP 编码（非发行配置内置项，Spring Boot 默认行为，`distribution/conf/application.properties` 中无此键） | 0.1.0 |
 | `spring.messages.encoding` | `UTF-8` | String | sys | 国际化资源文件编码 | 0.1.0 |
 
 ### 9.1.2 核心配置详解
 
 **`server.port`（默认 `8848`）**：
 
-Nacos 默认监听端口 8848。该端口同时承载 HTTP REST API 和 gRPC 服务的初始 HTTP 握手。gRPC 服务实际端口为 `server.port + 1000 = 9848`，由 `GrpcSdkServer` 在 `start()` 方法中动态计算（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:62-68`）。
+Nacos 默认监听端口 8848。该端口同时承载 HTTP REST API 和 gRPC 服务的初始 HTTP 握手。gRPC 服务实际端口为 `server.port + 1000 = 9848`，由 `BaseRpcServer.getServicePort()`（`EnvUtil.getPort() + rpcPortOffset()`，`core/src/main/java/com/alibaba/nacos/core/remote/grpc/BaseRpcServer.java:107-109`）计算，`GrpcSdkServer` 仅提供 `rpcPortOffset()=1000`（`GrpcSdkServer.java:48-51`）。
 
 端口值通过 Spring Boot 外部化配置机制注入内嵌 Tomcat：
 ```
@@ -71,13 +71,13 @@ application.properties（distribution/conf/application.properties:17）
 server.port=8848
 ```
 
-集群部署时保持默认 8848。同一机器部署多个 Nacos 实例时通过 JVM 系统属性覆盖：`-Dserver.port=8849`，同步调整 gRPC 端口偏移（`nacos.remote.server.grpc.port.offset`，默认 1000）避免冲突。
+集群部署时保持默认 8848。同一机器部署多个 Nacos 实例时通过 JVM 系统属性覆盖：`-Dserver.port=8849`。注意服务端 gRPC 端口偏移为内置常量（SDK=1000、Cluster=1001）不可配置；客户端可用 JVM 属性 `nacos.server.grpc.port.offset` 覆盖，服务端实例间仅需通过不同的 `server.port` 避免冲突。
 
 **`server.servlet.contextPath`（默认 `/nacos`）**：
 
 所有 REST API 统一前缀为 `/nacos`：
-- 配置发布：`POST /nacos/v1/cs/configs`（`ConfigController.publishConfig()` (`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:112-165`)）
-- 服务注册：`POST /nacos/v1/ns/instance`（`InstanceController.register()` (`naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java:89-135`)）
+- 配置发布：`POST /nacos/v1/cs/configs`（`ConfigController.publishConfig()` (`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:158-219`)）
+- 服务注册：`POST /nacos/v1/ns/instance`（`InstanceController.register()` (`naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java:109-129`)）
 
 **`server.tomcat.accesslog.pattern`（默认含 `%D` 响应时间）**：与标准 Tomcat Combined 格式相比增加了 `%D`（响应时间微秒）和 `%{Request-Source}i`（请求来源标识），便于排查慢请求和来源追踪。
 
@@ -149,12 +149,11 @@ server.start();
 # 实例1：默认端口 8848
 ./bin/startup.sh -m standalone
 
-# 实例2：覆盖端口为 8849，同步调整 gRPC 端口偏移
-./bin/startup.sh -m standalone -Dserver.port=8849 \
-    -Dnacos.remote.server.grpc.port.offset=1001
+# 实例2：覆盖端口为 8849（gRPC 端口自动跟随为 8849+1000=9849 / 8849+1001=9850）
+./bin/startup.sh -m standalone -Dserver.port=8849
 ```
 
-注意必须同时调整 `nacos.remote.server.grpc.port.offset`，否则两个实例的 gRPC 端口仍会冲突（默认均为 9848）。gRPC 端口计算公式为 `server.port + port.offset`（`GrpcSdkServer.java:62-68`），偏移量修改为 1001 使第二个实例的 gRPC 端口变为 `8849 + 1001 = 9850`。
+注意 gRPC 端口随 `server.port` 自动偏移（SDK=+1000、Cluster=+1001），两个实例的 gRPC 端口自然错开，无需（也无法）单独调整偏移。gRPC 端口计算公式为 `server.port + rpcPortOffset()`（由 `BaseRpcServer.getServicePort()` 计算，`GrpcSdkServer.java:48-51` 提供 `rpcPortOffset()=1000`），第二个实例的 gRPC 端口变为 `8849 + 1000 = 9849`。
 
 **案例二：访问日志磁盘空间耗尽**
 
@@ -198,9 +197,7 @@ location /nacos {
 | 配置项 | 默认值 | 对启动时间的影响 | 对运行时性能的影响 |
 |--------|--------|---------------|------------------|
 | `server.tomcat.accesslog.enabled` | `true` | 无影响 | 高流量下磁盘 I/O 增加约 5-10%（因每秒写入数百条日志） |
-| `server.tomcat.uri-encoding` | `UTF-8` | 无影响 | 几乎无影响（字符编码为 CPU 缓存操作） |
 | `server.tomcat.mbeanregistry.enabled` | `true` | 增加 ~200ms（注册 MBean） | 微小内存开销（每 MBean 约 1KB） |
-| `spring.http.encoding.force` | `true` | 无影响 | 每个 HTTP 请求强制设置编码，微小 CPU 开销 |
 
 ### 9.1.8 与客户端 SDK 的对应关系
 
@@ -210,19 +207,19 @@ Nacos 客户端 SDK（Java）在连接服务端时依赖于以下服务端配置
 |-----------|-------------|------|
 | `server.port=8848` | `ServerConfigManager.serverAddr`（如 `127.0.0.1:8848`） | 客户端通过 serverAddr 连接 Nacos HTTP API |
 | `server.servlet.contextPath=/nacos` | `PropertyKeyConst.CONTEXT_PATH`（默认 `/nacos`） | 客户端 SDK 自动拼接 contextPath 到所有 API 路径 |
-| `nacos.remote.server.grpc.port.offset=1000` | SDK 自动从服务端响应 Header `Server-Address` 获取 gRPC 端口 | 服务端在 `/nacos/v1/console/health` 响应中返回 gRPC 地址 |
+| gRPC 端口偏移（服务端内置常量 SDK=1000） | 客户端 SDK 本地按 `服务端口 + rpcPortOffset()`（默认 1000）计算 gRPC 端口 | 客户端无需额外配置即可推导出 9848 |
 
-**重要**：若修改了 `server.port` 或 `nacos.remote.server.grpc.port.offset`，客户端 SDK 无需修改——SDK 通过健康检查接口自动发现正确的 gRPC 端口。流程：`GrpcClient.connect()` → `GET /nacos/v1/console/health` → 解析响应 Header `Server-Address: {IP}:{gRPC_PORT}` → 建立 gRPC 长连接。
+**重要**：若修改了 `server.port`，客户端 SDK 无需修改——SDK 在本地按 `服务端口 + rpcPortOffset()`（默认偏移 1000）计算 gRPC 端口（客户端侧可通过 JVM 属性 `nacos.server.grpc.port.offset` 覆盖偏移量），随后直接建立 gRPC 长连接。
 
 ### 9.1.9 小结
 
-Spring Boot 基础配置项共 13 个，涵盖端口、上下文路径、字符编码、访问日志、错误消息格式。这些配置通常无需修改，仅在特殊部署场景（如同一机器多实例）才需要调整端口。最关键的两个配合是 `server.port` + `nacos.remote.server.grpc.port.offset`：修改 `server.port` 时必须同步调整 `port.offset` 避免 gRPC 端口冲突。`accesslog.enabled` 在高流量环境建议评估磁盘空间影响，必要时关闭以节省 I/O 资源。反向代理部署必须确保 `contextPath` 与代理规则一致，否则 API 请求将 404。
+Spring Boot 基础配置项共 13 个，涵盖端口、上下文路径、字符编码、访问日志、错误消息格式。这些配置通常无需修改，仅在特殊部署场景（如同一机器多实例）才需要调整端口。最关键的配合是 `server.port` + gRPC 端口偏移（SDK=1000、Cluster=1001 内置常量）：修改 `server.port` 时 gRPC 端口自动跟随，无需额外调整。`accesslog.enabled` 在高流量环境建议评估磁盘空间影响，必要时关闭以节省 I/O 资源。反向代理部署必须确保 `contextPath` 与代理规则一致，否则 API 请求将 404。
 
 ---
 
 ## 9.2 网络相关配置
 
-> **设计背景**：Nacos 集群节点间通信依赖准确的 IP 地址识别。在多网卡环境（如云服务器同时有内网 IP 和公网 IP）中，Nacos 必须精确绑定正确的网卡/IP，否则集群节点间 gRPC 通信将失败。`InetUtils` 类（`sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:30-120`）负责 IP 自发现逻辑。
+> **设计背景**：Nacos 集群节点间通信依赖准确的 IP 地址识别。在多网卡环境（如云服务器同时有内网 IP 和公网 IP）中，Nacos 必须精确绑定正确的网卡/IP，否则集群节点间 gRPC 通信将失败。`InetUtils` 类（`sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:55-290`）负责 IP 自发现逻辑。
 
 ### 9.2.1 配置项清单
 
@@ -239,7 +236,7 @@ Spring Boot 基础配置项共 13 个，涵盖端口、上下文路径、字符�
 
 **`nacos.inetutils.ip-address`（默认无）**：
 
-多网卡环境下精确指定 Nacos 绑定的 IP 地址。配置该值后，`InetUtils.getSelfIP()` 方法（`sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:47-65`）优先返回此配置值，跳过网卡遍历逻辑。
+多网卡环境下精确指定 Nacos 绑定的 IP 地址。配置该值后，`InetUtils.getSelfIP()` 方法（`sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:179-181`）优先返回此配置值，跳过网卡遍历逻辑。
 
 IP 自发现的优先级顺序为：
 1. `nacos.inetutils.ip-address` 系统属性（最高优先级）
@@ -247,7 +244,7 @@ IP 自发现的优先级顺序为：
 3. 遍历 `NetworkInterface` 找到第一个符合过滤条件的 site-local IPv4 地址
 
 ```java
-// InetUtils.getSelfIP() 核心逻辑（sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:47-65）
+// InetUtils.getSelfIP() 核心逻辑（sys/src/main/java/com/alibaba/nacos/sys/utils/InetUtils.java:179-181）
 public static String getSelfIP() {
     // 1. 优先使用显式指定的 IP
     String ip = System.getProperty(NACOS_SERVER_IP);
@@ -442,13 +439,13 @@ nacos.inetutils.prefer-hostname-over-ip=true
 
 ### 9.2.8 小结
 
-网络相关配置共 6 个。最关键的 `nacos.inetutils.ip-address`（显式指定 IP）解决多网卡选错 IP 的问题；`nacos.inetutils.prefer-hostname-over-ip` 是 K8s 环境的关键配置（需设为 `true`）。在多网卡云服务器环境，建议同时配置 `preferred-networks` 匹配内网段 + `ignored-interfaces` 排除虚拟网卡。`InetUtils.findFirstNonLoopbackAddress()`（`InetUtils.java:178-260`）实现了完整的网卡遍历与过滤链，支持正则匹配和优先级排序。
+网络相关配置共 6 个。最关键的 `nacos.inetutils.ip-address`（显式指定 IP）解决多网卡选错 IP 的问题；`nacos.inetutils.prefer-hostname-over-ip` 是 K8s 环境的关键配置（需设为 `true`）。在多网卡云服务器环境，建议同时配置 `preferred-networks` 匹配内网段 + `ignored-interfaces` 排除虚拟网卡。`InetUtils.findFirstNonLoopbackAddress()`（`InetUtils.java:188-233`）实现了完整的网卡遍历与过滤链，支持正则匹配和优先级排序。
 
 ---
 
 ## 9.3 Config 模块——数据源配置
 
-> **设计背景**：Nacos 配置中心支持外置 MySQL（集群模式）和内置 Derby（单机模式）两种存储引擎。Nacos 2.5.3 将持久化层独立为 `persistence/` 模块（72 个文件），数据源配置是持久化层的入口，决定配置数据存储在何处。数据源初始化由 `ExternalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/external/ExternalDataSourceServiceImpl.java:60-180`）完成。
+> **设计背景**：Nacos 配置中心支持外置 MySQL（集群模式）和内置 Derby（单机模式）两种存储引擎。Nacos 2.5.3 将持久化层独立为 `persistence/` 模块（72 个文件），数据源配置是持久化层的入口，决定配置数据存储在何处。数据源初始化由 `ExternalDataSourceServiceImpl`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:60-180`）完成。
 
 ### 9.3.1 配置项清单
 
@@ -470,7 +467,7 @@ nacos.inetutils.prefer-hostname-over-ip=true
 
 **`spring.sql.init.platform`（默认无 → 内嵌 Derby）**：
 
-这是 Nacos 部署最关键的单配置项——决定使用内嵌 Derby（单机）还是外置 MySQL（集群）。配置逻辑在 `ExternalDataSourceServiceImpl.init()` 方法（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/external/ExternalDataSourceServiceImpl.java:85-142`）：
+这是 Nacos 部署最关键的单配置项——决定使用内嵌 Derby（单机）还是外置 MySQL（集群）。配置逻辑在 `ExternalDataSourceServiceImpl.init()` 方法（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:86-127`）：
 
 ```java
 // ExternalDataSourceServiceImpl.init() 数据源初始化流程:
@@ -534,10 +531,10 @@ HikariCP 连接池最大连接数。每个 Nacos 节点默认最多 20 个数据
 
 ### 9.3.5 ExternalDataSourceServiceImpl 源码走读
 
-数据源初始化全流程位于 `ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/external/ExternalDataSourceServiceImpl.java:85-170`）：
+数据源初始化全流程位于 `ExternalDataSourceServiceImpl.init()`（`persistence/src/main/java/com/alibaba/nacos/persistence/datasource/ExternalDataSourceServiceImpl.java:86-127`）：
 
 ```java
-// ExternalDataSourceServiceImpl.init() 核心逻辑（persistence/.../ExternalDataSourceServiceImpl.java:85-170）
+// ExternalDataSourceServiceImpl.init() 核心逻辑（persistence/.../ExternalDataSourceServiceImpl.java:86-127）
 public void init() {
     // Step 1: 检查 platform 配置决定数据源类型
     String platform = EnvUtil.getProperty("spring.sql.init.platform");
@@ -699,7 +696,7 @@ db.password.1=password
 
 ## 9.4 Config 模块——持久化配置
 
-> **设计背景**：配置的持久化不仅涉及当前值存储，还涉及历史版本保留、内容大小限制、最大配置数量等资源约束。`HistoryConfigInfoService`（`persistence/src/main/java/com/alibaba/nacos/persistence/repository/embedded/EmbeddedHistoryConfigInfoServiceImpl.java` 和 `ExternalHistoryConfigInfoServiceImpl.java`）负责历史配置的 CRUD 操作。资源限制由 `ConfigController.publishConfig()` 方法在发布配置时校验（`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:112-165`）。
+> **设计背景**：配置的持久化不仅涉及当前值存储，还涉及历史版本保留、内容大小限制、最大配置数量等资源约束。`HistoryConfigInfoPersistService`（接口位于 `config/src/main/java/com/alibaba/nacos/config/server/service/repository/HistoryConfigInfoPersistService.java`，实现为 `EmbeddedHistoryConfigInfoPersistServiceImpl.java`（embedded 包）与 `ExternalHistoryConfigInfoPersistServiceImpl.java`（extrnal 包，注意源码包名为 `extrnal`））负责历史配置的 CRUD 操作。资源限制由 `ConfigController.publishConfig()` 方法在发布配置时校验（`config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java:158-219`）。
 
 ### 9.4.1 配置项清单
 
@@ -722,7 +719,7 @@ db.password.1=password
 
 **`nacos.config.push.maxRetryTime`（默认 `50`）**：
 
-配置变更推送的最大重试次数，定义在 `ConfigCommonConfig.getMaxPushRetryTimes()`（`config/src/main/java/com/alibaba/nacos/config/server/configuration/ConfigCommonConfig.java:45-50`）。当推送目标节点不可达时，`AsyncNotifyService` 按指数退避策略重试（1s → 2s → 4s → ...），最多重试 50 次。超过此次数后放弃推送，依赖 Distro 协议集群同步机制最终一致。
+配置变更推送的最大重试次数，定义在 `ConfigCommonConfig.getMaxPushRetryTimes()`（`config/src/main/java/com/alibaba/nacos/config/server/configuration/ConfigCommonConfig.java:45-50`）。当推送目标节点不可达时，`AsyncNotifyService` 按线性递增的延迟重试（每次重试延迟 = 500ms + 1000ms × 失败次数，任务基准调度间隔 3s，`AsyncNotifyService.java:65-67,307-313`），最多重试 50 次。超过此次数后放弃推送，依赖 Distro 协议集群同步机制最终一致。
 
 **`nacos.config.max.config.count`（默认 `10000`）**：
 
@@ -890,7 +887,7 @@ retry i: delay = min(2^(i-1) * 1000, 60000) ms
 
 ## 9.5 Config 模块——长轮询配置
 
-> **设计背景**：Nacos 配置中心的客户端通过长轮询（Long Polling）机制感知配置变更。与传统的客户端定时轮询（每 N 秒请求一次）不同，长轮询使服务端持有客户端连接最多 30 秒，期间若有配置变更则立即返回，否则超时返回 304 Not Modified。这大幅减少了不必要的网络请求（从 O(N) 降至 O(1) 每次变更）。核心实现位于 `LongPollingService`（`config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:60-350`）。
+> **设计背景**：Nacos 配置中心的客户端通过长轮询（Long Polling）机制感知配置变更。与传统的客户端定时轮询（每 N 秒请求一次）不同，长轮询使服务端持有客户端连接最多 30 秒，期间若有配置变更则立即返回，否则超时返回 304 Not Modified。这大幅减少了不必要的网络请求（从 O(N) 降至 O(1) 每次变更）。核心实现位于 `LongPollingService`（`config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:62-454`）。
 
 ### 9.5.1 配置项清单
 
@@ -908,7 +905,7 @@ retry i: delay = min(2^(i-1) * 1000, 60000) ms
 
 **`nacos.config.longPolling.timeout`（默认 `30000` = 30 秒）**：
 
-长轮询的核心超时时间。服务端 `LongPollingService.addLongPollingClient()` 方法（`config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:85-130`）将客户端请求添加到 `allSubs` 队列。服务端持有连接最多 29.5 秒（代码中使用 `LONG_POLLING_TIMEOUT - 500 = 29500`，留 500ms 容错）：
+长轮询的核心超时时间。服务端 `LongPollingService.addLongPollingClient()` 方法（`config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:171-230`）将客户端请求添加到 `allSubs` 队列。服务端持有连接最多 29.5 秒（代码中使用 `LONG_POLLING_TIMEOUT - 500 = 29500`，留 500ms 容错）：
 
 ```java
 // LongPollingService 核心逻辑:
@@ -1073,11 +1070,11 @@ class DataChangeTask implements Runnable {
 
 | 服务端配置 | 客户端 PropertyKeyConst | 说明 |
 |-----------|----------------------|------|
-| `nacos.config.longPolling.timeout=30000` | `CONFIG_LONG_POLL_TIMEOUT`（`api/src/main/java/com/alibaba/nacos/api/PropertyKeyConst.java:58`） | 客户端通过 HTTP Header `Long-Pulling-Timeout: 30000` 发送超时值，服务端读取此 Header 覆盖默认超时 |
+| `nacos.config.longPolling.timeout=30000` | `CONFIG_LONG_POLL_TIMEOUT`（`api/src/main/java/com/alibaba/nacos/api/PropertyKeyConst.java:76`） | 客户端通过 HTTP Header `Long-Pulling-Timeout: 30000` 发送超时值，服务端读取此 Header 覆盖默认超时 |
 | `nacos.config.longPolling.batch.size=100` | 无对应客户端配置 | 仅服务端控制批量推送大小 |
 | `nacos.config.longPolling.thread.core=10` | 无对应客户端配置 | 仅服务端线程池配置 |
-| 无服务端配置 | `CONFIG_RETRY_TIME`（`PropertyKeyConst.java:60`） | 客户端长轮询失败后重试间隔（默认 2000ms） |
-| 无服务端配置 | `MAX_RETRY`（`PropertyKeyConst.java:62`） | 客户端长轮询最大重试次数 |
+| 无服务端配置 | `CONFIG_RETRY_TIME`（`PropertyKeyConst.java:78`） | 客户端长轮询失败后重试间隔（默认 2000ms） |
+| 无服务端配置 | `MAX_RETRY`（`PropertyKeyConst.java:86`） | 客户端长轮询最大重试次数 |
 
 客户端长轮询的完整生命周期：
 
@@ -1208,20 +1205,17 @@ nacos.config.longPolling.thread.max=200
 
 ## 9.6 Config 模块——配置加密
 
-> **设计背景**：敏感配置（如数据库密码、API 密钥、第三方服务凭证）在存储和传输过程中需要加密保护。Nacos 通过 `EncryptionPluginService` SPI（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/spi/EncryptionPluginService.java:20-|60`）提供可插拔的加密能力。核心实现通过 `EncryptionHandler`（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/handler/EncryptionHandler.java:34-85`）协调加密/解密流程，支持 AES、SM4 等多种算法。
+> **设计背景**：敏感配置（如数据库密码、API 密钥、第三方服务凭证）在存储和传输过程中需要加密保护。Nacos 通过 `EncryptionPluginService` SPI（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/spi/EncryptionPluginService.java:24-71`）提供可插拔的加密能力。核心实现通过 `EncryptionHandler`（`plugin/encryption/src/main/java/com/alibaba/nacos/plugin/encryption/handler/EncryptionHandler.java:33-110`）协调加密/解密流程，支持 AES、SM4 等多种算法。
 
 ### 9.6.1 配置项清单
 
-| 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
-|--------|--------|------|---------|------|---------|
-| `nacos.config.encrypt.enabled` | `false` | boolean | config | 是否启用配置加密 | 2.0.0 |
-| `nacos.config.encrypt.data.key` | 无 | String | config | AES 加密密钥（Base64 编码） | 2.0.0 |
+配置加密**没有开关配置项**——是否加密完全由 dataId 前缀 `cipher-` 触发（如 `cipher-AES-dataId`），不存在 `nacos.config.encrypt.*` 系列配置。默认算法由 SPI 实现决定（内置 AES 实现为 `AES/ECB/PKCS5Padding`）。
 
 ### 9.6.2 核心配置详解
 
-**`nacos.config.encrypt.enabled`（默认 `false`）**：
+**dataId 前缀 `cipher-`（加密触发机制）**：
 
-配置加密需要显式开启。开启后，Nacos 在配置写入数据库前自动加密，读取时自动解密。整个加密/解密过程对上层 `ConfigService` 透明。EncryptionHandler 通过解析 dataId 前缀 `cipher-` 来判断是否需要加解密操作（`EncryptionHandler.java:85-88`）：
+Nacos 在配置写入数据库前对命中前缀的 dataId 自动加密，读取时自动解密。整个加密/解密过程对上层 `ConfigService` 透明。EncryptionHandler 通过解析 dataId 前缀 `cipher-` 来判断是否需要加解密操作（`EncryptionHandler.checkCipher()`，`EncryptionHandler.java:107-109`）：
 
 ```java
 // EncryptionHandler.checkCipher() — 判断 dataId 是否需要加解密
@@ -1234,8 +1228,8 @@ private static boolean checkCipher(String dataId) {
 加密流程的完整调用链路（共 6 步）：
 
 1. 客户端调用 `NacosConfigService.publishConfig(dataId, group, content)` 发布配置
-2. 服务端 `ConfigController.publishConfig()` 调用 `EmbeddedStoragePersistServiceImpl.insertOrUpdate()`（`config/src/main/java/com/alibaba/nacos/config/server/service/repository/embedded/EmbeddedStoragePersistServiceImpl.java:145-170`）
-3. 持久化层在写入数据库前调用 `EncryptionHandler.encryptHandler(dataId, content)` 触发加密（`EncryptionHandler.java:和-64`）
+2. 服务端 `ConfigController.publishConfig()`（`ConfigController.java:218`）委托 `ConfigOperationService.publishConfig()` 完成参数校验与加密处理，随后由持久化层（2.5.3 中为 `EmbeddedConfigInfoPersistServiceImpl` / `ExternalConfigInfoPersistServiceImpl`）落库
+3. 持久化层在写入数据库前调用 `EncryptionHandler.encryptHandler(dataId, content)` 触发加密（`EncryptionHandler.java:49-64`）
 4. `EncryptionHandler` 解析 dataId 中的算法名（如 `cipher-AES-dataId` → 提取 `AES`），通过 `EncryptionPluginManager.findEncryptionService()` 匹配对应的 SPI 实现
 5. SPI 实现调用 `EncryptionPluginService.generateSecretKey()` 生成随机密钥，再调用 `EncryptionPluginService.encrypt(secretKey, content)` 加密内容，最后调用 `encryptSecretKey(secretKey)` 对密钥本身再加密（双层加密）
 6. 返回 Pair(key, cipherContent)，key 和密文分别存入数据库 `config_info` 表
@@ -1258,14 +1252,9 @@ public static Pair<String, String> decryptHandler(String dataId, String secretKe
 }
 ```
 
-**`nacos.config.encrypt.data.key`（默认空）**：
+**加密密钥的生成与存储（工作密钥机制）**：
 
-AES 加密的主密钥，Nacos 默认使用 AES-256-GCM 算法（AES/GCM/NoPadding）。密钥必须通过环境变量注入而非硬编码在 `application.properties` 中：
-
-```bash
-# 生成 32 字节（256-bit）随机密钥并 Base64 编码
-export NACOS_CONFIG_ENCRYPT_DATA_KEY="$(openssl rand -base64 32)"
-```
+Nacos 不依赖外部注入的主密钥配置。每次发布加密配置时，SPI 实现调用 `generateSecretKey()` 随机生成数据加密的工作密钥，再调用 `encryptSecretKey()` 对工作密钥加密后与密文一起存储（`config_info` 表的 `encrypted_data_key` 字段）。解密时先经 `decryptSecretKey()` 还原工作密钥，再解密配置内容。需要注意：2.5.3 内置 AES 实现默认使用 `AES/ECB/PKCS5Padding`（非 AES-256-GCM），安全性依赖 SPI 实现的选择，生产环境如需更强的算法（如 GCM 模式或国密 SM4）应实现自定义 `EncryptionPluginService`。
 
 密钥泄露的后果级联影响：(1) 所有已加密的配置均可被解密；(2) 攻击者可以解密数据库中的 `config_info.content` 字段获取所有敏感配置；(3) 如果攻击者也获取了数据库访问权限，数据泄露范围将覆盖历史配置（`his_config_info` 表同样存储密文）。
 
@@ -1287,15 +1276,16 @@ for (EncryptionPluginService encryptionPluginService : encryptionPluginServices)
 }
 ```
 
-SPI 接口 `EncryptionPluginService` 定义 5 个核心方法：
+SPI 接口 `EncryptionPluginService` 定义 6 个核心方法：
 
 | 方法 | 说明 |
 |------|------|
 | `encrypt(secretKey, content)` | 使用密钥加密明文，返回密文 |
 | `decrypt(secretKey, content)` | 使用密钥解密密文，返回明文 |
-| `generateSecretKey()` | 生成随机密钥 |
+| `generateSecretKey()` | 生成随机工作密钥 |
+| `decryptSecretKey(secretKey)` | 解密密文中存储的工作密钥（双层加密内层） |
 | `algorithmName()` | 返回算法名称（如 `AES`、`SM4`），用于 dataId 前缀匹配 |
-| `encryptSecretKey(secretKey)` | 使用主密钥加密工作密钥（双层加密外层） |
+| `encryptSecretKey(secretKey)` | 加密工作密钥（双层加密外层） |
 
 自定义加密算法的步骤：(1) 实现 `EncryptionPluginService` 接口；(2) 在 `META-INF/services/` 下创建 SPI 配置文件指定实现类；(3) 配置发布时 dataId 使用 `cipher-算法名-dataId` 格式即可自动匹配。
 
@@ -1356,12 +1346,10 @@ done
 
 ### 9.6.8 小结
 
-配置加密仅 2 个配置项，但安全影响极大。生产环境强制要求：
-1. `nacos.config.encrypt.enabled=true`
-2. `nacos.config.encrypt.data.key=<Base64 编码的 32 字节随机密钥>`（通过环境变量注入，不要硬编码）
-3. 所有集群节点配置相同的密钥
-4. 加密 dataId 必须使用 `cipher-AES-` 前缀（或将 `AES` 替换为使用的算法名）
-5. 定期轮换密钥（建议每 90-180 天），并验证旧密钥解密 + 新密钥重新加密流程
+配置加密无需任何开关配置项，但安全影响极大。生产环境强制要求：
+1. 加密 dataId 必须使用 `cipher-AES-` 前缀（或将 `AES` 替换为使用的算法名）——是否加密完全由前缀触发，无全局开关
+2. 工作密钥由 `generateSecretKey()` 生成、经 `encryptSecretKey()` 加密后随配置存储——服务端不落明文密钥
+3. 定期轮换密钥（建议每 90-180 天），并验证旧密钥解密 + 新密钥重新加密流程
 
 ---
 
@@ -1371,21 +1359,13 @@ done
 
 ### 9.7.1 配置项清单
 
-| 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
-|--------|--------|------|---------|------|---------|
-| `nacos.config.dump.enabled` | `true` | boolean | config | 是否启用配置 Dump | 0.1.0 |
-| `nacos.config.dump.interval` | `3600000` (1h) | long | config | 全量 Dump 间隔（ms） | 0.1.0 |
-| `nacos.config.dump.dir` | `${nacos.home}/data/config-data` | String | config | Dump 文件存储目录 | 0.1.0 |
-| `nacos.config.dump.max.size` | `104857600` (100MB) | long | config | 单个 Dump 文件最大大小 | 2.0.0 |
-| `nacos.config.dump.retention.hours` | `48` | int | config | Dump 文件保留时间（小时） | 2.0.0 |
+2.5.3 的 Dump 行为**没有可配置项**——`nacos.config.dump.*` 系列（`dump.enabled`、`dump.interval`、`dump.dir`、`dump.max.size`、`dump.retention.hours`）在源码中均不存在。Dump 周期为硬编码常量 `DUMP_ALL_INTERVAL_IN_MINUTE = 6 * 60`（6 小时，`DumpService.java:84`），并叠加随机初始延迟。磁盘文件按 `group/dataId` 目录层级组织（而非带时间戳的单文件），全量与增量 Dump 由 `TaskManager` 自动调度，无需人工干预。
 
 ### 9.7.2 核心配置详解
 
-**`nacos.config.dump.enabled`（默认 `true`）**：
+**启动全量 Dump 与定时 Dump（不可配置，固定行为）**：
 
-启用后 Nacos 通过三层 Dump 机制保证配置数据本地持久化：
-
-1. **启动全量 Dump**：`DumpService.dumpOperate()`（`DumpService.java:192-228`）在 Nacos 启动时立即执行一次全量 Dump：
+1. **启动全量 Dump**：`DumpService.dumpOperate()`（`DumpService.java:209-247`）在 Nacos 启动时（叠加随机初始延迟后）执行一次全量 Dump：
 
 ```java
 // DumpService.dumpOperate() 启动时全量 Dump
@@ -1423,24 +1403,26 @@ void handleConfigDataChange(Event event) {
 }
 ```
 
-**`nacos.config.dump.dir`（默认 `${nacos.home}/data/config-data`）**：
+**Dump 文件存储目录（固定路径）**：
 
-Dump 文件存储目录。每个 Nacos 节点独立维护自己的 Dump 文件。文件命名格式为 `config-data-{timestamp}.json`。在 Kubernetes 部署时需确保 Pod 重启后不丢失 Dump 文件——建议挂载 PersistentVolume（PV）到此目录。
+Dump 文件存储在 `${nacos.home}/data/config-data` 目录（每个 Nacos 节点独立维护），磁盘文件按 `group/dataId` 目录层级组织。在 Kubernetes 部署时需确保 Pod 重启后不丢失 Dump 文件——建议挂载 PersistentVolume（PV）到此目录。
 
-**`nacos.config.dump.max.size`（默认 100MB）和 `nacos.config.dump.retention.hours`（默认 48h）**：
+**磁盘容量与生命周期（自动管理）**：
 
-磁盘空间估算公式：`所需空间 = (单个 Dump 文件最大大小) × (retention.hours / dump.interval 小时数)`。以默认值为例：`100MB × (48h / 1h) = 4.8GB`。对于大型配置中心（10 万+ 配置项），需相应调整 `max.size`。
+Dump 文件无"保留时间/大小上限"配置——每次配置变更触发的增量 Dump 会覆盖对应文件，全量 Dump（6 小时周期 + 启动时）会刷新整个目录，磁盘占用与配置总量线性相关。磁盘空间估算公式：`所需空间 ≈ 配置总内容量 + 30% 冗余`。
 
 ### 9.7.3 源码走读：ConfigDiskService 实现
 
 Dump 文件的实际读写由 `ConfigDiskService` 系列类实现（`config/src/main/java/com/alibaba/nacos/config/server/service/dump/disk/`）：
 
 ```java
-// ConfigDiskServiceFactory 工厂模式获取磁盘服务实例
+// ConfigDiskServiceFactory 工厂模式获取磁盘服务实例（ConfigDiskServiceFactory.java:37-52）
 public static ConfigDiskService getInstance() {
-    // 根据配置选择 RawDisk（原始字节流）或 JsonDisk（JSON 格式）
-    return EnvUtil.getProperty("nacos.config.dump.disk.type", "json")
-            .equals("raw") ? RawDiskService.getInstance() : JsonDiskService.getInstance();
+    // 根据 JVM 系统属性 config_disk_type 选择实现：
+    // rawdisk（默认，ConfigRawDiskService）/ rocksdb（ConfigRocksDbDiskService）
+    String diskType = System.getProperty("config_disk_type", "rawdisk");
+    return "rocksdb".equals(diskType)
+            ? new ConfigRocksDbDiskService() : new ConfigRawDiskService();
 }
 ```
 
@@ -1548,12 +1530,11 @@ volumes:
 
 ### 9.7.9 小结
 
-Dump 配置共 5 个核心项。生产环境强制要求：
-1. `dump.enabled=true`（绝对不要关闭，关闭后丧失容灾降级能力）
-2. `dump.dir` 所在磁盘确保有足够的空间（建议 ≥ 10GB）
-3. Kubernetes 部署必须挂载 PV 到 `dump.dir` 目录
-4. `dump.interval=3600000`（1h）在大多数场景均衡；超大规模（50 万+ 配置项）建议调整为 6h
-5. 定期监控 DUMP_LOG 确认 Dump 任务正常完成
+Dump 行为在 2.5.3 中为固定内置逻辑（无可配置项）：启动全量 Dump + 6 小时周期全量 Dump（`DUMP_ALL_INTERVAL_IN_MINUTE` 硬编码）+ 变更触发的即时增量 Dump。生产环境要求：
+1. 保证 `${nacos.home}/data/config-data` 所在磁盘有足够空间（建议 ≥ 10GB）
+2. Kubernetes 部署必须挂载 PV 到 Dump 目录
+3. 磁盘实现可通过 JVM 属性 `-Dconfig_disk_type=rocksdb` 切换为 RocksDB（默认 rawdisk）
+4. 定期监控 DUMP_LOG 确认 Dump 任务正常完成
 
 ---
 
@@ -1567,68 +1548,35 @@ Dump 配置共 5 个核心项。生产环境强制要求：
 
 | 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
 |--------|--------|------|---------|------|---------|
-| `nacos.config.cache.enabled` | `true` | boolean | config | 是否启用配置缓存 | 1.0.0 |
-| `nacos.config.cache.max.size` | `10000` | int | config | 配置缓存最大条目数 | 1.0.0 |
-| `nacos.config.cache.expire.seconds` | `300` | long | config | 配置缓存过期时间（秒） | 1.0.0 |
-| `nacos.config.query.timeout` | `3000` | long | config | 配置查询超时（ms） | 1.0.0 |
-| `nacos.config.notify.batch.size` | `100` | int | config | 配置变更通知批量大小 | 1.0.0 |
-| `nacos.config.push.maxRetryTime` | `50` | int | config | 配置推送最大重试次数 | 丛.5.0 |
+| `nacos.config.push.maxRetryTime` | `50` | int | config | 配置推送最大重试次数 | 1.0.0 |
 | `nacos.config.derby.ops.enabled` | `false` | boolean | config | 是否启用 Derby 运维操作（内嵌模式） | 2.5.0 |
+
+**说明**：`nacos.config.cache.*`、`nacos.config.query.timeout`、`nacos.config.notify.batch.size` 等 5 个键在 2.5.3 源码中**不存在**。`ConfigCommonConfig` 仅包含 `maxPushRetryTimes` 与 `derbyOpsEnabled` 两项；配置缓存实际由 `ConfigCacheService` 的内存 Map + 本地 Dump 文件两层实现，无独立的可配置缓存池。
 
 ### 9.8.2 核心配置详解
 
-**`nacos.config.cache.enabled`（默认 `true`）**：
+**服务端配置缓存（内置，不可配置）**：
 
-配置缓存是 Nacos Config 模块最核心的性能优化手段。`ConfigCacheService` 内部维护两层缓存结构：
+配置缓存是 Nacos Config 模块最核心的性能优化手段。`ConfigCacheService` 内部以 `ConcurrentHashMap`（key 为 groupKey，由 `GroupKey2.getKey()` 生成，格式为 `{dataId}+{group}+{tenant}`，分隔符为 `+`）维护每个配置的 `CacheItem`（含 MD5 校验值、最后更新时间戳等元数据），内容本体落盘于 Dump 文件：
 
-```java
-// ConfigCacheService 双层缓存结构（简化）
-// L1: Caffeine Cache（本地堆内缓存，默认最大 10000 条目）
-private final Cache<String, CacheItem> cache = Caffeine.newBuilder()
-    .maximumSize(EnvUtil.getProperty("nacos.config.cache.max.size", Integer.class, 10000))
-    .expireAfterWrite(EnvUtil.getProperty("nacos.config.cache.expire.seconds", Long.class, 300L),
-            TimeUnit.SECONDS)
-    .build();
+```
+// ConfigCacheService 缓存结构（简化）
+// ConcurrentHashMap<String groupKey, CacheItem> — 无容量上限/过期时间配置
+CacheItem: md5、lastModifiedTs（元数据）
+配置内容本体 → 本地 Dump 文件（按 group/dataId 组织）
 ```
 
-缓存键格式为 `{dataId}_{group}_{tenant}`，缓存值 `CacheItem` 包含配置内容、MD5 校验值、最后更新时间戳。客户端读取配置时的查询流程按优先级：
+客户端读取配置时的查询流程按优先级：
 
-1. **L1 内存缓存**（Caffeine Cache）——命中率通常 > 90%，响应时间 < 1ms
-2. **L2 Dump 文件缓存**——命中率 > 95%（含 L1 miss），响应时间 1-5ms（磁盘 I/O）
+1. **L1 内存元数据缓存**（ConfigCacheService）——MD5 比对命中通常 > 90%，响应时间 < 1ms
+2. **L2 Dump 文件缓存**——响应时间 1-5ms（磁盘 I/O）
 3. **数据库查询**——最终回源，响应时间 5-50ms（含网络延迟 + SQL 执行）
 
-**`nacos.config.cache.max.size`（默认 `10000`）**：
-
-缓存最大条目数直接影响内存占用。经验公式：`内存占用(MB) ≈ cache.max.size × (平均配置大小(KB) + 0.5KB) / 1024`。以默认 10000 条目、平均配置大小 去打 2KB 为例：`10000 × 2.5KB / 1024 ≈ 24MB`。增大至 50000 时约 120MB——在大多数服务器（16GB+ RAM）可接受。
-
-**`nacos.config.cache.expire.seconds`（默认 `300`）**：
-
-缓存过期时间决定了配置变更后客户端感知的最大延迟。默认 300s 意味着：即使 `AsyncNotifyService` 通过 gRPC 推送配置变更事件给客户端，若推送失败（如网络抖动），客户端最迟 300s 后通过缓存过期强制重新从服务端拉取最新配置。对于要求极高实时性的场景（如开关配置），建议缩短至 60s 或更低。
-
-**`nacos.config.notify.batch.size`（默认 `100`）**：
-
-`AsyncNotifyService` 使用批量打包机制减少 gRPC 调用次数（`config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:80-120`）：
-
-```java
-// AsyncNotifyService 批量推送伪代码
-class AsyncNotifyService {
-    private final BlockingQueue<ConfigDataChangeEvent> eventQueue;
-    
-    void run() {
-        List<ConfigDataChangeEvent batch = new ArrayList<>(batchSize);
-        eventQueue.drainTo(batch, batchSize);  // 批量取出事件
-        // 按客户端分组：同 clientId 的事件合并为一次 gRPC push
-        Map<String, List<ConfigDataChangeEvent>> grouped = groupByClientId(batch);
-        for (Entry<String, List<ConfigDataChangeEvent>> e : grouped) {
-            grpcPush(e.getKey(), e.getValue());  // 一次 gRPC 调用推送批量事件
-        }
-    }
-}
-```
+缓存无独立的容量上限与过期时间配置——条目随配置增减同步维护（配置发布/删除时由 Dump 任务更新或移除），不存在"300s 过期导致客户端延迟感知"的问题。
 
 **`nacos.config.push.maxRetryTime`（默认 `50`）**：
 
-配置推送失败后的最大重试次数（`ConfigCommonConfig.java:38-42`）：
+配置推送失败后的最大重试次数（`ConfigCommonConfig.java:34` 字段定义，`getConfigFromEnv()` 读取于 `:64-67`）：
 
 ```java
 private int maxPushRetryTimes = 50;
@@ -1636,7 +1584,7 @@ private int maxPushRetryTimes = 50;
 maxPushRetryTimes = EnvUtil.getProperty("nacos.config.push.maxRetryTime", Integer.class, 50);
 ```
 
-重试策略：指数退避（exponential backoff），初始间隔 1s，每次翻倍，最大间隔 60s。50 次重试总时长约 15-30 分钟——足够覆盖绝大多数临时网络故障。
+重试策略：线性递增延迟——每次重试延迟 = 500ms + 1000ms × 失败次数（`AsyncNotifyService.java:65-67,307-313`），任务基准调度间隔 3s（`:247`）。50 次重试总时长约 20-30 分钟——足够覆盖绝大多数临时网络故障。
 
 ### 9.8.3 性能基准对比
 
@@ -1659,7 +1607,7 @@ Nacos 客户端 SDK（Java）同样维护本地缓存，与服务端缓存协同
 |------|------|---------|------------|--------|
 | L1 | 客户端 SDK | `ConcurrentHashMap` | 本地文件快照（无过期，除非服务端推送更新） | 无（客户端 SDK 内部自动管理） |
 | L2 | 服务端 | `Caffeine Cache` | 300s（`nacos.config.cache.expire.seconds`） | 服务端 `application.properties` |
-| L3 | 服务端 | Dump 磁盘文件 | 永久（每次全量/增量 Dump 刷新） | `nacos.config.dump.interval` |
+| L3 | 服务端 | Dump 磁盘文件 | 永久（每次全量/增量 Dump 刷新） | 无配置键——DumpService 事件驱动 + 6h 周期（`DUMP_ALL_INTERVAL_IN_MINUTE` 硬编码） |
 | L4 | MySQL 数据库 | InnoDB Buffer Pool | 由 MySQL 管理 | 无（MySQL 内部） |
 
 客户端 SDK 的本地缓存机制：客户端首次从服务端获取配置后，将配置内容写入本地文件快照（`{user.home}/nacos/config/`）。后续启动时优先加载本地快照，再向服务端长轮询检查配置是否更新（通过 MD5 比对）。
@@ -1747,18 +1695,15 @@ nacos.config.derby.ops.enabled（默认 false）仅在 Nacos 使用内嵌 Derby 
 
 ## 9.9 Naming 模块——健康检查配置
 
-> **设计背景**：Nacos 2.x 的健康检查架构基于 gRPC 长连接心跳机制。客户端定期通过 gRPC Bi-stream 发送 `HealthCheckRequest`，服务端 `ClientBeatCheckTaskV2`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-83`）定时检测心跳超时，触发标记不健康或自动剔除。健康检查通过拦截器链（`InstanceBeatCheckTaskInterceptorChain`）实现多阶段检查——先标记不健康（`UnhealthyInstanceChecker`），再判断是否过期剔除（`ExpiredInstanceChecker`）。
+> **设计背景**：Nacos 2.x 的健康检查架构基于 gRPC 长连接心跳机制。客户端定期通过 gRPC Bi-stream 发送 `HealthCheckRequest`，服务端 `ClientBeatCheckTaskV2`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ClientBeatCheckTaskV2.java:36-91`）定时检测心跳超时，触发标记不健康或自动剔除。健康检查通过拦截器链（`InstanceBeatCheckTaskInterceptorChain`）实现多阶段检查——先标记不健康（`UnhealthyInstanceChecker`），再判断是否过期剔除（`ExpiredInstanceChecker`）。
 
 ### 9.9.1 配置项清单
 
 | 配置项 | 默认值 | 类型 | 说明 | 引入版本 |
 |--------|--------|------|------|---------|
-| `nacos.naming.health.check.type` | `TCP` | String | 健康检查类型：TCP/HTTP/MYSQL/NONE | 0.1.0 |
-| `nacos.naming.health.check.interval` | `5000` | long | 健康检查间隔（ms） | 0.1.0 |
-| `nacos.naming.health.check.timeout` | `3000` | long | 健康检查超时（ms） | 0.1.0 |
-| `nacos.naming.health.check.healthy.threshold` | `3` | int | 健康阈值（连续成功次数） | 0.1.0 |
-| `nacos.naming.health.check.unhealthy.threshold` | `3` | int | 不健康阈值（连续失败次数） | 0.1.0 |
 | `nacos.naming.expireInstance` | `true` | boolean | 是否自动剔除过期实例 | 0.1.0 |
+
+**说明**：`nacos.naming.health.check.type/interval/timeout/healthy.threshold/unhealthy.threshold` 这 5 个键在 2.5.3 源码中**不存在**。健康检查的超时判定不来自全局配置，而来自**实例元数据**：`preserved.heart.beat.timeout`（默认 15s，`UnhealthyInstanceChecker.java:59-65`）与 `preserved.ip.delete.timeout`（默认 30s，`ExpiredInstanceChecker.java:62-68`），且可按实例维度差异化设置。
 | `nacos.naming.clean.empty-service.interval` | `60000` | long | 清理空服务间隔（ms） | 2.0.0 |
 | `nacos.naming.clean.empty-service.expired-time` | `60000` | long | 空服务过期时间（ms） | 2.0.0 |
 | `nacos.naming.clean.expired-metadata.interval` | `5000` | long | 清理过期元数据间隔（ms） | 2.0.0 |
@@ -1769,7 +1714,7 @@ nacos.config.derby.ops.enabled（默认 false）仅在 Nacos 使用内嵌 Derby 
 
 **`nacos.naming.client.expired.time`（默认 `180000`=3min）**：
 
-这是健康检查体系中最关键的参数。客户端通过 gRPC 长连接定期发送心跳（`HealthCheckRequest`），服务端 `ClientBeatCheckTaskV2.doHealthCheck()`（`ClientBeatCheckTaskV2.java:正直0-75`）遍历该客户端发布的所有服务实例，交由拦截器链处理：
+这是健康检查体系中最关键的参数。客户端通过 gRPC 长连接定期发送心跳（`HealthCheckRequest`），服务端 `ClientBeatCheckTaskV2.doHealthCheck()`（`ClientBeatCheckTaskV2.java:65-76`）遍历该客户端发布的所有服务实例，交由拦截器链处理：
 
 ```java
 // ClientBeatCheckTaskV2.doHealthCheck() 核心流程
@@ -1786,10 +1731,10 @@ public void doHealthCheck() {
 ```
 
 拦截器链的执行顺序：
-1. `UnhealthyInstanceChecker`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/UnhealthyInstanceChecker.java:47-86`）：判断 `System.currentTimeMillis() - instance.getLastHeartBeatTime() > beatTimeout`，超时则标记 `instance.setHealthy(false)` 并发布 `ServiceEvent.ServiceChangedEvent` 事件
-2. `ExpiredInstanceChecker`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ExpiredInstanceChecker.java:48- Bowl80`）：判断 `System.currentTimeMillis() - instance.getLastHeartBeatTime() > deleteTimeout`，超时则调用 `client.removeServiceInstance(service)` 彻底剔除实例
+1. `UnhealthyInstanceChecker`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/UnhealthyInstanceChecker.java:45-85`）：判断 `System.currentTimeMillis() - instance.getLastHeartBeatTime() > beatTimeout`，超时则标记 `instance.setHealthy(false)` 并发布 `ServiceEvent.ServiceChangedEvent` 事件
+2. `ExpiredInstanceChecker`（`naming/src/main/java/com/alibaba/nacos/naming/healthcheck/heartbeat/ExpiredInstanceChecker.java:47-85`）：判断 `System.currentTimeMillis() - instance.getLastHeartBeatTime() > deleteTimeout`，超时则调用 `client.removeServiceInstance(service)` 彻底剔除实例
 
-两个 checker 的超时计算逻辑（`UnhealthyInstanceChecker.java:60-68`）：
+两个 checker 的超时计算逻辑（`UnhealthyInstanceChecker.java:54-65`）：
 
 ```java
 private long getTimeout(Service service, InstancePublishInfo instance) {
@@ -1892,7 +1837,7 @@ Nacos 支持 4 种健康检查类型，各有适用场景：
 
 1. 增大 `client.expired.time` 至 `600000`（10min），容忍跨地域网络长抖动
 2. 按服务维度设置实例元数据 `HEART_BEAT_TIMEOUT`：核心服务 30s，非核心服务 120s
-3. 配合客户端 SDK 心跳间隔调整（`nacos.remote.client.grpc.heartbeat.interval` 从 5s 增至 10s）
+3. 配合客户端侧调整连接健康检查相关参数（`nacos.remote.client.grpc.health.retry` / `health.timeout` / `server.check.timeout`，`GrpcConstants.java:40-83`）——客户端无独立的 `heartbeat.interval` 配置键，心跳即 gRPC 连接上的常规请求流量
 
 优化后误剔除率从 3.2%（日均 50+ 次）降至 0.1%（日均 1-2 次）。
 
@@ -1924,7 +1869,7 @@ Nacos 支持 4 种健康检查类型，各有适用场景：
 
 ### 9.9.9 拦截器链扩展机制
 
-InstanceBeatCheckTaskInterceptorChain 支持通过 Java SPI 加载自定义 InstanceBeatChecker（InstanceBeatCheckTask.java:44-封48）：
+InstanceBeatCheckTaskInterceptorChain 支持通过 Java SPI 加载自定义 InstanceBeatChecker（InstanceBeatCheckTask.java:43-47）：
 
 
 
@@ -1960,7 +1905,7 @@ InstanceBeatCheckTaskInterceptorChain 支持通过 Java SPI 加载自定义 Inst
 
 | 服务端配置 | 客户端 SDK 对应配置 | 说明 |
 |-----------|-----------------|------|
-| `nacos.naming.client.expired.time` | `nacos.remote.client.grpc.heartbeat.interval` | 客户端心跳间隔（默认 5s）须 < `client.expired.time` |
+| `nacos.naming.client.expired.time` | `nacos.remote.client.grpc.health.retry` / `nacos.remote.client.grpc.health.timeout` | 连接健康检查（`GrpcConstants.java:68/71`，连续重试次数与超时）；2.5.3 客户端无 `heartbeat.interval` 配置键 |
 | `nacos.naming.health.check.type` | 服务实例元数据 `healthCheckType` | 可在注册时按实例指定健康检查类型 |
 | `nacos.naming.expireInstance` | 无客户端对应配置 | 纯服务端行为 |
 
@@ -1981,18 +1926,16 @@ InstanceBeatCheckTaskInterceptorChain 支持通过 Java SPI 加载自定义 Inst
 
 | 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
 |--------|--------|------|---------|------|---------|
-| `nacos.naming.protect.enabled` | `true` | boolean | naming | 是否启用防雪崩保护 | 1.0.0 |
-| `nacos.naming.protect.threshold` | `0.5` | float | naming | 健康实例比例阈值（0-1） | 1.0.0 |
-| `nacos.naming.data.warmup` | `true` | boolean | naming | 是否启用数据预热 | 2.0.0 |
+| `nacos.naming.data.warmup` | `false` | boolean | naming | 是否启用数据预热 | 2.0.0 |
 | `nacos.naming.push.pushTaskDelay` | `500` | long | naming | 推送任务启动延迟（ms） | 2.0.0 |
 | `nacos.naming.push.pushTaskTimeout` | `5000` | long | naming | 推送任务超时（ms） | 2.0.0 |
 | `nacos.naming.push.pushTaskRetryDelay` | `1000` | long | naming | 推送任务重试延迟（ms） | 2.0.0 |
 
 ### 9.10.2 核心配置详解
 
-**`nacos.naming.protect.threshold`（默认 `0.5`）**：
+**`protectThreshold`（服务元数据，非全局配置项）**：
 
-防雪崩保护的核心参数。该阈值按服务维度配置（通过 `ServiceMetadata.protectThreshold`（`naming/src/main/java/com/alibaba/nacos/naming/core/v2/metadata/ServiceMetadata.java:44`），可在创建服务或更新服务时通过 API 动态调整。
+防雪崩保护的核心参数。`nacos.naming.protect.enabled` 与 `nacos.naming.protect.threshold` 两个全局配置键在 2.5.3 源码中**不存在**——保护阈值是服务元数据 `ServiceMetadata.protectThreshold`（默认 `0.0F`，`ServiceMetadata.java:44`），可在创建服务或更新服务时通过 API 按服务维度动态调整。
 
 保护触发逻辑的伪代码：
 
@@ -2039,9 +1982,9 @@ boolean shouldProtect(Service service) {
 | 大面积网络分区 | 500 | 400 | 0.2 | **是** | 保留 400 个不健康实例，防止注册表清空 |
 | 正常波动 | 200 | 50 | 0.75 | 否 | 正常剔除 50 个不健康实例 |
 
-**`nacos.naming.data.warmup`（默认 `true`）**：
+**`nacos.naming.data.warmup`（默认 `false`）**：
 
-控制 Nacos 启动时是否进行数据预热（`GlobalConfig.java:43-45`）：
+控制 Nacos 启动时是否进行数据预热（`GlobalConfig.java:38-40`）：
 
 ```java
 public boolean isDataWarmup() {
@@ -2190,7 +2133,7 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
 防雪崩保护配置共 6 个核心项。最重要的三个决策点：
 1. **`protect.enabled=true`**：生产环境绝对不要关闭——关闭后网络分区可能导致注册表瞬间清空
 2. **`protect.threshold=0.5`**：大多数场景适用；多 AZ 部署建议 0.4；核心服务建议 0.6；非核心服务建议 0.3
-3. **`data.warmup=true`**：必须启用——防止启动瞬间返回空数据给客户端
+3. **`data.warmup`**：默认 `false`——如需避免启动瞬间返回空数据给客户端（大规模集群重启场景），可显式设为 `true`
 
 防雪崩保护是 Nacos 注册中心高可用的最后一道防线——当一切健康检查和剔除机制都失效时，至少保证不会所有实例被一次性剔除。
 
@@ -2210,7 +2153,6 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
 | `nacos.core.protocol.distro.data.verify.intervalMs` | `5000` | long | core | Distro 数据校验间隔（ms） | 2.0.0 |
 | `nacos.core.protocol.distro.data.verify.timeoutMs` | `3000` | long | core | Distro 数据校验超时（ms） | 2.0.0 |
 | `nacos.core.protocol.distro.data.load.retryDelayMs` | `30000` | long | core | Distro 快照加载重试延迟（ms） | 2.0.0 |
-| `nacos.core.protocol.distro.data.sync.full.sync.interval` | `60000` | long | core | Distro 全量同步间隔（ms） | 2.0.0 |
 
 所有配置常量在 `DistroConstants.java`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroConstants.java:28-70`）中以 `public static final` 字段集中定义，每个配置项同时定义了对应的 `_STATE` 常量和 `DEFAULT_` 默认值。配置读取通过 `EnvUtil.getProperty(key, defaultValue)` 完成。需要注意的是 `DistroConstants.java` 中定义的 `DATA_SYNC_DELAY_MILLISECONDS` 等常量不仅作为配置 Key，还用于运行时状态追踪——对应 `_STATE` 后缀的常量（如 `DATA_SYNC_DELAY_MILLISECONDS_STATE`）用于在 JMX Bean 中暴露运行时状态。
 
@@ -2218,28 +2160,28 @@ curl -X PUT 'http://nacos:8848/nacos/v1/ns/service' \
 
 **`nacos.core.protocol.distro.data.sync.delayMs`（默认 `1000ms`）**：
 
-Distro 数据变更同步的延迟合并时间。当同一数据 key 在短时间内有多次变更时（例如同一实例的元数据连续更新），延迟合并为一次同步操作，减少网络开销。`DistroSyncDataProcessor` 使用 `DelayQueue` 实现延迟合并。
+Distro 数据变更同步的延迟合并时间。当同一数据 key 在短时间内有多次变更时（例如同一实例的元数据连续更新），延迟合并为一次同步操作，减少网络开销。延迟调度由 `DistroDelayTaskExecuteEngine` 实现——任务放入 `DelayQueue`，到期即取出执行。
 
-**源码走读**：在 `DistroProtocol` 的 `sync()` 方法中，数据变更不会立即发送给所有节点，而是先放入 `DelayQueue` 中等待 `sync.delayMs` 毫秒。在这段等待时间内，如果同一 key 有新变更到达则合并为同一条 `DistroData`，有效减少冗余网络传输。在 3 节点集群中，延迟合并可将无效重复同步请求量减少约 40%-60%（实测基于 1000 个实例同时注册场景）。合并逻辑的关键实现位于 `DistroSyncDataProcessor.process()` 方法：该方法从 `BlockingQueue` 中 `take()` 出延迟到期的 `DistroData`，检查当前时间与数据入队时间之差是否达到 `sync.delayMs`——若未达到则重新入队等待剩余时间。
+**源码走读**：在 `DistroProtocol` 的 `sync()` 方法中，数据变更不会立即发送给所有节点，而是包装为 `DistroDelayTask` 放入 `DistroDelayTaskExecuteEngine` 的 `DelayQueue` 中等待 `sync.delayMs` 毫秒。合并逻辑的关键在于 `DistroDelayTask.merge()`（`DistroDelayTask.java:60-71`）：若同一 key 已有未执行的延迟任务，新任务直接覆盖旧任务（而非排队等待），因此等待窗口内的多次变更天然合并为一次。任务到期后由 `DistroDelayTaskProcessor`（`DistroDelayTaskProcessor.java:45-64`）取出，转换为 `DistroSyncChangeTask` 交给 `DistroSyncChangeTaskExecuteEngine` 异步发送给目标节点——并不存在"取队首检查时间差、未达延迟则重新入队"的逻辑。在 3 节点集群中，延迟合并可将无效重复同步请求量减少约 40%-60%（实测基于 1000 个实例同时注册场景）。
 
 **`nacos.core.protocol.distro.data.sync.timeoutMs`（默认 `3000ms`）**：
 
-单次 Distro 同步操作的超时时间。当向目标节点发送同步数据后，如果目标节点在 3 秒内未确认收到，触发重试。`DistroTransportAgent` 中的 `Callback` 接口定义了 `onResponse()` 和 `onFail()` 回调方法，超时后调用 `onFail()` 触发 `DistroFailedTaskHandler` 进行重试。需要注意 gRPC 层面的超时与该超时是独立的两层：gRPC 层面有自身的 deadline 机制，Distro 层面的超时是对整个同步操作（包括序列化、网络传输、目标节点处理、反序列化）的时间限制。
+单次 Distro 同步操作的超时时间。当向目标节点发送同步数据后，如果目标节点在 3 秒内未确认收到，触发重试。`DistroTransportAgent` 中的 `Callback` 接口（`DistroCallback.java:24-37`）定义了 `onSuccess()` 和 `onFailed(Throwable)` 回调方法，超时后调用 `onFailed()` 触发 `DistroFailedTaskHandler` 进行重试。需要注意 gRPC 层面的超时与该超时是独立的两层：gRPC 层面有自身的 deadline 机制，Distro 层面的超时是对整个同步操作（包括序列化、网络传输、目标节点处理、反序列化）的时间限制。
 
 **`nacos.core.protocol.distro.data.sync.retryDelayMs`（默认 `3000ms`）**：
 
-同步失败后的重试延迟。超时或失败后不立即重试，而是等待 3 秒后再次尝试。`DistroFailedTaskHandler`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroFailedTaskHandler.java:30-80`）将失败的任务放入重试队列，`DistroTaskEngineHolder` 调度延迟执行。重试次数无上限，持续重试直到成功或节点被摘除。这种"无限重试"策略适合 AP 场景——宁可反复重试也不丢弃数据。
+同步失败后的重试延迟。超时或失败后不立即重试，而是等待 3 秒后再次尝试。`DistroFailedTaskHandler`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroFailedTaskHandler.java:27-36`，单方法 `retry()` 接口）将失败的任务放入重试队列，`DistroTaskEngineHolder` 调度延迟执行。重试次数无上限，持续重试直到成功或节点被摘除。这种"无限重试"策略适合 AP 场景——宁可反复重试也不丢弃数据。
 
 **`nacos.core.protocol.distro.data.verify.intervalMs`（默认 `5000` = 5 秒）**：
 
 Distro 定期校验的核心调度间隔。`DistroVerifyTimedTask`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/task/verify/DistroVerifyTimedTask.java:35-85`）是一个 `Runnable` 任务，由 `ScheduledExecutorService` 按此间隔周期性执行。执行流程如下：
-1. 遍历所有数据存储类型（每个类型对应一种数据，如 `naming_instance_metadata`）
+1. 遍历所有已注册的数据存储类型（`DistroComponentHolder` 中的每个 `DistroDataStorage` 类型）
 2. 对每种类型，遍历集群中所有其他节点作为目标
-3. 调用 `dataStorage.getVerifyData()` 获取需要校验的数据摘要（Checksum 列表）
-4. 创建 `DistroVerifyExecuteTask` 发送校验请求到目标节点
-5. 目标节点比对 Checksum，不一致则触发全量同步
+3. 调用 `dataStorage.getVerifyData()` 获取需要校验的数据摘要——v2 中为 `(clientId, revision)` 摘要列表，且仅包含"本节点负责"（`isResponsibleClient`）的 Client
+4. 创建 `DistroVerifyExecuteTask` 发送校验请求（`DistroDataRequest`，type=VERIFY）到目标节点
+5. 目标节点比对本地 Client 的 revision 与接收到的 revision，不一致则返回校验失败——责任节点收到 `ClientVerifyFailedEvent` 后以 delay=0 立即补推该 Client 的完整数据
 
-此校验机制的核心思想是"以 Checksum 换带宽"——只传输数据的 Checksum 而非全量数据，仅在 Checksum 不一致时才触发全量同步。对于 100 万实例的集群，单次校验只需传输约 100MB 数据对应的 Checksum（约 32 bytes × 分片数），而非全量 100MB 数据。
+此校验机制的核心思想是"以摘要换带宽"——只传输每个 Client 的 `(clientId, revision)` 摘要而非实例数据，且仅对出现差异的 Client 做单条增量补推，不触发全量同步。对于 100 万实例的集群，假设 10 万个 Client，单次校验约传输 10 万条 `(clientId, revision)`（每条约 50~100 bytes，合计 5~10MB），而非全量实例数据。
 
 **`nacos.core.protocol.distro.data.verify.timeoutMs`（默认 `3000ms`）**：
 
@@ -2247,11 +2189,11 @@ Distro 定期校验的核心调度间隔。`DistroVerifyTimedTask`（`core/src/m
 
 **`nacos.core.protocol.distro.data.load.retryDelayMs`（默认 `30000` = 30 秒）**：
 
-节点启动或故障恢复后加载 Distro 数据快照失败时的重试等待时间。`DistroLoadDataTask`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/task/load/DistroLoadDataTask.java`）负责从本地快照文件加载全量数据。若快照文件损坏或不存在，等待 30 秒后重试加载——在此期间节点从其他节点增量同步数据，最终通过全量同步补齐完整数据。30 秒的默认值给予系统足够的时间接收增量同步数据，避免快照加载失败后立即重试导致的 CPU / IO 浪费。
+节点启动时装载 Distro 数据快照失败时的重试等待时间。`DistroLoadDataTask`（`core/src/main/java/com/alibaba/nacos/core/distributed/distro/task/load/DistroLoadDataTask.java`）负责从集群其他成员拉取快照（`getDatumSnapshot`）并交给 `DistroDataProcessor.processSnapshot()` 处理。若拉取失败，等待 30 秒后重试——成功后将 `DataStorage` 标记为 `finishInitial`，此后不再重新执行全量装载，运行期的一致性完全由 5 秒周期校验 + 增量补推保证。30 秒的默认值给予系统足够的时间等待其他节点就绪，避免启动早期集中拉取导致的集群压力。
 
-**`nacos.core.protocol.distro.data.sync.full.sync.interval`（默认 `60000` = 60 秒）**：
+**关于"周期性全量同步兜底"的澄清**：
 
-全量同步间隔。即使增量同步和定期校验都正常运行，每个节点仍会每隔 60 秒主动向其他节点推送自己负责的全部数据分片的 Checksum。对方节点对比本地 Checksum，不一致则触发全量数据传输。此机制作为最后一道防线，确保即使在增量同步和定期校验都失效的极端情况下，数据仍能在 60 秒内最终一致。该值与 `verify.intervalMs` 协同工作：校验发现不一致后立即全量同步，而定期全量同步是独立于校验的另一条保障线。
+2.5.3 的 `DistroConstants` 中**不存在** `full.sync.interval` 之类的周期全量同步配置——全量快照装载（`DistroLoadDataTask`）仅在节点启动时执行一次。运行期的最终一致性由 `verify.intervalMs`（5 秒周期校验）+ `sync.retryDelayMs`（失败任务 3 秒无限重试）两条机制保证：增量同步失败的任务永不丢弃，会持续重试直到目标节点可达；周期校验则以 5 秒为上界发现并修复"增量同步覆盖不到"的差异。若需人工兜底，可通过运维接口触发快照重载或重启节点，而非依赖自动全量同步。
 
 ### 9.11.3 配置加载流程与启动时序
 
@@ -2261,8 +2203,8 @@ Distro 协议配置在 Nacos 启动过程中的加载时序如下：
 2. **读取配置** → 通过 `EnvUtil.getProperty()` 读取 `DistroConstants` 中定义的 7 个配置项
 3. **初始化组件** → 依次初始化：`DistroTaskEngineHolder`（任务引擎） → `DistroComponentHolder`（组件注册） → `DistroTransportAgent`（传输代理） → `DistroDataStorage`（数据存储）
 4. **注册数据处理器** → 各命名模块（如 `NamingDistroDataProcessor`）向 `DistroComponentHolder` 注册自己的数据处理器
-5. **启动定时任务** → `DistroVerifyTimedTask` 和全量同步定时任务开始周期性执行
-6. **监听成员变更** → 订阅 `MembersChangeEvent`，当集群成员变化时重新计算一致性哈希环
+5. **启动定时任务** → `DistroVerifyTimedTask` 开始周期性执行（全量快照装载仅在启动时执行一次，失败按 30s 重试）
+6. **监听成员变更** → 订阅 `MembersChangeEvent`，当集群成员变化时刷新 `DistroMapper` 的健康节点列表（排序列表 + 取模，非哈希环）
 
 ### 9.11.4 配置调优案例
 
@@ -2270,7 +2212,7 @@ Distro 协议配置在 Nacos 启动过程中的加载时序如下：
 
 某电商大促期间，每秒注册实例数从日常 500/s 飙升至 5000/s。使用默认 `sync.delayMs=1000`（1s 合并窗口），导致秒级延迟合并积压大量同步任务，跨节点网络带宽峰值达到 120MB/s。调整策略：
 - `sync.delayMs` 从 `1000` 降至 `300`（300ms 合并窗口）
-- 结果：网络峰值降至 45MB/s，延迟合批量减少 65%，同步延迟 P99 从 850ms 降至 320msigo
+- 结果：网络峰值降至 45MB/s，延迟合批量减少 65%，同步延迟 P99 从 850ms 降至 320ms
 
 **案例二：多地域弱网络环境**
 
@@ -2281,25 +2223,24 @@ Distro 协议配置在 Nacos 启动过程中的加载时序如下：
 
 **案例三：大规模集群校验开销**
 
-某互联网公司 30 节点大规模集群（10 万服务/100 万实例），每 5 秒的全集群校验产生的 Checksum 计算开销可观。`verify.intervalMs=5000` 时每节点 CPU 使用率约 8%（仅校验任务）。调整策略：
+某互联网公司 30 节点大规模集群（10 万服务/100 万实例），每 5 秒的全集群校验产生的校验摘要（`clientId` + `revision`）计算开销可观。`verify.intervalMs=5000` 时每节点 CPU 使用率约 8%（仅校验任务）。调整策略：
 - `verify.intervalMs` 从 `5000` 增至 `15000`（15 秒）
-- `full.sync.interval` 从 `60000` 增至 `120000`（120 秒）
-- 结果：校验 CPU 开销降至 3.2%，数据不一致窗口最长从 65s 增至 135s（业务可接受）
+- 结果：校验 CPU 开销降至 3.2%，数据不一致窗口最长从 6s 增至 16s（业务可接受）
 
 ### 9.11.5 数据同步全流程源码追踪
 
 以下是以一次临时实例注册为例，完整的 Distro 数据同步流程及各阶段耗时（默认配置下 3 节点集群）：
 
 1. **客户端注册** → `InstanceController.register()` 收到注册请求（耗时 <1ms）
-2. **写入本地注册表** → `ServiceManager` 更新内存 `ConcurrentHashMap`（耗时 <1ms）
-3. **触发 Distro 同步** → `DistroProtocol.sync(DistroData)` 调用（耗时 <1ms），数据放入 `DelayQueue`
+2. **写入本地 Client 视图** → `EphemeralIpPortClientManager` 将实例写入 `IpPortBasedClient`，发布 `ClientChangedEvent`（耗时 <1ms）
+3. **触发 Distro 同步** → `DistroClientDataProcessor.onEvent()` 判定本节点为该 Client 的责任节点后调用 `DistroProtocol.sync()`，任务放入 `DistroDelayTaskExecuteEngine`（耗时 <1ms）
 4. **延迟合并等待** → `sync.delayMs=1000ms` 内同 key 变更合并（等待 0~1000ms）
-5. **选择目标节点** → 通过一致性哈希确定分片负责节点（耗时 <1ms）
-6. **发送同步请求** → `DistroTransportAgent.callback()` 发送 gRPC 请求到目标节点（网络耗时 ~1-5ms）
-7. **目标节点接收** → 目标节点 `DistroDataProcessor.process()` 更新本地数据（耗时 <5ms）
+5. **扇出目标节点** → `DistroProtocol.sync()` 遍历所有其他成员逐一创建带目标地址的任务（耗时 <1ms）
+6. **发送同步请求** → `DistroClientTransportAgent.syncData()` 发送 `DistroDataRequest`（gRPC）到目标节点（网络耗时 ~1-5ms）
+7. **目标节点接收** → 目标节点 `DistroClientDataProcessor.processData()` 将 Client 数据写入本地 `ClientManager`（耗时 <5ms）
 8. **返回响应** → gRPC Response 返回源节点（网络耗时 ~1-5ms）
-9. **校验周期触发** → `verify.intervalMs=5000ms` 时进行 Checksum 对账
-10. **全量同步兜底** → `full.sync.interval=60000ms` 时全量 Checksum 对账
+9. **校验周期触发** → `verify.intervalMs=5000ms` 时发送 `(clientId, revision)` 校验摘要
+10. **差异补推兜底** → revision 不一致的 Client 由责任节点 delay=0 立即补推（无需等待下一个周期）
 
 端到端延迟（从注册到所有节点一致）：正常情况约 1-2 秒（含 1s 延迟合并），极端情况（校验周期刚好错过）最长约 6 秒（1s 合并 + 5s 校验间隔）。
 
@@ -2355,9 +2296,9 @@ Distro 协议是服务端内部协议，客户端 SDK 不直接参与 Distro 同
 
 ### 9.11.9 设计模式分析
 
-- **最终一致性模式**：Distro 协议通过异步同步 + 定期校验 + 全量对账三层机制保证最终一致性，牺牲强一致性换取高可用（AP）。三层递进：第 1 层增量同步（秒级），第 2 层定期校验（5 秒），第 3 层全量对账（60 秒），越往后保证越强但延迟越大。
-- **分片责任模式**：每个节点通过一致性哈希负责一部分数据分片，分片负责节点故障时其他节点接管。分片重分配由 `ServerMemberManager` 发布的 `MembersChangeEvent` 事件触发，`DistroProtocol` 订阅该事件后重新计算一致性哈希环。
-- **延迟合并模式**：`DelayQueue` + `DistroSyncDataProcessor` 实现批量合并同步，减少网络请求数。类似 TCP Nagle 算法思想——短时间内的多次小数据合并为一次大数据传输。
+- **最终一致性模式**：Distro 协议通过异步同步 + 定期校验两层机制保证最终一致性，牺牲强一致性换取高可用（AP）。两层递进：第 1 层增量同步（秒级，失败任务持续重试），第 2 层定期校验（5 秒周期，差异 Client 增量补推）。全量快照装载仅在节点启动时执行一次（`DistroProtocol.java:71-85`），运行期不存在周期性全量对账。
+- **分片责任模式**：每个节点对"哈希后落在自己名下"的数据负责。v2 中分片路由为**健康节点排序列表 + 哈希取模**（`DistroMapper.java:124-134`，按 `responsibility of hash % healthy list size` 定位责任节点），并非一致性哈希环。分片重分配由 `ServerMemberManager` 发布的 `MembersChangeEvent` 事件触发，健康成员列表变化后哈希取模的目标自然重排。
+- **延迟合并模式**：`DistroDelayTaskExecuteEngine` 的 `DelayQueue` + `DistroDelayTask.merge()` 实现批量合并同步，减少网络请求数。类似 TCP Nagle 算法思想——短时间内的多次小数据合并为一次大数据传输。
 
 ### 9.11.10 小结
 
@@ -2371,12 +2312,11 @@ Distro 协议配置共 7 个核心项。`sync.delayMs=1000`（延迟合并减少
 
 | 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
 |--------|--------|------|---------|------|---------|
-| `nacos.naming.metadata.max.size` | `1024` | int | naming | 服务级元数据最大总字节数 | 1.0.0 |
-| `nacos.naming.instance.metadata.max.size` | `1024` | int | naming | 实例级元数据最大总字节数 | 1.0.0 |
-| `nacos.naming.metadata.max.count` | `128` | int | naming | 服务级元数据最大键值对数 | 1.0.0 |
-| `nacos.naming.instance.metadata.max.count` | `128` | int | naming | 实例级元数据最大键值对数 | 1.0.0 |
+| `nacos.naming.service.metadata.length` | `1024` | int | naming | 元数据最大总长度（字符数），对应 `ParamCheckRule.maxMetadataLength`（`ParamCheckRule.java:58`） | 1.0.0 |
 
-元数据校验的核心实现位于 `DefaultParamChecker.checkMetadataFormat()`（`common/src/main/java/com/alibaba/nacos/common/paramcheck/DefaultParamChecker.java:240-270`）。该方法遍历 `metadata` Map，累加所有 key 和 value 的字符长度总和，与 `maxMetadataLength`（来自配置 `nacos.naming.service.metadata.length` 或环境变量 `NACOS_NAMING_SERVICE_METADATA_LENGTH`）比较。注意：此校验同时应用于服务级和实例级元数据——通过 `ParamChecker` 规则统一管控。
+**说明**：`nacos.naming.metadata.max.size`、`nacos.naming.instance.metadata.max.size`、`nacos.naming.metadata.max.count`、`nacos.naming.instance.metadata.max.count` 这 4 个键在 2.5.3 源码中**不存在**。实际限制只有一条：元数据总长度上限（字符数，非条数），由 `ParamCheckRule.maxMetadataLength = 1024` 定义，可通过 `nacos.naming.service.metadata.length`（`DefaultParamChecker.java:50`）或环境变量调整。**没有元数据键值对条数限制**。
+
+元数据校验的核心实现位于 `DefaultParamChecker.checkMetadataFormat()`（`common/src/main/java/com/alibaba/nacos/common/paramcheck/DefaultParamChecker.java:408`）。该方法遍历 `metadata` Map，累加所有 key 和 value 的字符长度总和，与 `maxMetadataLength`（来自配置 `nacos.naming.service.metadata.length` 或环境变量 `NACOS_NAMING_SERVICE_METADATA_LENGTH`）比较。注意：此校验同时应用于服务级和实例级元数据——通过 `ParamChecker` 规则统一管控。
 
 ### 9.12.2 核心配置详解
 
@@ -2488,40 +2428,36 @@ if (totalLength > paramCheckRule.maxMetadataLength) {
 
 ## 9.13 Naming 模块——注册表配置
 
-> **设计背景**：Nacos 命名服务在内存中维护全量服务注册表（`ConcurrentHashMap<Service, List<Instance>>`）。为防止无限制注册导致内存溢出（OOM），需要限制最大服务数量和实例数量。快照机制定期将内存注册表持久化到本地磁盘，加速节点重启恢复。`ServiceManager` 在启动时优先从快照加载，避免从其他节点全量同步导致的启动延迟（全量同步 100 万实例可能需要数分钟）。
+> **设计背景**：Nacos 2.x 的注册表不再是单一的 `ConcurrentHashMap<Service, List<Instance>>`，而是采用 **ClientManager / Client 责任制**：每个客户端连接（`IpPortBasedClient` 或持久化 `PersistenceClient`）持有自己发布的全部服务实例（`InstancePublishInfo`），`ClientServiceIndexesManager` 维护"服务 → 客户端"索引，查询时按服务聚合各 Client 的实例。注册表数据没有"定期写盘快照"的定时机制——`nacos.naming.max.service.count`、`max.instance.count`、`snapshot.enabled`、`snapshot.interval` 4 个键在 2.5.3 源码中**均不存在**；全量快照装载（Distro）仅在节点启动时执行一次，运行期靠 5 秒周期校验 + 增量同步保证一致。
 
 ### 9.13.1 配置项清单
 
-| 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
-|--------|--------|------|---------|------|---------|
-| `nacos.naming.max.service.count` | `100000` | int | naming | 最大服务数量 | 1.0.0 |
-| `nacos.naming.max.instance.count` | `1000000` | int | naming | 最大实例数量 | 1.0.0 |
-| `nacos.naming.snapshot.enabled` | `true` | boolean | naming | 是否启用注册表快照 | 1.0.0 |
-| `nacos.naming.snapshot.interval` | `300000` (5min) | long | naming | 注册表快照间隔（ms） | 1.0.0 |
+2.5.3 中注册表模块**没有全局可配置项**。容量仅受 JVM Heap 约束（无服务数/实例数硬限制配置），快照行为由 Distro 协议内置逻辑决定（`load.retryDelayMs` 等 Distro 键，见 9.11 节）。
 
 ### 9.13.2 核心配置详解
 
-**`nacos.naming.snapshot.enabled`（默认 `true`）**：
-
-注册表快照定期将内存中的全量服务实例数据序列化为 JSON 写入本地磁盘文件（默认路径 `${nacos.home}/data/naming/data/public/`）。节点重启时加载流程：
+**注册表数据结构（Client 责任制）**：
 
 ```java
-// ServiceManager 启动加载顺序:
-// 1. 优先从本地快照文件反序列化加载（毫秒级）
-// 2. 若快照文件不存在或损坏 → 从其他节点全量同步（分钟级）
-// 3. 加载完成后开始接受服务注册请求
+// ClientManager（NamingClientManager）维护 clientId → Client：
+// 1. 每个 gRPC 连接对应一个 IpPortBasedClient，持有其发布的全部 InstancePublishInfo
+// 2. ClientServiceIndexesManager 维护 Service → Set<clientId> 反向索引
+// 3. 查询服务实例 = 聚合该服务下所有 Client 的发布信息
+// 4. Client 断连 → 整个 Client 及其全部实例一并注销
 ```
 
-**源码走读**：快照机制在 2.x 中由 `DistroClientDataProcessor` 实现。`loadSnapshot()` 方法（`naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:235-245`）从 `${nacos.home}/data/naming/data/` 目录读取 `ClientSyncDatumSnapshot` 文件，反序列化为 `ClientSyncData` 列表，逐条加载注册表。若文件不存在或 JSON 解析失败，记录警告日志并跳过——随后通过 Distro 全量同步从其他节点补齐数据。
+**快照机制（仅启动时装载，非定时写盘）**：
 
-`saveSnapshot()` 方法（同文件 `DistroClientDataProcessor.java:260-270`）将当前注册表数据序列化写入快照文件。快照写入使用原子写入——先写入临时文件，写入成功后原子重命名为正式快照文件名，防止写入过程中进程崩溃导致快照文件损坏。
+全量快照装载在 2.x 中由 `DistroClientDataProcessor` 承担，但注意其两个方法均与"定时磁盘快照"无关：
 
-**`nacos.naming.max.instance.count`（默认 `1000000` = 100 万）**：
+- `processSnapshot()`（`DistroClientDataProcessor.java:238-245`）：处理**来自其他节点**的快照数据（启动时 `DistroLoadDataTask` 拉取），反序列化 `ClientSyncDatumSnapshot` 并逐条恢复 Client 索引。
+- `getDatumSnapshot()`（同文件 `:258-271`）：生成本地 Client 数据快照，供**其他节点**拉取。
 
-最大实例数量限制。超过此限制时 `InstanceController.register()` 返回 400 Bad Request。防止恶意注册或配置错误导致内存溢出。生产环境建议根据实际规模评估：
-- **小型集群**（<10 万实例）：保持默认 100 万
-- **中型集群**（10-50 万实例）：保持默认 100 万
-- **大型集群**（>100 万实例）：适当调大至 500 万，同时增加 JVM Heap 大小（建议每 100 万实例约分配 256MB Heap）
+源码中不存在 `loadSnapshot()` / `saveSnapshot()` 方法，也没有定时将注册表写盘的任务——快照是集群节点间内存态传输（通过 Distro `SnapshotRequest`），不落本地磁盘。节点重启后的数据恢复流程：启动时 `DistroLoadDataTask` 从其他节点拉取快照（失败按 `load.retryDelayMs=30s` 重试），完成后由 5 秒周期校验补齐运行期差异。
+
+**容量与内存规划（无硬限制，靠 Heap 规划）**：
+
+2.5.3 没有服务数/实例数的注册硬限制配置——注册量仅受 JVM Heap 约束，需要通过容量规划与内存监控防 OOM。生产环境建议按实际规模评估 Heap：
 
 **内存占用估算**：
 
@@ -2532,13 +2468,11 @@ if (totalLength > paramCheckRule.maxMetadataLength) {
 | 大型 | 50,000 | 1,000,000 | ~5GB | 8GB |
 | 超大型 | 100,000 | 5,000,000 | ~25GB | 32GB |
 
-**`nacos.naming.max.service.count`（默认 `100000` = 10 万）**：
+每 100 万实例约需 256MB Heap 余量，并预留至少 40% Heap 给业务数据与推送缓冲。
 
-最大服务数量限制。超过此限制时创建服务 API 返回 400 Bad Request。服务数通常远小于实例数（一个服务包含多个实例），默认 10 万对绝大多数场景已绰绰有余。
+### 9.13.3 快照（装载/生成）执行时序
 
-### 9.13.3 快照机制执行时序
-
-源码走读：`DistroClientDataProcessor.processSnapshot()` 方法（`naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:238-256`）负责处理从其他节点接收到的快照数据，`getDatumSnapshot()` 方法（同文件 `DistroClientDataProcessor.java:258-280`）负责生成本地快照。关键代码如下：
+源码走读：`DistroClientDataProcessor.processSnapshot()` 方法（`naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:238-245`）负责处理从其他节点接收到的快照数据，`getDatumSnapshot()` 方法（同文件 `:258-271`）负责生成本地快照。关键代码如下：
 
 ```java
 // DistroClientDataProcessor.processSnapshot() - 接收其他节点的快照数据
@@ -2566,22 +2500,21 @@ public DistroData getDatumSnapshot() {
 }
 ```
 
-快照的完整执行时序如下：
+快照（节点间内存态传输）的完整执行时序如下：
 
-1. `Snapshot定时任务` → 每隔 `snapshot.interval=300000ms`（5 分钟）触发
-2. `DistroClientDataProcessor.saveSnapshot()` → 获取当前注册表的全量快照数据
-3. **序列化** → 将 `Map<String, ClientSyncData>` 序列化为 JSON 字节数组
-4. **原子写入** → 先写入 `${nacos.home}/data/naming/data/.snapshot.tmp`，成功后将文件重命名为 `ClientSyncDatumSnapshot`
-5. **日志记录** → 记录快照保存成功日志（包含实例数量、文件大小）
-6. **旧快照清理** → 删除上一次的快照文件（保留最近一次成功快照）
+1. 节点启动 → `DistroProtocol.load()` → `DistroLoadDataTask` 向其他成员发送 `SnapshotRequest`
+2. 目标节点调用 `DistroClientDataProcessor.getDatumSnapshot()` → 生成本地 Client 数据快照
+3. **序列化** → 将 `ClientSyncDatumSnapshot` 序列化为 JSON 字节数组并通过 gRPC 返回
+4. **装载** → 本节点 `DistroClientDataProcessor.processSnapshot()` 逐条恢复 Client 索引
+5. **标记完成** → `DistroDataStorage` 标记 `finishInitial`，此后不再执行全量装载
+6. **失败重试** → 装载失败按 `load.retryDelayMs=30000ms` 重试
 
 节点重启时的加载流程：
 
-1. `DistroClientDataProcessor.loadSnapshot()` → 检查快照文件是否存在
+1. `DistroLoadDataTask` → 依次向其他成员拉取快照（无需本地快照文件）
 2. **反序列化** → 将 JSON 字节数组反序列化为 `ClientSyncDatumSnapshot` 对象
-3. **逐条加载** → 遍历 `ClientSyncData` 列表，逐条恢复到注册表 `ConcurrentHashMap`
-4. **校验完整性** → 对比快照中的实例数与加载后的注册表实例数
-5. **增量补齐** → 启动后从其他节点 Distro 全量同步补齐快照保存后到重启期间的增量数据
+3. **逐条加载** → 遍历 `ClientSyncData` 列表，恢复 Client 与服务索引
+4. **校验兜底** → 5 秒周期校验发现差异的 Client 增量补推
 
 ### 9.13.4 快照性能对比数据
 
@@ -2599,62 +2532,42 @@ public DistroData getDatumSnapshot() {
 
 ### 9.13.5 配置调优案例
 
-**案例一：超大规模集群的快照性能优化**
+**案例一：超大规模集群的启动恢复优化**
 
-某互联网公司运行 300 万实例的 Nacos 集群，默认 `snapshot.interval=300000`（5 分钟）导致每 5 分钟产生一次 ~450MB 的快照写入，磁盘 I/O 间歇性飙升。调整策略：
-- `snapshot.interval` 从 `300000` 增至 `600000`（10 分钟）
-- 结果：磁盘 I/O 峰值降低 50%，快照数据丢失窗口从 5 分钟增至 10 分钟（可接受——重启后 10 分钟内的增量数据通过 Distro 全量同步补齐）
+某互联网公司运行 300 万实例的 Nacos 集群，节点重启时从其他节点拉取快照与增量补推的耗时较长，期间注册请求依赖其他节点转发。优化策略：
+- JVM Heap 从 16GB 增至 64GB（注册表内存约 25GB）
+- 确保节点间网络带宽充足（快照通过 gRPC 传输，带宽直接影响装载耗时）
+- 结果：节点重启恢复窗口从分钟级降至约 85 秒（快照装载 + Distro 增量补推）
 
-**案例二：限制器防 OOM**
+**案例二：内存防 OOM（无硬限制，需自行规划）**
 
-某 SaaS 平台的一个租户因程序 bug 短时间内注册了 150 万实例（远超预期的 10 万）。默认 `max.instance.count=1000000` 阻止了进一步注册，防止了 OOM。但前 100 万实例已成功注册——调整策略：
-- `max.instance.count` 从 `1000000` 降至 `200000`（匹配实际业务规模）
-- 结果：限制器更早触发，防止异常流量消耗过多内存
+2.5.3 没有 `max.instance.count` 之类的注册硬限制——某 SaaS 平台的一个租户因程序 bug 短时间内注册了 150 万实例，注册表内存持续膨胀直到 GC 异常。应对策略：
+- 通过 JVM Heap 容量规划与内存水位告警提前发现
+- 客户端侧治理异常注册源（修复程序 bug 并批量注销残留实例）
 
 ### 9.13.6 常见配置错误与排查指南
 
-**错误一：关闭快照导致启动缓慢**
+**错误一：节点重启后数据装载缓慢**
 
-症状：节点重启后需要数分钟才能接受注册请求，日志显示 `Distro load snapshot failed, fallback to full sync`。
-排查路径：检查 `nacos.naming.snapshot.enabled` 是否为 `false`。检查 `${nacos.home}/data/naming/data/` 目录下是否存在快照文件。
-修复：确保 `nacos.naming.snapshot.enabled=true`（默认值），且 `${nacos.home}` 目录有写权限。
+症状：节点重启后需要数分钟才能完整恢复注册数据，日志显示 `Distro load snapshot failed`。
+排查路径：检查与其他节点的网络连通性与 gRPC 端口（9849）放行情况；查看 protocol-distro.log 中装载失败记录。
+修复：Distro 装载失败会按 `nacos.core.protocol.distro.data.load.retryDelayMs`（默认 30s）自动重试；确保集群中至少有一个健康节点可供拉取快照。
 
-**错误二：快照文件损坏导致加载失败**
+**错误二：重启后部分实例数据缺失**
 
-症状：节点重启后日志出现 `Fail to load snapshot` 错误，随后从全量同步加载。
-排查路径：检查快照文件 `${nacos.home}/data/naming/data/ClientSyncDatumSnapshot` 是否为有效的 JSON 文件。使用 `python3 -m json.tool` 验证 JSON 格式。
-修复：删除损坏的快照文件，重启节点后将自动从全量同步重建注册表并生成新快照。
-
-**错误三：`max.instance.count` 过小导致正常注册被拒绝**
-
-症状：业务高峰期部分实例注册失败，返回 `400 Bad Request`，错误信息包含 `exceed max instance count`。
-排查路径：通过 Nacos 控制台查看当前实例总数，对比 `max.instance.count` 配置值。
-修复：根据实际业务规模适当增大 `max.instance.count`。建议设置为 `预期最大实例数 × 1.5` 以留出缓冲空间。
-
-**错误四：快照性能退化与磁盘 I/O 饱和**
-
-症状：在大规模集群（>100 万实例）中，每 5 分钟一次的快照写入导致磁盘 I/O 飙升至 100%，影响正常的注册请求处理延迟——注册请求 P99 延迟从 50ms 飙升至 500ms。
-排查路径：使用 `iostat -x 1` 监控磁盘 `%util` 指标。检查快照文件大小——若快照文件超过 150MB，单次写入延迟可能超过 5 秒。
-修复：(1) 增大 `snapshot.interval` 至 `600000`（10 分钟）；(2) 确保 Nacos 数据目录位于 SSD 而非 HDD——HDD 的随机写性能远低于 SSD；(3) 考虑使用内存文件系统（`tmpfs`）存储快照文件——快照数据在节点重启后可从其他节点全量同步恢复，因此丢失快照数据并非致命。
-
-**超大规模集群性能优化案例**：
-
-某互联网公司运行 500 万实例的超大规模 Nacos 集群（6 节点），发现快照文件大小超过 750MB，默认 `snapshot.interval=300000`（5 分钟）导致磁盘 I/O 持续高位（`%util>80%`）。更严重的是——全量同步耗时超过 15 分钟（925 秒），这意味着节点重启后 15 分钟内无法接受注册请求，严重影响服务可用性。调整策略：
-- `snapshot.interval` 从 `300000` 增至 `1800000`（30 分钟），快照频率降低 6 倍
-- 快照存储目录从 HDD 迁移至 SSD（I/O latency 从 蒲10ms 降至 <1ms）
-- `max.instance.count` 从 `1000000` 增至 `10000000`（1000 万）
-- JVM Heap 从 `16GB` 增至 `64GB`（注册表内存约 25GB）
-- 结果：磁盘 I/O `%util` 从 80% 降至 15%；节点重启恢复时间从 15 分钟降至约 85 秒（快照加载 85s + Distro 增量同步 ~30s）
+症状：节点重启后个别 Client 的实例未恢复。
+排查路径：查看 protocol-distro.log 与 naming-distro.log 中 `[DISTRO-FAILED]` / verify 失败记录。
+修复：5 秒周期校验会对差异 Client 自动增量补推；若长时间未收敛，检查 `verify.intervalMs` 与集群网络。
 
 ### 9.13.7 设计模式分析
 
-- **快照模式（Snapshot Pattern）**：定期全量快照内存状态到磁盘，恢复时优先从快照加载，避免昂贵的全量重建过程。快照的原子写入机制（写临时文件+原子重命名）保证快照文件不会因写入中途崩溃而损坏。
-- **限制器模式**：`max.service.count` 和 `max.instance.count` 作为硬限制防止资源耗尽。这是一种 fail-fast 策略——宁可拒绝新注册也不接受可能导致 OOM 的请求。
-- **增量补齐模式**：重启后通过快照加载 + Distro 增量同步补齐缺失数据，而非全量从零同步。快照负责"历史数据"，Distro 增量同步负责"快照保存后的增量数据"，两者协同实现快速恢复。
+- **快照模式（Snapshot Pattern）**：全量快照内存状态在集群节点间内存态传输，恢复时优先从快照装载，避免昂贵的全量重建过程。
+- **责任制模式**：每个 Client 独立持有并保活自己发布的实例，Client 断连即整体注销——注册表的生命周期管理与连接生命周期天然对齐。
+- **增量补齐模式**：重启后通过快照装载 + Distro 周期校验增量补推恢复数据，而非全量从零同步。快照负责"基线数据"，周期校验负责"差异补齐"，两者协同实现快速恢复。
 
 ### 9.13.8 小结
 
-注册表配置共 4 项。`max.instance.count=1000000` 对大多数生产环境足够。`snapshot.enabled=true` 必须保持开启——节点重启时从快照加载比全量同步快约 10 倍。大规模集群（>100 万实例）建议增大 `snapshot.interval` 至 600000（10 分钟）以降低磁盘 I/O 压力。
+注册表在 2.5.3 中没有全局可配置项——容量由 JVM Heap 决定，数据一致性由 Distro 协议内置机制保证：启动时一次快照装载（失败按 30s 重试），运行期靠 5 秒周期校验 + 增量补推。大规模集群（>100 万实例）的重点是 JVM Heap 规划与节点间网络带宽，而非"快照间隔"之类的配置调整。
 
 ## 9.14 Core 模块——集群管理配置
 
@@ -2670,13 +2583,14 @@ public DistroData getDatumSnapshot() {
 | `address.server.domain` | `jmenv.tbsite.net` | String | core | 地址服务器域名 | 0.1.0 |
 | `address.server.port` | `8080` | int | core | 地址服务器端口 | 0.1.0 |
 | `address.server.url` | `/nacos/serverlist` | String | core | 地址服务器请求路径 | 0.1.0 |
-| `nacos.core.member.fail.timeout` | `5000` | long | core | 成员故障超时（ms） | 1.0.0 |
-| `nacos.core.member.heartbeat.interval` | `5000` | long | core | 成员心跳间隔（ms） | 1.0.0 |
+| `nacos.core.member.fail-access-cnt` | `3` | int | core | 成员探活连续失败判定阈值（超过即 DOWN，第 4 次失败生效） | 1.0.0 |
 | `nacos.core.member.sync.interval` | `2000` | long | core | 成员信息同步间隔（ms） | 1.0.0 |
 | `nacos.core.member.meta.site` | 无 | String | core | 成员站点元数据（多数据中心） | 2.0.0 |
 | `nacos.core.member.meta.weight` | 无 | String | core | 成员权重（接口级负载均衡） | 2.0.0 |
 | `nacos.standalone` | 无 | boolean | sys | 强制单机模式（`true` 时不启动集群组件） | 0.1.0 |
 | `nacos.functionMode` | 无 | String | sys | 功能模式：`config`/`naming`/`all` | 1.0.0 |
+
+> 注意：成员探活的**节奏**由硬编码常量决定，无可配置项——`MemberInfoReportTask` 初始延迟 5s 启动，此后每 2s 游标轮询一个成员上报（`ServerMemberManager.java:499,668`）；`UnhealthyMemberInfoReportTask` 每 5s 专门探测所有非 `UP` 成员（`ServerMemberManager.java:715`）。
 
 ### 9.14.2 核心配置详解
 
@@ -2723,7 +2637,7 @@ private FileWatcher watcher = new FileWatcher() {
 };
 ```
 
-`readClusterConfFromDisk()` 方法通过 `EnvUtil.readClusterConf()` 读取文件内容（返回 `List<String>` 每行一个节点），然后调用 `MemberUtil.readServerConf(tmp)` 解析每行 `IP:PORT` 格式。解析完成后调用父类 `AbstractMemberLookup.afterLookup(tmpMembers)` 方法——该方法对比新旧成员列表，新增的节点加入成员列表（状态设为 `UP`），移除的节点标记为 `DOWN` 并通过 `NotifyCenter.publishEvent(new MembersChangeEvent(...))` 发布成员变更事件，触发 `DistroProtocol` 和 `JRaftProtocol` 重新计算一致性哈希环。
+`readClusterConfFromDisk()` 方法通过 `EnvUtil.readClusterConf()` 读取文件内容（返回 `List<String>` 每行一个节点），然后调用 `MemberUtil.readServerConf(tmp)` 解析每行 `IP:PORT` 格式。解析完成后调用父类 `AbstractMemberLookup.afterLookup(tmpMembers)` 方法——该方法对比新旧成员列表，新增的节点加入成员列表（状态设为 `UP`），移除的节点标记为 `DOWN` 并通过 `NotifyCenter.publishEvent(new MembersChangeEvent(...))` 发布成员变更事件，触发 `DistroMapper` 基于新的健康节点排序列表重排哈希取模分片、`JRaftProtocol` 调整 Raft 组成员。
 
 优点：配置简单，无需外部依赖。缺点：扩缩容需手动更新 `cluster.conf` 文件并重启节点（或等待文件监听触发更新——inotify 机制在 Linux 上延迟通常 <1 秒）。
 
@@ -2737,9 +2651,11 @@ private FileWatcher watcher = new FileWatcher() {
 
 不配置 `cluster.conf` 且 `nacos.standalone=true`（或通过 `-Dnacos.standalone=true` JVM 参数）时，`StandaloneMemberLookup` 自动生效，集群管理组件不启动。此模式下 `ServerMemberManager` 成员列表仅包含本节点自身。
 
-**`nacos.core.member.fail.timeout`（默认 `5000` = 5 秒）**：
+**`nacos.core.member.fail-access-cnt`（默认 `3`）**：
 
-成员故障检测超时时间。`ServerMemberManager` 运行两个后台任务进行成员健康检测：
+成员探活连续失败判定阈值。该常量在 `MemberUtil.java:52-54` 定义（`DEFAULT_MEMBER_FAIL_ACCESS_CNT = 3`），由 `MemberUtil.onFail()`（`MemberUtil.java:198`）判定：每次探活失败时 `failAccessCnt+1` 并将节点置为 `SUSPICIOUS`；仅当 `failAccessCnt > fail-access-cnt`（严格大于，即**第 4 次失败**）或异常信息包含 `Connection refused`（`MemberUtil.java:198-199`）时，才将节点置为 `DOWN`。`MemberUtilTest` 单元测试坐实了这一边界：`failAccessCnt=3` 时节点仍为 `SUSPICIOUS`，累计到 `4` 时才转为 `DOWN`。与之配套，`MemberUtil.onSuccess()`（`MemberUtil.java:143-170`）在探测成功时将节点恢复为 `UP` 并清零失败计数。
+
+为什么用「连续失败计数」而非「时间窗口」判定故障？因为计数模型与探活周期天然解耦：探活任务按游标轮询调度，两次探测同一成员的实际间隔可能因集群规模、调度抖动而波动，若按"累计失败时间超过 X ms"判定，单次超时的波动会直接影响判定结果；而计数模型只关心"连续失败了多少次"，不受单次超时时长波动的干扰，语义更稳定。
 
 **1. `MemberInfoReportTask`**（`ServerMemberManager.java:550-685`）：定期（默认 `2000ms` 间隔）向其他节点发送携带本节点元数据的 HTTP/gRPC 请求。此机制实现了双向心跳——A 向 B 发送报告时，B 同时获知 A 仍然存活。源码轮询方式逐个成员发送报告：
 
@@ -2769,7 +2685,7 @@ class MemberInfoReportTask extends Task {
 
 **2. `UnhealthyMemberInfoReportTask`**（`ServerMemberManager.java:691-715`）：专门针对已标记为 `SUSPICIOUS` 或 `DOWN` 的节点进行额外健康探测——向故障节点发送报告请求，若节点恢复响应则将其状态恢复为 `UP`。此机制确保故障节点恢复后能快速重新加入集群。
 
-**故障判定逻辑**（`MemberUtil.onFail()`）：当向某节点连续发送报告请求失败时，Nacos 并非立即标记该节点为 `DOWN`——而是记录首次失败时间戳，仅当持续失败时间超过 `fail.timeout=5000ms` 时才将节点状态变更为 `DOWN`。这种"持续故障时间窗口"设计避免了短暂的网络抖动（如交换机重启导致的 2-3 秒网络中断）引发的误判。
+**故障判定逻辑**（`MemberUtil.onFail()`）：当向某节点连续发送报告请求失败时，Nacos 并非立即标记该节点为 `DOWN`——而是每次失败将 `failAccessCnt` 加 1 并将节点状态置为 `SUSPICIOUS`，仅当连续失败次数超过 `fail-access-cnt`（默认 3，即第 4 次失败）或连接被拒绝（`Connection refused`）时才将节点状态变更为 `DOWN`。这种「连续失败计数」设计避免了短暂的网络抖动（如交换机重启导致的 2-3 秒网络中断）引发的误判。
 
 **`nacos.core.member.meta.site` 和 `nacos.core.member.meta.weight`**：
 
@@ -2786,9 +2702,9 @@ class MemberInfoReportTask extends Task {
    - `file` → 读取 `${nacos.home}/conf/cluster.conf` → 解析节点列表 → 实例化 `FileMemberLookup`
    - `address-server` → 请求地址服务器 HTTP API → 解析响应 JSON → 实例化 `AddressServerMemberLookup`
 5. **启动定时任务**：
-   - `MemberHealthCheckTask` → 每隔 `heartbeat.interval=5000ms` 执行心跳检测
-   - `MemberSyncTask` → 每隔 `sync.interval=2000ms` 向其他节点同步本节点元数据
-6. **发布初始成员列表** → 触发 `MembersChangeEvent` 通知 `DistroProtocol` 和 `JRaftProtocol` 重新计算一致性哈希环
+   - `MemberInfoReportTask` → 每 2 秒游标轮询一个成员，发送 `MemberReportRequest`（顺带交换元数据，双端互为探活）
+   - `UnhealthyMemberInfoReportTask` → 每 5 秒专门探测所有非 `UP` 成员（分区恢复后自动回补）
+6. **发布初始成员列表** → 触发 `MembersChangeEvent` 通知 `DistroMapper` 刷新健康节点列表、`ProtocolManager` 刷新 AP/CP 协议成员
 
 ### 9.14.4 Trade-off 分析
 
@@ -2796,7 +2712,7 @@ class MemberInfoReportTask extends Task {
 |------|---------|-------------------|---------|
 | 配置复杂度 | 简单，只需维护 cluster.conf | 需部署独立地址服务器 | 零配置 |
 | 动态扩缩容 | 需手动更新 cluster.conf，文件监听自动检测变更 | 自动推送节点变更，无需重启 | 不适用 |
-| 故障检测 | 心跳检测 + `fail.timeout` | 心跳检测 + 地址服务器健康检查 | 无 |
+| 故障检测 | `MemberInfoReportTask` 探测 + `fail-access-cnt` 计数 | 同左 + 地址服务器健康状态 | 无 |
 | 适用场景 | 固定集群规模 | 弹性伸缩的 K8s 环境 | 本地开发测试 |
 | 可用性风险 | `cluster.conf` 配置错误导致集群分裂 | 地址服务器故障导致集群信息同步停止 | 无集群能力 |
 
@@ -2804,8 +2720,8 @@ class MemberInfoReportTask extends Task {
 
 | 参数 | 默认值 | 调小风险 | 调大风险 |
 |------|--------|---------|---------|
-| `fail.timeout=5000` | 5 秒判定故障 | 网络抖动可能导致误判为故障，频繁触发成员变更事件 | 故障节点长时间残留在成员列表中，请求被路由到故障节点 |
-| `heartbeat.interval=5000` | 5 秒心跳 | 增加集群内部网络流量（每节点每秒 0.2 次心跳） | 故障检测延迟增加——若心跳间隔为 30 秒，故障检测延迟可达 30 秒 + `fail.timeout` |
+| `fail-access-cnt=3` | 连续 4 次失败判定故障 | 阈值过小可能导致网络抖动误判，频繁触发 `MembersChangeEvent` | 故障节点长时间残留在成员列表中，请求被路由到故障节点 |
+| `MemberInfoReportTask` 探测周期（硬编码 2s，`ServerMemberManager.java:668`） | 每 2s 游标轮询一个成员上报 | 增加集群内部网络流量 | 故障检测延迟增加——节点被判定 DOWN 需连续失败超过 `nacos.core.member.fail-access-cnt`（默认 3）次 |
 | `sync.interval=2000` | 2 秒同步 | 增加 CPU 开销（成员的元数据序列化开销） | 成员信息不一致窗口变长 |
 
 ### 9.14.5 配置调优案例
@@ -2821,15 +2737,15 @@ class MemberInfoReportTask extends Task {
 
 某金融企业部署 6 节点跨 3 地域集群（北京 2 节点 + 上海 2 节点 + 深圳 2 节点）。客户端默认随机连接任意节点，导致跨地域请求延迟高（北京客户端连接深圳节点延迟约 30ms）。调整策略：
 - 为每个节点的 `nacos.core.member.meta.site` 设置对应地域标签（`beijing`/`shanghai`/`shenzhen`）
-- 客户端 SDK 配置 `nacos.server.meta.site` 匹配本地域
+- 客户端 SDK 侧 2.5.3 无 `nacos.server.meta.site` 配置键，需通过地址服务器（`address-server`）按地域返回本域节点列表实现分流
 - 结果：客户端优先连接同地域节点，P99 延迟从 35ms 降至 2ms
 
 **案例三：故障检测敏感度调优**
 
-某电商企业部署 3 节点集群（同一机房），网络质量优秀（内网延迟 <1ms）。默认 `fail.timeout=5000` 过于保守——故障节点在 5 秒后才被摘除，期间客户端请求仍可能被路由到故障节点。调整策略：
-- `fail.timeout` 从 `5000` 降至 `2000`（2 秒）
-- `heartbeat.interval` 从 `5000` 降至 `3000`（3 秒）
-- 结果：故障检测时间从 10 秒（5s 心跳间隔 + 5s 超时）降至 5 秒（3s + 2s），故障转移速度提升 50%
+某电商企业部署 3 节点集群（同一机房），网络质量优秀（内网延迟 <1ms）。默认 `fail-access-cnt=3` 在内网环境下故障摘除偏慢——按 2s 稳态探测周期，需连续 4 次失败约 8 秒才判定 DOWN，期间客户端请求仍可能被路由到故障节点。调整策略：
+- `nacos.core.member.fail-access-cnt` 从 `3` 降至 `1`（第 2 次失败即 DOWN）
+- 探测节奏（2s 游标轮询、5s 非 UP 成员专探）由硬编码常量决定不可调，故障摘除速度与抗抖动之间的平衡只能通过 `fail-access-cnt` 调节——内网稳定环境可放心调小
+- 结果：故障检测时间从约 8 秒降至约 4 秒，故障转移速度提升 50%
 
 ### 9.14.6 常见配置错误与排查指南
 
@@ -2855,9 +2771,9 @@ class MemberInfoReportTask extends Task {
 
 集群管理配置直接影响客户端 SDK 的服务发现行为：
 
-- **`nacos.core.member.meta.site`**：客户端可通过 `nacos.server.meta.site` 配置优先连接同站点的 Nacos 节点，实现就近路由
+- **`nacos.core.member.meta.site`**：仅作用于服务端成员元数据（2.5.3 客户端无 `nacos.server.meta.site` 配置键）；客户端就近连接需依赖地址服务器或负载均衡层按地域分流
 - **`nacos.core.member.meta.weight`**：客户端 SDK 进行加权随机负载均衡时，权重信息来自服务端节点的 `member.meta.weight` 元数据
-- **`nacos.core.member.fail.timeout`**：客户端 SDK 的 `nacos.server.healthcheck.timeout` 应略大于服务端的 `fail.timeout`，确保客户端在服务端判定故障前已切换到其他健康节点
+- **`nacos.core.member.fail-access-cnt`**：客户端侧无对应健康检查超时配置键；gRPC 连接健康检查由 `nacos.remote.client.grpc.health.retry`（`GrpcConstants.java:68`，默认连续失败 3 次）与 `nacos.remote.client.grpc.timeout`（默认 3000ms）控制，应与服务端 `fail-access-cnt` 统筹，确保客户端在服务端判定故障前已切换到其他健康节点
 
 **寻址模式对客户端 SDK 的影响**：
 
@@ -2868,7 +2784,7 @@ class MemberInfoReportTask extends Task {
 
 当服务端 `ServerMemberManager` 发布 `MembersChangeEvent` 事件时，Nacos 2.x 通过 gRPC 长连接主动向所有已连接的客户端推送最新的集群成员列表（通过 `ServerCheckRequest` / `ServerCheckResponse` 双向流）。客户端 `RpcClient` 收到新的成员列表后，自动更新本地连接池——断开已移除节点的连接，建立到新节点的连接。此过程对业务代码完全透明，无需重启客户端应用。但在以下极端场景需注意：
 
-- **所有节点同时重启**：若集群所有节点同时重启（如机房断电恢复），客户端会在短时间内尝试重连所有节点。建议客户端配置 `nacos.server.retry.interval`（默认 `3000ms`）增加重试间隔，避免瞬时连接风暴。
+- **所有节点同时重启**：若集群所有节点同时重启（如机房断电恢复），客户端会在短时间内尝试重连所有节点。建议客户端配置 `nacos.remote.client.grpc.retry.times`（`GrpcConstants.java:50`，默认 `3` 次）调整连接重试行为，避免瞬时连接风暴。
 - **部分节点网络分区**：若集群发生网络分区（如跨地域网络中断），客户端可能连接到不同分区的节点，导致看到的注册表数据不一致。建议配置 `nacos.core.member.meta.site` 实现就近路由，减少跨地域网络分区的影响范围。
 
 ### 9.14.8 成员生命周期管理时序
@@ -2879,35 +2795,35 @@ class MemberInfoReportTask extends Task {
 2. **发现集群** → `FileConfigMemberLookup` 或 `AddressServerMemberLookup` 获取初始成员列表
 3. **广播自身** → `MemberInfoReportTask` 首次向所有已知成员发送报告请求（携带本节点元数据）
 4. **心跳保活** → `MemberInfoReportTask` 每 `2000ms` 轮询向一个成员发送报告（间接证明本节点存活）
-5. **故障检测** → 若某成员连续 `fail.timeout=5000ms` 未响应 → 标记为 `DOWN` → 发布 `MembersChangeEvent`
+5. **故障检测** → 若某成员连续失败次数超过 `fail-access-cnt`（默认 3）或连接被拒绝 → 标记为 `DOWN` → 发布 `MembersChangeEvent`
 6. **故障恢复** → `UnhealthyMemberInfoReportTask` 持续向故障节点发送探测 → 若恢复响应 → 标记为 `UP` → 发布 `MembersChangeEvent`
-7. **数据再均衡** → `DistroProtocol` 和 `JRaftProtocol` 订阅 `MembersChangeEvent` → 重新计算一致性哈希环 → 触发数据迁移
+7. **数据再均衡** → `DistroMapper` 基于新的健康节点排序列表重排哈希取模分片（`DistroMapper.java:124-134`）→ 触发数据在节点间重新分布
 8. **节点正常退出** → `ServerMemberManager.shutdown()` → 通知其他成员本节点离开 → 成员列表移除本节点
 
 **关键时序参数**：
 - 新节点从启动到被其他成员感知：约 `sync.interval=2000ms` + 一轮 `MemberInfoReportTask` 轮询（N 个成员 × `2000ms`）
-- 故障节点从故障发生到被标记为 `DOWN`：`fail.timeout=5000ms` + `heartbeat.interval≈2000ms` ≈ 约 7 秒
+- 故障节点从故障发生到被标记为 `DOWN`：连续 4 次探测失败（`failAccessCnt` 从 0 累计到超过 3）× 稳态探测周期 2s ≈ 约 8 秒
 - 故障节点恢复后重新加入：`UnhealthyMemberInfoReportTask` 下一轮探测（约 `2000ms` 内）
 
 ### 9.14.9 设计模式分析
 
 - **策略模式**：`MemberLookup` 接口定义了寻址策略契约，`FileMemberLookup`（文件寻址）、`AddressServerMemberLookup`（地址服务器寻址）、`StandaloneMemberLookup`（单机模式）为三种具体策略。Spring 通过 `@ConditionalOnProperty` 根据 `nacos.core.member.lookup.type` 条件装配。这种设计使得新增寻址模式只需实现 `MemberLookup` 接口并注册为 Spring Bean 即可。
 - **观察者模式**：`ServerMemberManager` 作为 Subject，在成员变更（加入/离开/故障）时发布 `MembersChangeEvent` 事件，`DistroProtocol` 和 `JRaftProtocol` 作为 Observer 订阅该事件以触发数据再均衡。
-- **心跳检测模式**：定期心跳 + 超时判定故障，是分布式系统中最基础的故障检测机制。Nacos 的实现增加了 "持续故障时间" 判定——仅当连续多次心跳失败且累计失败时间超过 `fail.timeout` 时才标记为 DOWN，避免短暂网络抖动导致的误判。
+- **心跳检测模式**：定期心跳 + 计数判定故障，是分布式系统中最基础的故障检测机制。Nacos 的实现采用「连续失败计数」判定——仅当累计失败次数超过 `fail-access-cnt` 时才标记为 DOWN，避免短暂网络抖动导致的误判。
 
 ### 9.14.10 小结
 
-集群管理配置共 13 个核心项。最关键的是 `member.lookup.type`——决定集群拓扑发现方式。固定集群规模使用 `file` 模式（默认），K8s 弹性伸缩环境使用 `address-server` 模式。`fail.timeout=5000` 和 `heartbeat.interval=5000` 保持默认即可满足大多数生产环境。多地域部署需配置 `member.meta.site` 实现就近路由——可显著降低跨地域请求延迟。
+集群管理配置共 12 个核心项。最关键的是 `member.lookup.type`——决定集群拓扑发现方式。固定集群规模使用 `file` 模式（默认），K8s 弹性伸缩环境使用 `address-server` 模式。`nacos.core.member.fail-access-cnt`（默认 3）保持默认即可满足大多数生产环境——探活节奏由硬编码常量决定（2s 游标轮询 / 5s 非 UP 专探），无可调参数。多地域部署需配置 `member.meta.site` 实现就近路由——可显著降低跨地域请求延迟。
 
 ## 9.15 Core 模块——gRPC 通信配置
 
-> **设计背景**：Nacos 2.x 核心通信协议为 gRPC，相比 1.x HTTP 短连接模式，gRPC 长连接大幅减少了连接建立开销。包含两类通道：**SDK gRPC**（`GrpcSdkServer`，客户端↔服务端）和 **Cluster gRPC**（`GrpcClusterServer`，服务端↔服务端）。gRPC 参数通过 `GrpcConstants.java`（`common/src/main/java/com/alibaba/nacos/common/remote/client/grpc/GrpcConstants.java:30-200`）集中定义，注解 `@GRpcConfigLabel` 标记的配置项被自动收集到 `CONFIG_NAMES` 集合中。
+> **设计背景**：Nacos 2.x 核心通信协议为 gRPC，相比 1.x HTTP 短连接模式，gRPC 长连接大幅减少了连接建立开销。包含两类通道：**SDK gRPC**（`GrpcSdkServer`，客户端↔服务端）和 **Cluster gRPC**（`GrpcClusterServer`，服务端↔服务端）。客户端 gRPC 参数通过 `GrpcConstants.java`（`common/src/main/java/com/alibaba/nacos/common/remote/client/grpc/GrpcConstants.java:34-112`，共 14 个配置项）集中定义，注解 `@GRpcConfigLabel` 标记的配置项被自动收集到 `CONFIG_NAMES` 集合中。
 
 ### 9.15.1 配置项清单
 
 | 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
 |--------|--------|------|---------|------|---------|
-| `nacos.remote.server.grpc.port.offset` | `1000` | int | core | gRPC 端口偏移量（gRPC 端口 = server.port + offset） | 2.0.0 |
+| 端口偏移（服务端内置常量，不可配置） | SDK=`1000`、Cluster=`1001` | int | core | gRPC 端口 = server.port + offset（SDK 9848、Cluster 9849）；客户端侧可用 JVM 属性 `nacos.server.grpc.port.offset` 覆盖 | 2.0.0 |
 | `nacos.remote.server.grpc.sdk.max-inbound-message-size` | `10485760` (10MB) | long | core | SDK gRPC 最大入站消息大小（字节） | 2.0.0 |
 | `nacos.remote.server.grpc.sdk.keep-alive-time` | `7200000` (2h) | long | core | SDK gRPC 无数据后发送 keepalive PING 前等待时间（ms） | 2.0.0 |
 | `nacos.remote.server.grpc.sdk.keep-alive-timeout` | `20000` (20s) | long | core | SDK gRPC 发送 keepalive PING 后等待 ACK 超时（ms） | 2.0.0 |
@@ -2921,20 +2837,19 @@ class MemberInfoReportTask extends Task {
 
 ### 9.15.2 核心配置详解
 
-**`nacos.remote.server.grpc.port.offset`（默认 `1000`）**：
+**gRPC 端口偏移（内置常量，不可配置）**：
 
-gRPC 服务端口计算公式：`gRPC 端口 = server.port + port.offset`。默认 `8848 + 1000 = 9848`。`GrpcSdkServer.start()` 方法（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcSdkServer.java:55-70`）在启动时读取此配置，构建 `InetSocketAddress(config.getPort() + portOffset)`。注意 `GrpcClusterServer` 也使用同一个 `port.offset`，即 SDK gRPC 和 Cluster gRPC 共享同一端口——通过 gRPC 的 `ServiceDescriptor` 区分两类服务。
+gRPC 服务端口计算公式：`gRPC 端口 = server.port + rpcPortOffset()`，由 `BaseRpcServer.getServicePort()`（`BaseRpcServer.java:107-109`）计算。**服务端不存在** `nacos.remote.server.grpc.port.offset` 配置键——偏移量为内置常量：SDK gRPC（`GrpcSdkServer.java:48-51`）= `+1000`（默认 9848），Cluster gRPC（`GrpcClusterServer.java:50`）= `+1001`（默认 9849）。两类 gRPC 服务**分别监听不同端口**，防火墙需同时放行 9848 与 9849。客户端侧如需覆盖偏移量，可设置 JVM 属性 `nacos.server.grpc.port.offset`（`GrpcConstants.java:36`）。
 
 客户端连接流程：
-1. 客户端通过 HTTP `GET /nacos/v1/console/health` 获取服务端健康状态
-2. 服务端在响应 Header 中返回 `Server-Address: {IP}:{gRPC_PORT}`
-3. 客户端解析出 gRPC 端口后建立 `GrpcClient` 长连接
+1. 客户端在本地按 `服务端口 + rpcPortOffset()`（默认偏移 1000）计算 gRPC 端口（`GrpcSdkClient.java:76-77`）
+2. 直接向该端口发起 gRPC 连接建立（`GrpcClient` 长连接）
 
 **`nacos.remote.server.grpc.sdk.max-inbound-message-size` 和 `nacos.remote.server.grpc.cluster.max-inbound-message-size`（默认 `10485760` = 10MB）**：
 
 限制单个 gRPC 消息的最大大小。超出此限制的消息将被 gRPC 框架直接拒绝（返回 `RESOURCE_EXHAUSTED`）。`BaseGrpcServer`（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/BaseGrpcServer.java`）在构建 `NettyServerBuilder` 时通过 `.maxInboundMessageSize(size)` 设置。SDK 和 Cluster 独立配置——服务端间通信可能传输更大的数据（如全量同步数据），因此 Cluster 的最大消息可独立调大。
 
-需要注意：此限制作用于单个 gRPC 消息，而非整个请求——若客户端分片发送，每个分片都不能超过此限制。该值需要大于最大单个配置内容的大小（受 `nacos.config.max.content.size` 控制，默认 100MB），因此 10MB 默认值可能不足以传输极大型配置。若需要传输大于 10MB 的配置，需同步调大此值和 `nacos.config.max.content.size`。
+需要注意：此限制作用于单个 gRPC 消息，而非整个请求——若客户端分片发送，每个分片都不能超过此限制。该值需要大于最大单个配置内容的大小（服务端 `maxContent` 默认 10MB，`PropertyUtil.java:51`，无 `nacos.config.max.content.size` 键），因此默认值与配置内容上限刚好对齐；若调大配置内容上限，需同步调大此值。
 
 **keep-alive 参数详解**：
 
@@ -2958,7 +2873,7 @@ NettyServerBuilder builder = NettyServerBuilder.forPort(port)
 
 `permitKeepAliveTime()` 设置的是服务端允许的客户端最小 keep-alive 时间——若客户端设置的 keep-alive 时间小于此值，服务端强制使用此最小值。这防止恶意或配置错误的客户端设置极小的 keep-alive 时间（如 1ms）频繁 PING 压垮服务端。
 
-**gRPC 端口变更影响**：若修改 `server.port`（默认 8848），gRPC 端口会自动跟随变化（8848 + 1000 = 9848 → 新端口 + 1000）。但若单独修改 `port.offset`，仅 gRPC 端口变化，HTTP 端口不变。修改端口后需要：1) 更新所有客户端连接配置中的 gRPC 端口；2) 防火墙规则放行新端口。
+**gRPC 端口变更影响**：若修改 `server.port`（默认 8848），gRPC 端口会自动跟随变化（8848 + 1000 = 9848 → 新端口 + 1000；Cluster 通道 + 1001）。偏移量为内置常量不可单独修改。修改端口后需要：1) 防火墙规则放行新端口（9848/9849）；2) 客户端无需改动（本地按新端口 + 偏移计算）。
 
 ### 9.15.3 gRPC 协议栈架构
 
@@ -3005,9 +2920,9 @@ gRPC 长连接模式相比 HTTP 短连接，在延迟、吞吐、资源消耗方
 
 **案例一：大规模客户端长连接优化**
 
-某互联网公司 10000 个客户端同时连接 Nacos 集群。默认 `keep-alive-time=7200000`（2h）导致大量空闲连接占用服务端内存（每连接约 1MB）。但客户端定期发送心跳（默认 5s），所以连接实际上不会真正空闲 2 小时——keep-alive PING 机制实际上不会触发。真正需要关注的是 `idle-timeout`（详见 9.16 节）。调整策略：
+某互联网公司 10000 个客户端同时连接 Nacos 集群。默认 `keep-alive-time=7200000`（2h）看起来会导致大量空闲连接占用服务端内存（每连接约 1MB）。但客户端定期发送心跳（默认 5s），连接实际上不会真正空闲 2 小时——keep-alive PING 机制实际不会触发。调整策略：
 - 保持 keep-alive 默认值不变（心跳机制保证了连接不会空闲 2 小时）
-- 关注 `idle-timeout` 设置（默认 15 分钟），根据业务特点适当缩短
+- 关注连接数与内存余量（连接管理详见 9.16 节）
 
 **案例二：大配置推送场景**
 
@@ -3027,9 +2942,9 @@ gRPC 长连接模式相比 HTTP 短连接，在延迟、吞吐、资源消耗方
 
 **错误一：gRPC 端口冲突**
 
-症状：Nacos 启动失败，日志显示 `Address already in use` 错误，端口 `server.port + port.offset`（默认 9848）已被占用。
-排查路径：使用 `netstat -tlnp | grep 9848` 检查端口占用情况。检查是否有旧 Nacos 进程未完全关闭。
-修复：终止占用端口的进程，或修改 `nacos.remote.server.grpc.port.offset` 为其他值（如 `1001` → gRPC 端口变为 8849）。
+症状：Nacos 启动失败，日志显示 `Address already in use` 错误，端口 `server.port + 1000`（默认 9848）或 `server.port + 1001`（默认 9849）已被占用。
+排查路径：使用 `netstat -tlnp | grep -E "9848|9849"` 检查端口占用情况。检查是否有旧 Nacos 进程未完全关闭。
+修复：终止占用端口的进程，或修改 `server.port`（gRPC 端口自动跟随为 +1000/+1001）。
 
 **错误二：`max-inbound-message-size` 过小导致配置推送失败**
 
@@ -3045,16 +2960,16 @@ gRPC 长连接模式相比 HTTP 短连接，在延迟、吞吐、资源消耗方
 
 ### 9.15.8 与客户端 SDK gRPC 配置的对应关系
 
-服务端 gRPC 配置与客户端 SDK gRPC 配置（通过 `GrpcConstants` 中 `@GRpcConfigLabel` 标记的 16 个配置项）协同工作：
+服务端 gRPC 配置与客户端 SDK gRPC 配置（通过 `GrpcConstants` 中 `@GRpcConfigLabel` 标记的 14 个配置项）协同工作：
 
 | 服务端配置 | 对应客户端配置 | 协同作用 |
 |-----------|-------------|---------|
 | `sdk.keep-alive-time=7200000` | `nacos.remote.client.grpc.connect.keep.alive` | 客户端 keep-alive >= 服务端 `permit-keep-alive-time`（5min） |
 | `sdk.max-inbound-message-size=10MB` | `nacos.remote.client.grpc.maxinbound.message.size` | 客户端发送消息需 <= 服务端限制 |
 | `sdk.permit-keep-alive-time=300000` | （客户端 keep-alive time） | 服务端强制拒绝 <5min 的客户端 keep-alive |
-| `port.offset=1000` | （客户端连接端口） | 客户端通过 HTTP health API 自动获取 gRPC 端口 |
+| 端口偏移（服务端常量 +1000/+1001） | `nacos.server.grpc.port.offset`（JVM 属性，默认 1000） | 客户端本地按 服务端口+offset 计算 gRPC 端口 |
 
-客户端 SDK 的 `GrpcClient` 在建立连接时自动通过 HTTP health API 获取服务端 gRPC 端口（无需手动配置），但 keep-alive 相关参数需要在客户端侧正确配置以避免被服务端拒绝。
+客户端 SDK 的 `GrpcClient` 在建立连接时于本地计算 gRPC 端口（服务端口 + `rpcPortOffset()`，默认偏移 1000，`GrpcSdkClient.java:76-77`），无需通过 HTTP API 探测，但 keep-alive 相关参数需要在客户端侧正确配置以避免被服务端拒绝。
 
 ### 9.15.9 设计模式分析
 
@@ -3064,153 +2979,77 @@ gRPC 长连接模式相比 HTTP 短连接，在延迟、吞吐、资源消耗方
 
 ### 9.15.10 小结
 
-gRPC 通信配置共 9 个服务端核心项（客户端另有约 16 个 `GrpcConstants` 配置项）。最关键的是 `port.offset=1000`（决定 gRPC 端口），keep-alive 三个参数保持默认即可满足大多数生产环境。只有在传输超大配置（>10MB）时需要调大 `max-inbound-message-size`。注意客户端 gRPC keep-alive 配置必须 >= `permit-keep-alive-time`（5 分钟）以免被服务端拒绝。
+gRPC 通信配置共 9 个服务端核心项（客户端另有 14 个 `GrpcConstants` 配置项）。最关键的是端口偏移常量（SDK=+1000、Cluster=+1001，决定 9848/9849 两个 gRPC 端口，防火墙需同时放行），keep-alive 三个参数保持默认即可满足大多数生产环境。只有在传输超大配置（>10MB）时需要调大 `max-inbound-message-size`。注意客户端 gRPC keep-alive 配置必须 >= `permit-keep-alive-time`（5 分钟）以免被服务端拒绝。
 
 ## 9.16 Core 模块——连接管理配置
 
-> **设计背景**：Nacos 服务端通过 `ConnectionManager`（`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java:50-350`）管理所有客户端 gRPC 长连接的生命周期：注册、心跳检测、空闲超时剔除、定期清理。连接管理配置直接决定 Nacos 能同时服务的客户端数量和推送性能。
+> **设计背景**：Nacos 服务端通过 `ConnectionManager`（`core/src/main/java/com/alibaba/nacos/core/remote/ConnectionManager.java`）管理所有客户端 gRPC 长连接的生命周期：注册（`register()`）、注销（`unregister()`，含 IP 计数递减与断连事件发布）、定时清理空闲连接。**连接限流不走 `max-connection` 之类的数量配置**——2.5.3 通过控制插件（Connection Limit Rule，配置键 `nacos.connection.limit.rule`）限制单 IP 最大连接数等配额，超限连接在建立时被拒绝。推送由 `RpcPushService` 承担，服务端无独立的"推送线程数/队列容量"配置。
 
 ### 9.16.1 配置项清单
 
+连接管理相关的唯一服务端配置键：
+
 | 配置项 | 默认值 | 类型 | 生效模块 | 说明 | 引入版本 |
 |--------|--------|------|---------|------|---------|
-| `nacos.remote.server.grpc.sdk.max-connection` | `20000` | int | core | SDK gRPC 最大连接数 | 2.0.0 |
-| `nacos.remote.server.grpc.cluster.max-connection` | `100` | int | core | Cluster gRPC 最大连接数（服务端间） | 2.0.0 |
-| `nacos.remote.server.grpc.sdk.idle-timeout` | `900000` (15min) | long | core | SDK gRPC 空闲超时（ms） | 2.0.0 |
-| `nacos.remote.server.grpc.cluster.idle-timeout` | `900000` (15min) | long | core | Cluster gRPC 空闲超时（ms） | 2.0.0 |
-| `nacos.remote.server.grpc.sdk.clean.period` | `300000` (5min) | long | core | SDK 连接清理周期（ms） | 2.0.0 |
-| `nacos.remote.server.grpc.cluster.clean.period` | `300000` (5min) | long | core | Cluster 连接清理周期（ms） | 2.0.0 |
-| `nacos.remote.server.grpc.sdk.push.thread.count` | `16` | int | core | SDK 推送线程数 | 2.0.0 |
-| `nacos.remote.server.grpc.sdk.push.queue.capacity` | `16384` | int | core | SDK 推送队列容量 | 2.0.0 |
+| `nacos.connection.limit.rule` | 内置默认规则 | JSON/String | core | 连接限流规则（如单 IP 最大连接数），由连接控制插件解析执行 | 2.2.0 |
 
-### 9.16.2 核心配置详解
+**说明**：此前流传的 `nacos.remote.server.grpc.sdk/cluster.max-connection`、`.idle-timeout`、`.clean.period`、`.push.thread.count`、`.push.queue.capacity` 等 8 个键在 2.5.3 源码中**均不存在**——连接数量限制统一收敛到控制插件，连接清理与推送线程池为内置固定逻辑。
 
-**`nacos.remote.server.grpc.sdk.max-connection`（默认 `20000`）**：
+### 9.16.2 核心机制详解
 
-限制同时连接的客户端数量。`GrpcConnectionManager` 类（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcConnectionManager.java:115-145`）在 `register()` 方法中校验连接数上限，核心逻辑如下：
+**连接注册与限流（ConnectionManager + 控制插件）**：
 
 ```java
-// GrpcConnectionManager.register() 连接注册逻辑
-// core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcConnectionManager.java:115-145
+// ConnectionManager.register() 连接注册逻辑（简化）
 public synchronized boolean register(String connectionId, Connection connection) {
-    // 1. 检查连接数是否达上限
-    if (connections.size() >= sdkMaxConnectionCount) {
-        Loggers.REMOTE.info("Reject connection over max connection count: {}, current: {}",
-                sdkMaxConnectionCount, connections.size());
-        return false;  // 拒绝新连接, 客户端收到 RESOURCE_EXHAUSTED
-    }
-    // 2. 存入 ConcurrentHashMap<String, Connection>
+    // 1. 连接限流检查：委托 ConnectionControlManager（控制插件）
+    //    按 nacos.connection.limit.rule 规则校验（如单 IP 连接数）
+    // 2. 校验通过 → 存入 ConcurrentHashMap<String, Connection>
     connections.put(connectionId, connection);
-    // 3. 注册连接事件监听器
-    connection.addListener(new ConnectionEventListener() {
-        @Override
-        public void onDisconnect(Connection connection) {
-            unregister(connectionId);  // 连接断开时自动清理
-        }
-    });
+    // 3. 递增该客户端 IP 的连接计数（用于限流统计）
     return true;
 }
 ```
 
-连接超限时客户端收到 `RESOURCE_EXHAUSTED` 错误，gRPC 状态码为 `8 (ResourceExhausted)`。客户端 SDK 会按照指数退避策略自动重试连接（初始间隔 1s，最大间隔 60s）。
+限流规则示例（`nacos.connection.limit.rule`）：
 
-生产环境建议根据 JVM Heap 大小估算最大连接数：
+```properties
+# 限制单 IP 最大连接数为 100（JSON 格式）
+nacos.connection.limit.rule={"limitConfig":"{\"maxLimitCount\":-1,\"ipLimitCount\":100}"}
+```
 
-| JVM Heap | 每连接内存占用（经验值） | 最大连接数建议 |
+超限时客户端连接建立请求被拒绝，SDK 按退避策略自动重试。
+
+**连接清理与注销（ConnectionManager.unregister()）**：
+
+```java
+// ConnectionManager.unregister() 注销逻辑（简化，:147-162）
+public synchronized void unregister(String connectionId) {
+    Connection connection = connections.remove(connectionId);
+    if (connection != null) {
+        // 1. 递减该 IP 的连接计数
+        // 2. 发布 ConnectionDisconnectedEvent（供上层清理 Client/注册数据）
+        Loggers.REMOTE.info("[{}]Connection unregistered successfully.", connectionId);
+    }
+}
+```
+
+内置定时任务定期扫描并清理长期无心跳的空闲连接——清理周期为固定内置逻辑，无 `clean.period` / `idle-timeout` 配置。
+
+生产环境容量估算参考：
+
+| JVM Heap | 每连接内存占用（经验值） | 可承载连接数参考 |
 |----------|----------------------|--------------|
-| 2GB | ~80KB（GPRC channel + Netty buffer） | 20000（默认） |
-| 4GB | ~80KB | 40000 |
-| 8GB | ~80KB | 80000 |
-| 16GB | ~80KB | 150000 |
+| 2GB | ~80KB（gRPC channel + Netty buffer） | ~20000 |
+| 4GB | ~80KB | ~40000 |
+| 8GB | ~80KB | ~80000 |
+| 16GB | ~80KB | ~150000 |
 
 注意事项：上述估算仅含 Nacos 自身连接开销，不含业务数据内存（如注册表中实例数据）。实际部署需预留至少 40% Heap 给业务数据。
 
-**客户端 SDK 侧对应配置**：
-- `NacosGrpcClientProperties.serverCheckMaxConnectionCount`（客户端侧）：客户端检查服务端返回的最大连接数，超限后本地快速失败
-- 客户端侧 `nacos.remote.client.grpc.max.retry`（默认 3 次）：连接失败后的重试次数
+### 9.16.2.1 配置推送（RpcPushService）
 
-**`nacos.remote.server.grpc.sdk.idle-timeout`（默认 `900000` = 15 分钟）**：
-
-连接空闲超时机制由 `GrpcConnectionManager.startIdleConnectionMonitor()` 方法（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcConnectionManager.java:230-265`）实现，核心流程：
-
-```java
-// GrpcConnectionManager.startIdleConnectionMonitor() 空闲连接监控
-// core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcConnectionManager.java:230-265
-@PostConstruct
-public void startIdleConnectionMonitor() {
-    // 使用 ScheduledExecutorService 定期扫描所有连接
-    scheduledExecutorService.scheduleWithFixedDelay(() -> {
-        long now = System.currentTimeMillis();
-        for (Connection connection : connections.values()) {
-            // 获取连接最后活跃时间
-            long lastActiveTime = connection.getMetaInfo().getLastActiveTime();
-            // 若空闲时间超过 idleTimeout，标记为过期
-            if (now - lastActiveTime > sdkIdleTimeoutMs) {
-                Loggers.REMOTE.warn("Connection {} idle timeout, last active: {}",
-                        connection.getConnectionId(), lastActiveTime);
-                connection.requestClose();  // 异步关闭连接
-                unregister(connection.getConnectionId());
-            }
-        }
-    }, sdkCleanPeriodMs, sdkCleanPeriodMs, TimeUnit.MILLISECONDS);
-}
-```
-
-注意事项：
-1. 客户端心跳默认间隔为 5s，远低于 15 分钟空闲超时——正常心跳保活下不会被误清理
-2. 若客户端网络中断但 TCP 连接未断开（如防火墙静默丢弃），服务端需等待 `keep-alive-timeout=20s` 检测 PING 超时后再等待 `idle-timeout=15min` 才清理——总计约 15 分 20 秒
-3. 可通过调小 `idle-timeout` 加快僵尸连接清理速度，但需确保大于客户端最长无请求间隔
-
-**`nacos.remote.server.grpc.sdk.push.thread.count`（默认 `16`）**：
-
-推送线程池由 `GrpcPushHandler` 类（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcPushHandler.java:50-80`）管理，使用 `ThreadPoolExecutor` 异步执行推送任务：
-
-```java
-// GrpcPushHandler 推送线程池初始化
-// core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcPushHandler.java:50-80
-public class GrpcPushHandler {
-    private final ThreadPoolExecutor pushExecutor = new ThreadPoolExecutor(
-            sdkPushThreadCount,  // 核心线程数 = push.thread.count
-            sdkPushThreadCount,  // 最大线程数 = push.thread.count（固定大小）
-            0L, TimeUnit.MILLISECONDS,
-            new LinkedBlockingQueue<>(sdkPushQueueCapacity),  // 队列容量 = push.queue.capacity
-            new ThreadFactoryBuilder().nameFormat("gprc-push-%d").build(),
-            new ThreadPoolExecutor.CallerRunsPolicy()  // 拒绝策略：由调用线程执行
-    );
-}
-```
-
-推送线程池的工作原理：
-1. 配置变更事件到达 `AsyncNotifyService`
-2. `AsyncNotifyService` 将推送任务提交到 `pushExecutor`
-3. 推送线程从 `LinkedBlockingQueue` 中取出任务，向目标客户端 gRPC Bi-stream 发送 `ConfigChangeNotifyRequest`
-4. 若队列满（> `push.queue.capacity=16384`），触发 `CallerRunsPolicy`——由提交线程直接执行推送（同步阻塞）
-
-大规模客户端场景推送线程数建议：
-
-| 客户端数量 | 推送线程数建议 | 推送队列容量建议 | 说明 |
-|----------|-------------|----------------|------|
-| <1000 | 8 | 4096 | 减少闲置线程资源开销 |
-| 1000-5000 | 16（默认） | 16384（默认） | 中等规模保持默认 |
-| 5000-20000 | 32 | 32768 | 增加并行推送能力 |
-| 20000-50000 | 64 | 65536 | 大规模场景需大幅提升 |
-| >50000 | 128 | 131072 | 超大规模考虑水平扩展集群节点 |
-
-**`nacos.remote.server.grpc.cluster.max-connection`（默认 `100`）**：
-
-Cluster gRPC 服务端间连接数限制。集群节点间通过 Cluster gRPC 进行数据同步（Distro 数据同步、JRaft 日志复制）。默认 100 个连接对绝大多数集群规模足够——即使 100 节点集群，每个节点只需向其他 99 个节点各建立 1 个连接。但若存在大量 `ConfigChangeNotifyRequest` 推送，单连接可能成为瓶颈。
-
-`GrpcClusterServer` 类（`core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcClusterServer.java:60-120`）初始化时读取 `cluster.max-connection` 构建 `NettyServerBuilder`：
-
-```java
-// GrpcClusterServer.start() 集群 gRPC 服务启动
-// core/src/main/java/com/alibaba/nacos/core/remote/grpc/GrpcClusterServer.java:80-95
-NettyServerBuilder builder = NettyServerBuilder.forPort(port)
-        .maxInboundMessageSize(clusterMaxInboundMessageSize)
-        .permitKeepAliveTime(clusterPermitKeepAliveTime, TimeUnit.MILLISECONDS)
-        .keepAliveTime(clusterKeepAliveTime, TimeUnit.MILLISECONDS)
-        .keepAliveTimeout(clusterKeepAliveTimeout, TimeUnit.MILLISECONDS);
-```
+配置/服务变更的推送由 `RpcPushService`（`core/src/main/java/com/alibaba/nacos/core/remote/RpcPushService.java`）承担：推送任务经内置线程池异步执行，通过 gRPC Bi-stream 向目标客户端发送 `ConfigChangeNotifyRequest`。推送线程池参数为内置固定值（无 `push.thread.count` / `push.queue.capacity` 配置键），无需（也无法）通过配置调整；推送压力过大时的正确做法是水平扩展集群节点。
 
 ### 9.16.3 连接生命周期完整流程
 
@@ -3221,19 +3060,19 @@ sequenceDiagram
     participant Client as 客户端 SDK
     participant GSS as GrpcSdkServer
     participant CM as ConnectionManager
-    participant GP as GrpcPushHandler
+    participant PS as RpcPushService
 
     rect rgb(245, 248, 255)
         Note over Client,CM: 阶段一：连接建立与注册（步骤 1-6）
         Client->>GSS: 1. 建立 gRPC Channel (HTTP/2 握手)
         GSS->>CM: 2. onConnect() 回调
         CM->>CM: 3. register(connectionId, connection)
-        CM->>CM: 4. 检查 connections.size() < maxConnection
+        CM->>CM: 4. 连接限流插件检查（nacos.connection.limit.rule）
         alt 超限
-            CM-->>Client: RESOURCE_EXHAUSTED
+            CM-->>Client: 连接被拒绝（客户端退避重试）
         else 正常
             CM->>CM: 5. connections.put(id, connection)
-            CM->>CM: 6. 注册 ConnectionEventListener
+            CM->>CM: 6. 递增 IP 连接计数
         end
     end
 
@@ -3247,48 +3086,35 @@ sequenceDiagram
 
     rect rgb(255, 250, 243)
         Note over Client,CM: 阶段三：空闲检测与回收（步骤 9-11）
-        CM->>CM: 9. startIdleConnectionMonitor() 定期扫描
-        alt 空闲超时 (15min)
-            CM->>Client: 10. requestClose()
-            CM->>CM: 11. unregister(id)
+        CM->>CM: 9. 内置定时任务扫描空闲连接
+        alt 空闲超时
+            CM->>Client: 10. 关闭连接
+            CM->>CM: 11. unregister(id)（递减计数 + 发布断连事件）
         end
     end
 
     rect rgb(244, 251, 246)
-        Note over Client,GP: 阶段四：配置变更推送（步骤 12-14）
-        GP->>GP: 13. pushExecutor.submit(task)
-        GP->>Client: 14. ConfigChangeNotifyRequest
+        Note over Client,PS: 阶段四：配置变更推送（步骤 12-14）
+        PS->>PS: 13. 提交推送任务（内置线程池）
+        PS->>Client: 14. ConfigChangeNotifyRequest
     end
 ```
 
 关键阶段说明：
 
-1. **连接建立**（步骤 1-2）：客户端创建 `NettyChannelBuilder`，通过 HTTP/2 协议与服务端 `GrpcSdkServer` 建立长连接。`GrpcSdkServer` 监听端口为 `server.port + port.offset`（默认 9848）。
-2. **连接注册**（步骤 3-6）：`ConnectionManager.register()` 执行连接数上限检查、存入 `ConcurrentHashMap`、注册 `ConnectionEventListener`。若超限则返回 `RESOURCE_EXHAUSTED`，客户端 SDK 自动重试。
+1. **连接建立**（步骤 1-2）：客户端创建 `NettyChannelBuilder`，通过 HTTP/2 协议与服务端 `GrpcSdkServer` 建立长连接。`GrpcSdkServer` 监听端口为 `server.port + 1000`（默认 9848）。
+2. **连接注册**（步骤 3-6）：`ConnectionManager.register()` 执行连接限流检查（控制插件，`nacos.connection.limit.rule`）、存入 `ConcurrentHashMap`、递增 IP 连接计数。若超限则拒绝连接，客户端 SDK 自动重试。
 3. **心跳保活**（步骤 7-8）：客户端每 5s 发送 `HealthCheckRequest`，服务端更新 `lastActiveTime` 时间戳。gRPC keep-alive 机制作为底层 TCP 连接保活补充（HTTP/2 PING 帧）。
-4. **空闲检测**（步骤 9-11）：`startIdleConnectionMonitor()` 定时任务每隔 `clean.period=5min` 扫描所有连接，对比 `now - lastActiveTime > idleTimeout` 判定空闲超时。超时连接异步关闭并 `unregister()`。
-5. **配置推送**（步骤 12-14）：配置变更时，`GrpcPushHandler` 将推送任务提交到 `pushExecutor` 线程池，通过 gRPC Bi-stream 发送 `ConfigChangeNotifyRequest`。
+4. **空闲检测**（步骤 9-11）：内置定时任务定期扫描所有连接，对长期无心跳的空闲连接关闭并 `unregister()`（清理周期为内置固定逻辑，不可配置）。
+5. **配置推送**（步骤 12-14）：配置变更时，`RpcPushService` 将推送任务提交到内置推送线程池，通过 gRPC Bi-stream 发送 `ConfigChangeNotifyRequest`。
 
 ### 9.16.4 Trade-off 分析
 
 | 维度 | 默认值 | 调整建议 | Trade-off |
 |------|--------|---------|-----------|
-| `max-connection=20000` | 2 万连接 | 增大至 50000 | 更多并发客户端但每连接约消耗 80KB 内存；需确保 JVM Heap 有足够余量（按 Heap × 0.6 / 80KB 估算上限） |
-| `idle-timeout=15min` | 15 分钟空闲超时 | 缩短至 5min | 更快释放僵尸连接但可能误清理网络闪断后快速恢复的合法客户端（客户端重连通常 <30s） |
-| `clean.period=5min` | 5 分钟扫描周期 | 缩短至 1min | 更快回收资源但增加 CPU 扫描开销（O(N) 遍历所有连接） |
-| `push.thread.count=16` | 16 线程 | 增大至 32 | 更高推送吞吐但 CPU 上下文切换开销增加；线程池为固定大小，空闲线程仍占用栈内存（每线程约 1MB） |
-| `push.queue.capacity=16384` | 16384 队列容量 | 增大至 65536 | 更大积压缓冲能力但内存占用增加（每个任务对象约 200B，65536 × 200B ≈ 13MB） |
-
-**性能基准数据**（基于 3 节点集群，每节点 4C8G，10000 客户端）：
-
-| push.thread.count | 推送吞吐 (msg/s) | 平均推送延迟 (ms) | P99 推送延迟 (ms) | CPU 使用率 |
-|-----------------|-------------------|-------------------|-------------------|-----------|
-| 8 | 8,500 | 12 | 45 | 35% |
-| 16 (默认) | 15,000 | 7 | 28 | 52% |
-| 32 | 24,000 | 5 | 18 | 78% |
-| 64 | 30,000 | 4 | 12 | 92% |
-
-结论：16 线程在 10000 客户端场景下是性价比最优配置——吞吐接近线性增长但 CPU 占用仍在合理范围（<60%）。32 线程吞吐提升 60% 但 CPU 接近 80%，适合 CPU 余量充足的大型部署。
+| 连接限流（`nacos.connection.limit.rule`） | 内置规则 | 按需设置单 IP 连接上限 | 防止单一客户端 IP 连接风暴耗尽资源；设置过严会拒绝正常的多实例部署主机 |
+| JVM Heap（决定连接容量） | 无配置 | 每 1 万连接预留约 1GB | 更多并发客户端需要更大 Heap 与更强推送线程资源 |
+| 集群规模（推送吞吐） | 单节点推送 | 客户端 >5 万时扩节点 | 推送线程池不可配置，吞吐上限只能靠水平扩展提升 |
 
 ### 9.16.5 常见配置错误与排查指南
 
@@ -3297,7 +3123,7 @@ sequenceDiagram
 现象：客户端日志频繁出现 `gRPC UNAVAILABLE` 错误，连接反复断开重连。
 
 根因分析：
-1. `max-connection` 设置过低，新客户端连接被拒绝
+1. 连接限流规则（`nacos.connection.limit.rule`）的 IP 上限设置过低，同一主机大量客户端实例被拒绝
 2. 客户端 `keep-alive-time` 短于服务端 `permit-keep-alive-time=5min`，服务端强制使用最小 5min，客户端 1min PING 被忽略，连接被代理/防火墙静默断开
 
 排查步骤：
@@ -3305,15 +3131,15 @@ sequenceDiagram
 # 1. 检查服务端当前连接数
 curl -s http://localhost:8848/nacos/v1/ns/operator/metrics | jq '.data.grpcConnections'
 
-# 2. 检查是否有连接超限拒绝日志
-grep "Reject connection over max" ${nacos.home}/logs/remote-server.log
+# 2. 检查是否有连接被限流拒绝的日志
+grep -iE "reject|over limit" ${nacos.home}/logs/remote-core.log | tail -20
 
 # 3. 确认客户端 keep-alive 配置
 # 客户端应≥ 5min (300000ms)，与服务端 permit-keep-alive-time 对齐
 ```
 
 修复方案：
-1. 调大 `nacos.remote.server.grpc.sdk.max-connection`
+1. 调整 `nacos.connection.limit.rule` 中的 IP 连接数上限
 2. 客户端侧设置 `nacos.remote.client.grpc.keep-alive-time >= 300000`
 
 **错误 2：推送延迟高（配置变更后客户端 >30s 才收到通知）**
@@ -3321,21 +3147,21 @@ grep "Reject connection over max" ${nacos.home}/logs/remote-server.log
 现象：配置变更后客户端长时间（>30s）才收到推送通知。
 
 根因分析：
-1. `push.thread.count` 过低，推送线程池任务积压
-2. `push.queue.capacity` 满触发 `CallerRunsPolicy`，同步阻塞提交线程
+1. 推送任务量超过单节点内置推送线程池的吞吐能力
+2. 目标客户端连接状态异常（推送失败重试堆积）
 
 排查步骤：
 ```bash
-# 1. 检查推送队列积压情况（通过 JMX 或 Actuator Metrics）
-curl -s http://localhost:8848/nacos/actuator/prometheus | grep 'nacos_push_queue_size'
+# 1. 检查推送失败/重试日志
+grep -iE "push.*fail|retry" ${nacos.home}/logs/remote-push.log | tail -20
 
-# 2. 检查是否有 CallerRunsPolicy 触发的同步推送日志
-grep "CallerRunsPolicy" ${nacos.home}/logs/remote-server.log
+# 2. 检查客户端连接健康度
+curl -s http://localhost:8848/nacos/v1/ns/operator/metrics | jq '.data'
 ```
 
 修复方案：
-1. 增大 `nacos.remote.server.grpc.sdk.push.thread.count`（如 16 → 32）
-2. 增大 `nacos.remote.server.grpc.sdk.push.queue.capacity`（如 16384 → 32768）
+1. 扩容集群节点分摊推送负载（推送线程池参数不可配置）
+2. 排查并清理异常客户端连接
 
 **错误 3：僵尸连接占用资源不释放**
 
@@ -3343,32 +3169,31 @@ grep "CallerRunsPolicy" ${nacos.home}/logs/remote-server.log
 
 根因分析：
 1. 客户端进程被杀但未发送 gRPC GOAWAY 帧，服务端 TCP 连接处于半开状态
-2. `keep-alive-time=2h` 过长，PING 检测不及时
+2. 中间网络设备静默丢弃长连接（未配置 TCP keepalive）
 
 排查步骤：
 ```bash
 # 1. 检查 CLOSE_WAIT 连接数
-netstat -an | grep 9848 | grep CLOSE_WAIT | wc -l
+netstat -an | grep -E "9848|9849" | grep CLOSE_WAIT | wc -l
 
-# 2. 检查空闲连接监控日志
-grep "idle timeout" ${nacos.home}/logs/remote-server.log
+# 2. 检查连接注销日志
+grep "Connection unregistered successfully" ${nacos.home}/logs/remote-core.log | tail
 ```
 
 修复方案：
-1. 缩短 `keep-alive-time` 至 600000ms（10 分钟）
-2. 缩短 `idle-timeout` 至 300000ms（5 分钟）
-3. 确保 `clean.period` ≤ `idle-timeout` 的一半（保证至少扫描 2 次才清理）
+1. 依赖内置空闲连接清理（固定周期扫描，无需配置）自动回收
+2. 检查中间网络设备的空闲连接超时，确保大于服务端扫描周期
+3. 必要时升级客户端版本，确保优雅关闭时发送 GOAWAY
 
 ### 9.16.6 设计模式分析
 
-- **对象池模式**：`ConnectionManager` 维护 `ConcurrentHashMap<String, Connection>` 作为连接池，`register()` / `unregister()` 管理连接生命周期。`ConnectionEventListener` 在连接断开时自动回调 `unregister()`，确保池中连接数准确。
-- **定时清理模式（Scheduled Cleanup Pattern）**：`ScheduledExecutorService.scheduleWithFixedDelay()` 定期执行 `startIdleConnectionMonitor()`，扫描所有连接并清理空闲超时连接。固定延迟（而非固定频率）确保上一次扫描完成后才启动下一次，防止扫描堆积。
-- **生产者-消费者模式**：`GrpcPushHandler` 的 `pushExecutor` + `LinkedBlockingQueue` 构成生产者-消费者模型。`AsyncNotifyService` 作为生产者提交推送任务，推送线程作为消费者执行推送。`LinkedBlockingQueue` 作为有界缓冲区防止无限积压。
-- **CallerRunsPolicy 拒绝策略**：当推送队列满时，提交线程直接执行推送任务（同步阻塞）。这提供了自然的背压机制——减慢配置变更事件的提交速度，防止推送任务无限积压导致 OOM。
+- **对象池模式**：`ConnectionManager` 维护 `ConcurrentHashMap<String, Connection>` 作为连接池，`register()` / `unregister()` 管理连接生命周期。断连事件触发上层清理，确保池中连接数准确。
+- **插件化限流模式**：连接限流通过控制插件（Connection Limit Rule）实现——限流规则与连接管理主流程解耦，可在不改核心代码的情况下定制限流策略。
+- **生产者-消费者模式**：`RpcPushService` 的内置推送线程池构成生产者-消费者模型。上层变更事件作为生产者提交推送任务，推送线程作为消费者执行推送，内置队列作为有界缓冲区防止无限积压。
 
 ### 9.16.7 小结
 
-连接管理配置共 8 个核心项。`max-connection` 限制了 Nacos 的横向扩展能力（每连接 ~80KB Heap），`push.thread.count` + `push.queue.capacity` 控制配置推送吞吐。大规模部署（>10000 客户端）时需评估：(1) JVM Heap 是否足够支持目标连接数；(2) 推送线程数是否足以处理配置变更峰值；(3) `idle-timeout` 和 `keep-alive-time` 是否合理清理僵尸连接。典型 10000 客户端 3 节点集群保持默认配置即可；50000+ 客户端场景需将 `max-connection` 调至 80000+、`push.thread.count` 调至 64+。
+连接管理的可配置面在 2.5.3 中收敛为 `nacos.connection.limit.rule` 一个键（连接限流插件）。连接注册/注销（`ConnectionManager.register()` / `unregister()`）、空闲连接清理、推送线程池均为内置固定逻辑——不存在 `max-connection`、`idle-timeout`、`clean.period`、`push.thread.count`、`push.queue.capacity` 等配置。大规模部署（>10000 客户端）时需评估：(1) JVM Heap 是否足够支持目标连接数（每连接 ~80KB）；(2) 推送吞吐是否需要水平扩展节点；(3) 限流规则是否与客户端部署形态匹配。典型 10000 客户端 3 节点集群保持默认即可。
 
 ## 9.17 鉴权安全配置
 
@@ -4209,8 +4034,8 @@ Logback 配置文件 `logback.xml`（`distribution/conf/logback.xml:1-180`）定
 | `nacos_cluster` | `${nacos.home}/logs/nacos-cluster.log` | TimeBasedRollingPolicy（按天） | 30 天 | 集群通信日志（JRaft/Distro） |
 | `naming-server` | `${nacos.home}/logs/naming-server.log` | TimeBasedRollingPolicy（按天） | 30 天 | 命名模块日志（服务注册/发现/心跳） |
 | `config-server` | `${nacos.home}/logs/config-server.log` | TimeBasedRollingPolicy（按天） | 30 天 | 配置模块日志（发布/获取/长轮询） |
-| `remote-server` | `${nacos.home}/logs/remote-server.log` | TimeBasedRollingPolicy（按天） | 30 天 | gRPC 通信日志（连接/推送/心跳） |
-| `access_log` | `${nacos.home}/logs/access.log` | TimeBasedRollingPolicy（按小时） | 7 天 | Tomcat HTTP 访问日志 |
+| `remote-core` / `remote-digest` / `remote-push` | `${nacos.home}/logs/remote-core.log`、`remote-digest.log`、`remote-push.log` | 按天滚动 | 30 天 | gRPC 通信日志（核心连接事件 / 摘要收发 / 推送） |
+| `access_log` | `${nacos.home}/logs/access_log.{date}.log` | 按天滚动 | 7 天 | Tomcat HTTP 访问日志 |
 
 配置文件示例（`distribution/conf/logback.xml` 核心片段）：
 
@@ -4256,7 +4081,7 @@ Nacos 在 `logback.xml` 中定义了 4 个 Logger 的级别：
     <appender-ref ref="nacos_cluster"/>
     <appender-ref ref="naming-server"/>
     <appender-ref ref="config-server"/>
-    <appender-ref ref="remote-server"/>
+    <appender-ref ref="remote-core"/>
 </root>
 
 <!-- 特定包 Logger 级别覆盖 -->
@@ -4270,17 +4095,17 @@ Nacos 在 `logback.xml` 中定义了 4 个 Logger 的级别：
 
 **场景 1：排查配置推送延迟问题**
 
-使用 `grep` + `awk` 分析 `remote-server.log` 定位推送延迟：
+使用 `grep` + `awk` 分析 `remote-push.log` 定位推送延迟：
 
 ```bash
 # 1. 查找特定 dataId 的推送日志
-grep "push config" ${nacos.home}/logs/remote-server.log | grep "your-data-id"
+grep "push config" ${nacos.home}/logs/remote-push.log | grep "your-data-id"
 
 # 2. 提取推送时间戳和延迟（假设日志格式为上述 Pattern）
-grep "PushTask" ${nacos.home}/logs/remote-server.log |   awk '{print $1, $2, $NF}' | sort -k1,2
+grep "PushTask" ${nacos.home}/logs/remote-push.log |   awk '{print $1, $2, $NF}' | sort -k1,2
 
 # 3. 统计推送延迟分布（假设日志包含 delay=xxxms）
-grep "delay=" ${nacos.home}/logs/remote-server.log |   sed 's/.*delay=\([0-9]*\)ms.*//' |   awk '{sum+=$1; count++; if($1>max) max=$1} END {print "avg:", sum/count, "max:", max, "count:", count}'
+grep "delay=" ${nacos.home}/logs/remote-push.log |   sed 's/.*delay=\([0-9]*\)ms.*//' |   awk '{sum+=$1; count++; if($1>max) max=$1} END {print "avg:", sum/count, "max:", max, "count:", count}'
 ```
 
 **场景 2：排查集群通信异常**
@@ -4466,7 +4291,7 @@ public interface NacosLoggingAdapter {
 }
 ```
 
-`LogbackNacosLoggingAdapter`（`logger-adapter-impl/src/main/java/com/alibaba/nacos/logger/adapter/impl/LogbackNacosLoggingAdapter.java:花a-80`）通过 Logback API 操作 Logger 级别：
+`LogbackNacosLoggingAdapter`（`logger-adapter-impl/logback-adapter-12/src/main/java/com/alibaba/nacos/logger/adapter/logback12/LogbackNacosLoggingAdapter.java:37-157`）通过 Logback API 操作 Logger 级别：
 
 ```java
 // LogbackNacosLoggingAdapter.setLogLevel() 动态切换 Logger 级别

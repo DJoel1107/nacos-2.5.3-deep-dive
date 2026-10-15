@@ -16,7 +16,7 @@ Nacos 2.5.3 的认证体系基于 **插件化认证架构**——核心定义在
 
 1. **身份认证（Authentication）**：验证"你是谁"——用户通过 `username`+`password` 登录——Nacos Server 验证用户名密码——成功返回 JWT `accessToken`——后续所有 API 请求携带此 Token——无需每次请求都输入用户名密码。
 2. **权限鉴权（Authorization）**：验证"你能做什么"——根据用户角色——`ROLE_ADMIN`（所有权限）/`ROLE_OPERATOR`（读写权限）/`ROLE_VIEWER`（只读权限）——控制不同用户对不同资源的访问权限——防止越权操作——如普通用户试图删除其他命名空间的配置——权限校验拒绝——返回 HTTP 403 Forbidden。
-3. **Token 管理（Token Management）**：JWT Token 有效期管理——默认 `token.expire.seconds=18000`（5 小时）——客户端 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:40-126`）定时（每 5 秒）刷新 Token——在 Token 过期前自动续期——避免因 Token 过期导致 API 请求被拒——用户无感知——提升用户体验。
+3. **Token 管理（Token Management）**：JWT Token 有效期管理——默认 `token.expire.seconds=18000`（5 小时）——客户端 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java`）由客户端 transport 层周期性触发 `login()`——`NacosClientAuthServiceImpl`（`client/src/main/java/com/alibaba/nacos/client/auth/impl/NacosClientAuthServiceImpl.java:84-88,135-139`）在距过期 `tokenTtl/15 ~ tokenTtl/10` 的随机窗口内自动重登续期（默认 TTL 下约提前 20-30 分钟）——避免因 Token 过期导致 API 请求被拒——用户无感知——提升用户体验。
 
 #### 7.1.2 核心类关系图
 
@@ -212,64 +212,44 @@ public abstract class AbstractProtocolAuthService<R> implements ProtocolAuthServ
 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:40-126`）是客户端侧的认证代理——封装认证登录、Token 刷新、HTTP 请求注入 Token 等逻辑：
 
 ```java
-// client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:40-126
+// client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:45-101
 public class SecurityProxy implements Closeable {
     
-    private final NacosRestTemplate nacosRestTemplate;
-    private final ServerListManager serverListManager;
-    private String accessToken;
-    private long tokenTtl;
-    private long lastRefreshTime;
-    private boolean securityEnabled = false;
+    private final ClientAuthPluginManager clientAuthPluginManager;
     
-    // :56-65—构造函数—初始化NacosRestTemplate和ServerListManager
-    public SecurityProxy(ServerListManager serverListManager, 
-                        NacosRestTemplate nacosRestTemplate) {
-        this.serverListManager = serverListManager;
-        this.nacosRestTemplate = nacosRestTemplate;
-    }
-    
-    // :70-95—login()—认证登录
+    // :70-95—login()—委托 SPI 加载的 ClientAuthService 完成登录
     public void login(Properties properties) {
-        // 1. 检查是否启用认证—配置项 nacos.core.auth.enabled
         if (!isSecurityEnabled(properties)) {
             securityEnabled = false;
             return;
         }
         securityEnabled = true;
-        // 2. 发送HTTP POST /v1/auth/login—Body: username+password
-        String result = nacosRestTemplate.post(
-            serverListManager.getServerList(), 
-            Constants.AUTH_LOGIN_URL, 
-            HttpClientUtils.translateParameterMap(properties));
-        // 3. 解析响应—提取 accessToken 和 tokenTtl
-        if (StringUtils.isNotBlank(result)) {
-            JsonNode json = JacksonUtils.toObj(result);
-            this.accessToken = json.get("accessToken").textValue();
-            this.tokenTtl = json.get("tokenTTL").longValue();
-            this.lastRefreshTime = System.currentTimeMillis();
+        // 遍历所有 ClientAuthService 插件（如 NacosClientAuthServiceImpl）逐个执行登录
+        for (ClientAuthService clientAuthService : clientAuthPluginManager
+                .getClientServices()) {
+            if (clientAuthService.login(properties)) {
+                break;
+            }
         }
     }
     
-    // :100-118—getIdentityContext()—获取身份上下文—注入HTTP Header
+    // :100-118—getIdentityContext()—聚合各插件返回的 LoginIdentityContext 作为请求头
     public Map<String, String> getIdentityContext(RequestResource resource) {
-        Map<String, String> headers = new HashMap<>();
-        if (securityEnabled) {
-            // 注入 Authorization: Bearer {accessToken}
-            headers.put("Authorization", "Bearer " + accessToken);
-            // 定期刷新Token—每5秒检查是否需要刷新
-            if (System.currentTimeMillis() - lastRefreshTime > tokenTtl - 5000) {
-                login(properties);
-            }
+        Map<String, String> header = new HashMap<>(8);
+        for (ClientAuthService clientAuthService : clientAuthPluginManager
+                .getClientServices()) {
+            // 各插件（nacos/ram等）各自填充身份字段（如 accessToken）
+            clientAuthService.getIdentityContext(resource)
+                .forEach((key, value) -> header.put(key, String.valueOf(value)));
         }
-        return headers;
+        return header;
     }
 }
 ```
 
 关键设计：
-- **定期自动刷新 Token**（`:115-117`）：`System.currentTimeMillis() - lastRefreshTime > tokenTtl - 5000`——在 Token 过期前 5 秒自动刷新——避免 Token 过期导致 API 请求失败——用户无感知。
-- **无认证模式兼容**（`:72-76`）：如果配置项 `nacos.core.auth.enabled=false`——`securityEnabled = false`——不启用认证——后续 `getIdentityContext()` 返回空 Map——不注入 `Authorization` Header——Nacos Server 端 `AuthPluginService.enableAuth()` 返回 `false`——跳过认证——兼容无认证模式。
+- **插件化委托登录**（`:70-95`）：`SecurityProxy` 自身不持有 accessToken/tokenTtl 字段——登录与续期逻辑全部委托 SPI 加载的 `ClientAuthService` 实现（如 `NacosClientAuthServiceImpl`）——后者在距 Token 过期 `tokenTtl/15 ~ tokenTtl/10` 的随机窗口内自动重登续期——避免 Token 过期导致 API 请求失败——用户无感知。
+- **无认证模式兼容**（`:72-76`）：如果配置项 `nacos.core.auth.enabled=false`——`securityEnabled = false`——不启用认证——后续 `getIdentityContext()` 各插件不注入身份字段——Nacos Server 端 `AuthPluginService.enableAuth()` 返回 `false`——跳过认证——兼容无认证模式。
 
 #### 7.1.4 设计模式分析
 
@@ -290,7 +270,7 @@ public class SecurityProxy implements Closeable {
 | **实现复杂度** | ✅ 标准 JWT 库——开箱即用——无需额外存储 | ⚠️ 需维护 Session Map——需 Redis 存储——实现复杂 | ❌ 需授权服务器——OAuth2.0 流程复杂——4 种授权模式 |
 | **注销/撤销** | ❌ JWT 无状态——无法主动撤销——只能等待过期 | ✅ 删除 Session——立即生效 | ✅ Token 撤销端点——立即生效 |
 
-Nacos 2.5.3 选择 JWT Token 认证——JWT 自包含用户信息——无需服务端存储 Session——支持集群任意节点独立验证——无状态——不需要 Sticky Session 或 Redis Session 共享——降低架构复杂度——适合 Nacos 集群部署——任一节点可独立验证 Token。代价是 Token 泄漏风险——需设置短有效期（默认 18000 秒=5 小时）——Token 过期后需重新登录——客户端 `SecurityProxy` 每 5 秒自动续期——在 Token 过期前自动刷新——避免 Token 过期导致的 API 请求失败。另一个代价是 JWT 无法主动撤销——一旦签发——只能等待过期——如果需要立即撤销用户权限——需要额外机制（如 Token 黑名单）——增加了实现复杂度。
+Nacos 2.5.3 选择 JWT Token 认证——JWT 自包含用户信息——无需服务端存储 Session——支持集群任意节点独立验证——无状态——不需要 Sticky Session 或 Redis Session 共享——降低架构复杂度——适合 Nacos 集群部署——任一节点可独立验证 Token。代价是 Token 泄漏风险——需设置短有效期（默认 18000 秒=5 小时）——Token 过期后需重新登录——客户端 `SecurityProxy` 委托 `NacosClientAuthServiceImpl` 自动续期——在距过期 tokenTtl/15~tokenTtl/10 的随机窗口内自动刷新——避免 Token 过期导致的 API 请求失败。另一个代价是 JWT 无法主动撤销——一旦签发——只能等待过期——如果需要立即撤销用户权限——需要额外机制（如 Token 黑名单）——增加了实现复杂度。
 
 #### 7.1.6 小结
 
@@ -302,7 +282,7 @@ Nacos 2.5.3 认证体系通过 `AuthPluginService` SPI 接口定义认证策略�
 
 Nacos 2.5.3 的 RBAC（Role-Based Access Control）权限模型通过 `AuthPluginService.validateAuthority()` 方法（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/spi/server/AuthPluginService.java:78-84`）实现——将用户、角色、权限三者解耦——采用经典的 RBAC 模型——通过 `Permission` 对象（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/api/Permission.java`）定义权限——包含 `resource`（资源标识）和 `action`（操作类型——`r`=读/`w`=写）。
 
-Nacos 2.5.3 预设 3 种角色——通过 `AuthPluginService.isAdmin()` 方法（plugin/auth/…/AuthPluginService.java:108-110）快速判断管理员角色：
+Nacos 2.5.3 通过 `AuthPluginService.isAdminRequest()` 方法（plugin/auth/…/AuthPluginService.java:93-95）判断当前请求是否为管理员初始化场景——当认证已开启且系统中尚无全局管理员时返回 `true`（用于首次部署引导）：
 
 1. **`ROLE_ADMIN`（管理员）**：拥有所有权限——`isAdmin()` 返回 `true`——所有 `validateAuthority()` 调用直接返回 `true`——无需逐一校验权限——O(1) 判断——管理员绕过所有权限检查——减少权限校验开销——在大量 API 请求场景下——管理员权限判断不影响性能。
 2. **`ROLE_OPERATOR`（运维人员）**：读写配置和服务注册权限——可 `publishConfig()`（发布配置）、`registerInstance()`（注册服务）——但不能管理用户/角色——不能删除命名空间——不能查看其他命名空间的配置——隔离运维操作——防止误操作影响全局。
@@ -340,25 +320,23 @@ public boolean validateAuthority(IdentityContext identityContext, Permission per
 }
 ```
 
-默认实现 `NacosAuthPluginService.validateAuthority()`（`plugin-default-impl/` 模块）实现 RBAC 权限校验逻辑：
+默认实现 `NacosAuthPluginService.validateAuthority()`（`plugin-default-impl/` 模块 `NacosAuthPluginService.java:99-103`）实现 RBAC 权限校验逻辑——该方法本身仅委托 `authenticationManager.authorize()`，实际判定链路如下：
 
-1. **管理员快速通道**：首先调用 `isAdmin(identity)`——检查 `IdentityContext.roles` 是否包含 `ROLE_ADMIN`——如果是管理员——直接返回 `true`——O(1) 判断——无需遍历权限列表——管理员所有 API 请求不会因权限校验产生性能开销。
-2. **权限列表匹配**：如果非管理员——调用 `getPermissions(identity)`——获取该用户所有权限列表 `List<Permission>`——遍历权限列表——逐一比对 `permission.resource`（Ant-style 路径匹配）和 `permission.action`（`r` 或 `w`）——如果匹配——返回 `true`——如果遍历完未匹配——返回 `false`——外层调用方返回 HTTP 403 Forbidden——响应体 `{ "code": 403, "message": "authorization failed" }`。
+1. **管理员快速通道**：`AbstractAuthenticationManager.authorize()` 中先判断 `isGlobalAdmin`/`hasGlobalAdminRole`——如果是全局管理员（持有 `ROLE_ADMIN`）——直接放行——O(1) 判断——无需遍历权限列表——管理员所有 API 请求不会因权限校验产生性能开销。
+2. **权限校验**：非管理员——由 `NacosRoleServiceImpl.hasPermission` 校验——按 `Permission.resource`（Ant-style 路径匹配）和 `permission.action`（`r` 或 `w`）比对——如果匹配——返回 `true`——如果不匹配——抛出 `AccessException`——外层调用方返回 HTTP 403 Forbidden——响应体 `{ "code": 403, "message": "authorization failed" }`。
 3. **资源匹配规则（Ant-style）**：支持 4 级粒度——`*:*:*`（全局通配——匹配所有资源）——`namespace:*:*`（命名空间级通配——匹配该命名空间下所有配置和服务）——`namespace:group:*`（分组级通配——匹配该分组下所有配置）——`namespace:group:dataId`（配置级精确匹配——匹配特定配置）——灵活的权限粒度控制——支持从全局到单配置 4 级权限粒度。
 
 ##### 7.2.3.2 IdentityContext——用户身份上下文
 
-`IdentityContext`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/api/IdentityContext.java`）是用户身份上下文对象——包含用户身份信息——`AuthPluginService.validateIdentity()` 验证 JWT Token 后——解析 JWT Payload——提取用户信息——构造 `IdentityContext`：
+`IdentityContext`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/api/IdentityContext.java:27-77`）是通用的用户身份上下文对象——内部以 `Map<String, Object> param` 键值对存储——用户名、Token、NacosUser 等身份信息均以 key-value 形式存取：
 
 ```java
 // plugin/auth/api/IdentityContext.java (简化)
 public class IdentityContext {
-    private String userName;      // 用户名—JWT payload.userName
-    private String userId;        // 用户ID—JWT payload.sub
-    private List<String> roles;   // 角色列表—JWT payload.roles
-    private Map<String, String> extInfo; // 扩展信息—自定义字段
+    private Map<String, Object> param;
     
-    // getters/setters...
+    public Object getParameter(String key) { ... }
+    public IdentityContext setParameter(String key, Object value) { ... }
 }
 ```
 
@@ -529,34 +507,34 @@ Nacos 2.5.3 认证过滤器链通过 `AbstractProtocolAuthService<R>` 模板方�
 
 #### 7.4.1 设计背景
 
-Nacos 2.5.3 控制台后端 API 定义在 `console/src/main/java/com/alibaba/nacos/console/controller/` 目录——提供 12 个 Controller 类——覆盖用户管理、角色管理、权限管理、命名空间管理、配置管理、服务管理、健康检查、服务状态等 API——控制台前端 SPA（Single Page Application——基于 React）通过 HTTP REST API 与后端交互——所有 API 均经过 `HttpProtocolAuthService`（`auth/src/main/java/com/alibaba/nacos/auth/HttpProtocolAuthService.java`）认证过滤器链进行身份认证和权限鉴权——未认证请求返回 HTTP 401——无权限操作返回 HTTP 403。
+Nacos 2.5.3 控制台后端 API 分布在两处：`console` 模块仅 3 个 Controller（`HealthController`/`NamespaceController`/`ServerStateController`——健康检查、命名空间管理、服务状态）——用户、角色、权限 API 由 `plugin-default-impl/nacos-default-auth-plugin` 模块的 `UserController`/`RoleController`/`PermissionController` 提供——控制台前端 SPA（Single Page Application——基于 React）通过 HTTP REST API 与后端交互——所有受保护 API 均经过 `HttpProtocolAuthService`（`auth/src/main/java/com/alibaba/nacos/auth/HttpProtocolAuthService.java`）认证过滤器链进行身份认证和权限鉴权——未认证请求返回 HTTP 401——无权限操作返回 HTTP 403。
 
 控制台后端 API 按功能域分为 6 大类：
 
-1. **认证 API**：`POST /v1/auth/login`——用户登录——返回 JWT `accessToken`——无需认证——`@Secured` 注解 `enableAuth()` 返回 `false`——认证白名单——降低登录 API 延迟。
-2. **健康检查 API**：`GET /v1/console/health`——Liveness Probe——无需认证——Kubernetes 定期调用——进程存活检测。
-3. **命名空间 API**：`GET/POST/PUT/DELETE /v1/console/namespaces`——命名空间 CRUD——需要 `w`（写权限）——`ROLE_ADMIN` 专属——`ROLE_OPERATOR`/`ROLE_VIEWER` 无权操作——防止越权创建/删除命名空间。
-4. **用户管理 API**：`GET/POST/PUT/DELETE /v1/auth/users`——用户 CRUD——需要 `w`（写权限）——`ROLE_ADMIN` 专属——新增用户自动分配默认角色 `ROLE_VIEWER`——最小权限原则。
-5. **角色管理 API**：`GET/POST/PUT/DELETE /v1/auth/roles`——角色 CRUD——需要 `w`——`ROLE_ADMIN` 专属——预设 3 种角色不可删除——`ROLE_ADMIN`/`ROLE_OPERATOR`/`ROLE_VIEWER` 系统保留。
-6. **权限管理 API**：`GET/POST/PUT/DELETE /v1/auth/permissions`——权限 CRUD——需要 `w`——`ROLE_ADMIN` 专属——支持 Ant-style 资源路径匹配——`*:*:*`（全局通配）——`namespace:*:*`（命名空间级通配）——`namespace:group:dataId`（配置级精确匹配）。
+1. **认证 API**：`POST /v1/auth/login`——用户登录——返回 JWT `accessToken`——无需认证——无 `@Secured` 注解即可匿名访问——认证白名单——降低登录 API 延迟。
+2. **健康检查 API**：`GET /v1/console/health/liveness`——Liveness Probe——无需认证——Kubernetes 定期调用——进程存活检测。
+3. **命名空间 API**：`GET/POST/PUT/DELETE /v1/console/namespaces`——命名空间 CRUD——写操作需要 `w`（写权限）——防止越权创建/删除命名空间。
+4. **用户管理 API**：`GET/POST/PUT/DELETE /v1/auth/users`——用户 CRUD——需要 `w`（写权限）——由 nacos-default-auth-plugin 的 `UserController` 提供。
+5. **角色管理 API**：`GET/POST/PUT/DELETE /v1/auth/roles`——角色 CRUD——需要 `w`——`ROLE_ADMIN` 是唯一系统保留角色（全局管理员角色）。
+6. **权限管理 API**：`GET/POST/PUT/DELETE /v1/auth/permissions`——权限 CRUD——需要 `w`——支持 Ant-style 资源路径匹配——`*:*:*`（全局通配）——`namespace:*:*`（命名空间级通配）——`namespace:group:dataId`（配置级精确匹配）。
 
 #### 7.4.2 核心 API 全览
 
-Console 模块 12 个 Controller 类按功能域分为 6 大类共 18 个 API 端点：
+Console 模块 3 个 Controller + nacos-default-auth-plugin 的 3 个 Controller 按功能域分为 6 大类共 18 个 API 端点：
 
 **A. 认证类（1 个端点）**：
 
 | API 路径 | HTTP 方法 | 功能 | 认证 | `@Secured` |
 |---------|----------|------|------|----------|
-| `/v1/auth/login` | POST | 用户登录 | 否 | `enableAuth=false` |
+| `/v1/auth/login` | POST | 用户登录 | 否 | 无 `@Secured` 注解 |
 
 **B. 健康检查类（3 个端点）**：
 
 | API 路径 | HTTP 方法 | 功能 | 认证 | K8s Probe |
 |---------|----------|------|------|----------|
-| `/v1/console/health` | GET | Liveness | 否 | Liveness Probe |
 | `/v1/console/health/liveness` | GET | Liveness Probe | 否 | Liveness Probe |
-| `/v1/console/health/readiness` | GET | Readiness Probe | 否 | Readiness Probe |
+| `/v2/console/health/liveness` | GET | Liveness（v2 统一响应） | 否 | Liveness Probe |
+| `/v2/console/health/readiness` | GET | Readiness（v2 统一响应） | 否 | Readiness Probe |
 
 **C. 命名空间类（4 个端点）**——`ROLE_ADMIN` 专属：
 
@@ -572,7 +550,7 @@ Console 模块 12 个 Controller 类按功能域分为 6 大类共 18 个 API �
 | API 路径 | HTTP 方法 | 功能 | 密码存储 | 默认角色 |
 |---------|----------|------|---------|---------|
 | `/v1/auth/users` | GET | 查询列表 | — | — |
-| `/v1/auth/users` | POST | 创建用户 | BCrypt 加密 | `ROLE_VIEWER` |
+| `/v1/auth/users` | POST | 创建用户 | BCrypt 加密（10 轮） | 无默认角色 |
 | `/v1/auth/users` | PUT | 编辑用户 | BCrypt 更新 | — |
 | `/v1/auth/users` | DELETE | 删除用户 | — | — |
 
@@ -580,9 +558,9 @@ Console 模块 12 个 Controller 类按功能域分为 6 大类共 18 个 API �
 
 | API 路径 | HTTP 方法 | 功能 | 系统保留角色 |
 |---------|----------|------|------------|
-| `/v1/auth/roles` | GET | 查询列表 | `ROLE_ADMIN`/`OPERATOR`/`VIEWER` 不可删除 |
+| `/v1/auth/roles` | GET | 查询列表 | `ROLE_ADMIN` 为唯一保留角色 |
 | `/v1/auth/roles` | POST | 创建角色 | 自定义角色名——如 `ROLE_DEV` |
-| `/v1/auth/roles` | DELETE | 删除角色 | 系统保留角色禁止删除 |
+| `/v1/auth/roles` | DELETE | 删除角色 | `ROLE_ADMIN`（全局管理员角色）禁止删除 |
 
 **F. 权限管理类（3 个端点）**——`ROLE_ADMIN` 专属：
 
@@ -598,158 +576,115 @@ Console 模块 12 个 Controller 类按功能域分为 6 大类共 18 个 API �
 
 #### 7.4.4 源码走读——UserController 用户管理 CRUD
 
-`UserController`（`console/src/main/java/com/alibaba/nacos/console/controller/UserController.java`）提供用户管理 CRUD API——4 个 RESTful 端点——所有操作需要 `ROLE_ADMIN` 角色：
+`UserController`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:103-117`）提供用户管理 CRUD API——RESTful 端点——写操作需要 `ROLE_ADMIN` 角色：
 
 ```java
-// console/controller/UserController.java (关键代码)
-@RestController("consoleUser")
+// plugin-default-impl/.../controller/UserController.java:103-117 (关键代码)
+@RestController("user")
 @RequestMapping("/v1/auth")
 public class UserController {
     
     @Autowired
-    private UserService userService;
-    @Autowired
     private AuthManager authManager;
+    @Autowired
+    private RoleOperationService roleOperationService;
     
     // POST /v1/auth/users—创建用户
     @PostMapping("/users")
-    @Secured(action = ActionTypes.WRITE, resource = "user:*:*")
-    public ResponseEntity<Boolean> createUser(@RequestBody UserCreateRequest request) {
+    @Secured(resource = Constants.UserResource.CONSOLE_USER, action = ActionTypes.WRITE)
+    public Object createUser(@RequestBody User user) throws ConflictException {
         // 1. 验证用户名唯一性
-        if (userService.findByUsername(request.getUsername()) != null) {
-            throw new IllegalArgumentException("User already exists");
+        if (Objects.isNull(authManager.getUser(user.getUsername()))) {
+            // 2. BCrypt加密密码—PasswordEncoderUtil.encode（BCrypt，默认 10 轮）
+            String password = PasswordEncoderUtil.encode(user.getPassword());
+            User persistUser = new User();
+            persistUser.setUsername(user.getUsername());
+            persistUser.setPassword(password);
+            
+            // 3. 持久化到MySQL users表—不自动分配任何默认角色
+            authManager.createUser(persistUser);
+        } else {
+            throw new ConflictException("user already exist!");
         }
-        
-        // 2. BCrypt加密密码—12轮salt rounds
-        String encodedPassword = new BCryptPasswordEncoder(12)
-            .encode(request.getPassword());
-        
-        // 3. 新建User对象—默认角色ROLE_VIEWER—最小权限原则
-        User user = new User();
-        user.setUsername(request.getUsername());
-        user.setPassword(encodedPassword);
-        user.addRole("ROLE_VIEWER"); // 最小权限原则
-        
-        // 4. 持久化到MySQL users表
-        userService.createUser(user);
-        return ResponseEntity.ok(true);
-    }
-    
-    // DELETE /v1/auth/users—删除用户
-    @DeleteMapping("/users")
-    @Secured(action = ActionTypes.WRITE, resource = "user:*:*")
-    public ResponseEntity<Boolean> deleteUser(@RequestParam String username) {
-        // 不允许删除admin用户—保护系统管理员
-        if ("admin".equals(username)) {
-            throw new IllegalArgumentException("Cannot delete admin user");
-        }
-        userService.deleteUser(username);
-        return ResponseEntity.ok(true);
+        return Response.success(true);
     }
 }
 ```
 
 **关键设计决策**：
 
-1. **默认角色 `ROLE_VIEWER`——最小权限原则**：新建用户自动分配 `ROLE_VIEWER`（只读角色）——而非 `ROLE_ADMIN`（管理员角色）——遵循最小权限原则——新用户仅能查看配置——无法修改/删除配置——防止误操作——需要管理员手动提升权限——安全可控。
+1. **不分配默认角色**：`createUser()` 仅以 BCrypt（默认 10 轮）加密密码入库——不自动分配任何角色——角色需管理员通过 Role API 显式分配——避免默认权限带来的隐性越权面。
 
 2. **admin 用户保护**：不允许删除 `admin` 用户——保证至少一个管理员账号存在——防止误删除所有管理员——导致无法管理 Nacos 集群——需要通过数据库直接操作才能删除 `admin` 用户——增加误操作门槛——提升安全性。
 
 ##### 7.4.4.2 RoleController——角色管理 CRUD
 
-`RoleController`（`console/src/main/java/com/alibaba/nacos/console/controller/RoleController.java`）提供角色管理 CRUD API——3 个 RESTful 端点——系统预设 3 种角色不可删除：
+`RoleController`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/RoleController.java`）提供角色管理 CRUD API——3 个 RESTful 端点——Nacos RBAC 只有 `ROLE_ADMIN` 一个保留角色（`AuthConstants.GLOBAL_ADMIN_ROLE`，`plugin-default-impl/.../constant/AuthConstants.java:32`）——自定义角色可自由增删：
 
 ```java
-// console/controller/RoleController.java (简化)
-@RestController("consoleRole")
+// plugin-default-impl/.../controller/RoleController.java (简化)
+@RestController("role")
 @RequestMapping("/v1/auth/roles")
 public class RoleController {
     
-    @Autowired
-    private RoleService roleService;
-    
-    // POST /v1/auth/roles—创建角色
-    @PostMapping
-    @Secured(action = ActionTypes.WRITE, resource = "role:*:*")
-    public ResponseEntity<Boolean> addRole(@RequestBody Role role) {
-        // 系统保留角色不允许覆盖创建
-        if (isSystemReservedRole(role.getRole())) {
+    // POST /v1/auth/roles—创建角色—资源为 console/roles
+    @Secured(resource = Constants.UserResource.CONSOLE_ROLES, action = ActionTypes.WRITE)
+    public Object addRole(@RequestBody Role role) {
+        // 全局管理员角色仅用于内置 admin 用户—不可覆盖
+        if (AuthConstants.GLOBAL_ADMIN_ROLE.equals(role.getRole())) {
             throw new IllegalArgumentException(
-                "System reserved role cannot be overridden");
+                "named '" + AuthConstants.GLOBAL_ADMIN_ROLE + "' illegal");
         }
-        roleService.addRole(role);
-        return ResponseEntity.ok(true);
+        roleOperationService.addRole(role);
+        return Response.success(true);
     }
     
     // DELETE /v1/auth/roles—删除角色
-    @DeleteMapping
-    @Secured(action = ActionTypes.WRITE, resource = "role:*:*")
-    public ResponseEntity<Boolean> deleteRole(@RequestParam String role) {
-        // 系统保留角色不可删除
-        if (isSystemReservedRole(role)) {
-            throw new IllegalArgumentException(
-                "System reserved role '" + role + "' cannot be deleted");
+    @Secured(resource = Constants.UserResource.CONSOLE_ROLES, action = ActionTypes.WRITE)
+    public Object deleteRole(@RequestParam String role, ...) {
+        // 全局管理员角色不可删除
+        if (AuthConstants.GLOBAL_ADMIN_ROLE.equals(role)) {
+            throw new IllegalArgumentException("named '" + role + "' illegal");
         }
-        roleService.deleteRole(role);
-        return ResponseEntity.ok(true);
-    }
-    
-    // isSystemReservedRole()—判断是否为系统保留角色
-    private boolean isSystemReservedRole(String role) {
-        return Arrays.asList(
-            "ROLE_ADMIN",    // 管理员角色
-            "ROLE_OPERATOR", // 操作员角色
-            "ROLE_VIEWER"    // 观察员角色
-        ).contains(role);
+        roleOperationService.deleteRole(role, username);
+        return Response.success(true);
     }
 }
 ```
 
 **系统保留角色体系**：
 
-| 角色名 | 中文 | 权限级别 | 可删除？ | 典型用户 |
+| 角色名 | 说明 | 可删除？ | 典型用户 |
 |--------|------|---------|----------|---------|
-| `ROLE_ADMIN` | 管理员 | 读写——全局 | ❌ 系统保留 | Nacos集群管理员 |
-| `ROLE_OPERATOR` | 操作员 | 读写——限定范围 | ❌ 系统保留 | 运维工程师 |
-| `ROLE_VIEWER` | 观察员 | 只读——全局 | ❌ 系统保留 | 开发者/测试人员 |
-| 自定义角色 | 自定义 | 自定义 | ✅ 可删除 | 特定业务角色 |
+| `ROLE_ADMIN` | 全局管理员角色（`AuthConstants.GLOBAL_ADMIN_ROLE`） | ❌ 系统保留 | Nacos集群管理员 |
+| 自定义角色 | 自定义 | ✅ 可删除 | 特定业务角色 |
+
+> 注：Operator/Viewer 三层角色模型并非 2.5.3 源码事实——源码中不存在 `ROLE_OPERATOR`/`ROLE_VIEWER` 预设角色与对应保留校验。
 
 ##### 7.4.4.3 PermissionController——权限授予/撤销
 
-`PermissionController`（`console/src/main/java/com/alibaba/nacos/console/controller/PermissionController.java`）提供权限管理 CRUD API——支持 Ant-style 资源路径匹配：
+`PermissionController`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/PermissionController.java`）提供 `/v1/auth/permissions` 增删查 API——`action` 取值为 `r`（读）/`w`（写）：
 
 ```java
-// console/controller/PermissionController.java (简化)
-@RestController("consolePermission")
+// plugin-default-impl/.../controller/PermissionController.java (简化)
+@RestController("permission")
 @RequestMapping("/v1/auth/permissions")
 public class PermissionController {
     
-    @Autowired
-    private PermissionService permissionService;
-    
-    // POST /v1/auth/permissions—授予权限
-    @PostMapping
-    @Secured(action = ActionTypes.WRITE, resource = "permission:*:*")
-    public ResponseEntity<Boolean> grantPermission(
-            @RequestBody PermissionRequest request) {
-        // 构建权限对象—resource:action对
-        Permission permission = new Permission();
-        permission.setRole(request.getRole());
-        permission.setResource(request.getResource()); // 如 "namespace:group:dataId"
-        permission.setAction(request.getAction());       // 如 "rw"（读写）
-        
-        permissionService.addPermission(permission);
-        return ResponseEntity.ok(true);
+    // POST /v1/auth/permissions—授予权限—资源为 console/permissions
+    @Secured(resource = Constants.UserResource.CONSOLE_PERMISSION, action = ActionTypes.WRITE)
+    public Object addPermission(@RequestBody Permission permission) {
+        // 权限对象—role + resource + action（"r"或"w"）
+        permissionOperationService.addPermission(permission);
+        return Response.success(true);
     }
     
     // DELETE /v1/auth/permissions—撤销权限
-    @DeleteMapping
-    @Secured(action = ActionTypes.WRITE, resource = "permission:*:*")
-    public ResponseEntity<Boolean> revokePermission(
-            @RequestBody PermissionRequest request) {
-        permissionService.deletePermission(
-            request.getRole(), request.getResource(), request.getAction());
-        return ResponseEntity.ok(true);
+    @Secured(resource = Constants.UserResource.CONSOLE_PERMISSION, action = ActionTypes.WRITE)
+    public Object deletePermission(@RequestParam String role, String resource,
+            @RequestParam String action) {
+        permissionOperationService.deletePermission(role, resource, action);
+        return Response.success(true);
     }
 }
 
@@ -758,7 +693,7 @@ public class PermissionController {
 // namespace:*:* —命名空间级通配—所有命名空间所有Action
 // namespace:groupId:* —配置组级通配—指定groupId所有Action
 // namespace:groupId:dataId —配置级精确匹配—指定dataId
-// resource:action:r —只读Action—"r"=read, "w"=write, "rw"=readwrite
+// resource —权限的 action 取值—"r"=read, "w"=write（无 "rw" 组合值）
 ```
 
 **权限模型闭环**：管理员通过 Console API 管理用户/角色/权限——用户通过认证 API 登录——后续 API 请求自动经过 `HttpProtocolAuthService` 过滤器链进行权限鉴权——`ROLE_ADMIN` 管理权限——`ROLE_OPERATOR` 使用读写权限——`ROLE_VIEWER` 只读——三层权限隔离——保证控制台安全。
@@ -767,10 +702,10 @@ public class PermissionController {
 
 **Trade-off 1：三层角色模型 vs RBAC 纯角色模型 vs ACL**
 
-Nacos 2.5.3 选择三层角色模型——`ROLE_ADMIN`（所有权限）、`ROLE_OPERATOR`（读写权限）、`ROLE_VIEWER`（只读权限）——预定义角色 + 自定义角色——Ant-style 资源路径匹配。
+Nacos 2.5.3 采用基于角色的权限模型——`ROLE_ADMIN`（全局管理员，唯一保留角色）——自定义角色 + Ant-style 资源路径匹配。
 
-- **选择**：三层角色模型 + Ant-style 资源匹配
-- **优势**：(1) 3 种预定义角色开箱即用——无需额外配置——降低运维成本；(2) Ant-style 资源路径匹配——`*:*:*` 全局通配、`namespace:*:*` 命名空间级通配——灵活满足不同业务权限需求；(3) 系统保留角色不可删除——保证权限体系完整性——防止误删除所有管理员
+- **选择**：角色模型 + Ant-style 资源匹配
+- **优势**：(1) 内置 `ROLE_ADMIN` 开箱即用——无需额外配置——降低运维成本；(2) Ant-style 资源路径匹配——`*:*:*` 全局通配、`namespace:*:*` 命名空间级通配——灵活满足不同业务权限需求；(3) `ROLE_ADMIN` 不可删除——保证权限体系完整性——防止误删除全局管理员
 - **代价**：(1) 权限粒度介于角色级和用户级之间——无法做到 ACL 级别的用户级精细度——但通过 Ant-style 通配符可近似实现用户级隔离；(2) 自定义角色配置需理解 Ant-style 路径匹配规则——有一定学习成本
 - **适用场景**：Nacos 作为多租户微服务基础设施——角色级权限管理已满足绝大多数场景——ACL 的复杂性不值得
 
@@ -787,10 +722,10 @@ Nacos 2.5.3 选择三层角色模型——`ROLE_ADMIN`（所有权限）、`ROLE
 | **管理粒度** | ✅ 角色级——批量管理用户权限——高效 | ✅ 角色级——批量管理 | ✅ 用户级——最精细 |
 | **权限配置复杂度** | ✅ 3种预定义角色+自定义角色——配置简单 | ⚠️ 需手动定义角色-权限映射 | ❌ 需为每个用户单独配置权限——复杂 |
 | **扩展性** | ✅ 支持自定义角色+Ant-style资源匹配——灵活 | ⚠️ 需定义角色层次结构——较复杂 | ❌ 用户数多时权限爆炸——难以管理 |
-| **安全隔离** | ✅ 最小权限原则——新用户默认ROLE_VIEWER | ⚠️ 需手动设置默认角色 | ✅ 精细化——每个用户独立权限 |
+| **安全隔离** | ✅ 权限需显式分配——授予显式可控 | ⚠️ 需手动设置角色 | ✅ 精细化——每个用户独立权限 |
 | **运维成本** | ✅ 预定义角色+系统保留——开箱即用 | ⚠️ 需定义角色体系——需额外配置 | ❌ 需为每个用户配置权限——运维成本高 |
 
-Nacos 2.5.3 选择三层角色模型 + Ant-style 资源匹配——优先追求配置简单和运维低成本——3 种预定义角色（Admin/Operator/Viewer）开箱即用——系统保留角色不可删除——保证权限体系完整性——支持自定义角色 + Ant-style 资源路径匹配——灵活满足不同业务权限需求——新用户默认 `ROLE_VIEWER`——最小权限原则——安全可控——牺牲用户级精细度——但通过 Ant-style 通配符可近似实现用户级隔离——实际生产环境满足需求。#### 7.4.5 设计模式分析
+Nacos 2.5.3 选择角色模型 + Ant-style 资源匹配——优先追求配置简单和运维低成本——内置 `ROLE_ADMIN`（全局管理员）开箱即用——系统保留角色不可删除——保证权限体系完整性——支持自定义角色 + Ant-style 资源路径匹配——灵活满足不同业务权限需求——角色需管理员显式分配——权限授予显式可控——牺牲用户级精细度——但通过 Ant-style 通配符可近似实现用户级隔离——实际生产环境满足需求。#### 7.4.5 设计模式分析
 
 **模式一：MVC 模式（Model-View-Controller）**
 
@@ -801,190 +736,130 @@ Nacos 2.5.3 选择三层角色模型 + Ant-style 资源匹配——优先追求�
 
 **模式二：注解驱动的 AOP 权限校验**
 
-`@Secured` 注解（`auth/src/main/java/com/alibaba/nacos/auth/annotation/Secured.java`）——通过 Spring AOP 切面——在 Controller 方法执行前拦截——校验当前用户是否拥有该资源操作权限——无权限则返回 HTTP 403 Forbidden。
+`@Secured` 注解（`auth/src/main/java/com/alibaba/nacos/auth/annotation/Secured.java`）——由 `AuthFilter`（Servlet Filter，`auth/.../filter/AuthFilter.java`）与 gRPC 拦截器在请求入口统一解析执行——校验当前用户是否拥有该资源操作权限——无权限则返回 HTTP 403 Forbidden。
 
-- **角色映射**：`@Secured` = Annotation、AOP Aspect = Advice、`AuthFilter` = Pointcut
+- **角色映射**：`@Secured` = Annotation、`AuthFilter`/gRPC 拦截器 = 入口拦截器
 - **收益**：权限校验逻辑与业务逻辑分离——Controller 方法只需添加 `@Secured` 注解——无需在每个方法内编写权限校验代码——符合 AOP 横切关注点分离原则#### 7.4.6 小结
 
-Nacos 2.5.3 Console 控制台后端 API 通过 6 大类 18 个 API 端点——覆盖用户管理（`UserController`）、角色管理（`RoleController`）、权限管理（`PermissionController`）——三层角色模型（ROLE_ADMIN/ROLE_OPERATOR/ROLE_VIEWER）——系统保留角色不可删除——保证权限体系完整性——Ant-style 资源路径匹配——支持 `*:*:*` 全局通配、`namespace:*:*` 命名空间级通配、`namespace:group:dataId` 配置级精确匹配——灵活满足不同业务权限需求——新用户默认 `ROLE_VIEWER`——最小权限原则——admin 用户保护——防止误删除所有管理员——所有 API 均经过 `HttpProtocolAuthService` 认证过滤器链——未认证返回 HTTP 401——无权限返回 HTTP 403——保证控制台安全。
+Nacos 2.5.3 Console 控制台后端 API 通过 6 大类 18 个 API 端点——覆盖用户管理（`UserController`）、角色管理（`RoleController`）、权限管理（`PermissionController`，均位于 nacos-default-auth-plugin 模块）——`ROLE_ADMIN` 为唯一保留角色（全局管理员）——保证权限体系完整性——Ant-style 资源路径匹配——支持 `*:*:*` 全局通配、`namespace:*:*` 命名空间级通配、`namespace:group:dataId` 配置级精确匹配——灵活满足不同业务权限需求——权限需显式分配——授予显式可控——admin 用户保护——防止误删除所有管理员——所有受保护 API 均经过 `HttpProtocolAuthService` 认证过滤器链——未认证返回 HTTP 401——无权限返回 HTTP 403——保证控制台安全。
 
 ### 7.5 用户登录 API：/v1/auth/login → JWT Token 返回
 
 #### 7.5.1 设计背景
 
-Nacos 2.5.3 用户登录 API——`POST /v1/auth/login`——定义在 `UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:238-280`）——接收 `username` + `password`——验证通过后返回 JWT `accessToken`——所有后续 API 请求在 HTTP `Authorization` Header 中携带 `Bearer <accessToken>`——`HttpProtocolAuthService` 解析 JWT——验证签名和过期时间——提取用户身份信息和权限——实现无状态认证——无需 Session——支持水平扩展——任意 Nacos Server 节点均可独立验证 JWT——无需共享 Session 存储（如 Redis）——简化 Nacos 集群部署——降低运维复杂度。
+Nacos 2.5.3 用户登录 API——`POST /v1/auth/login`——定义在 `UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:266-302`）——接收 `username` + `password`——验证通过后返回 JWT `accessToken`——所有后续 API 请求在 HTTP `Authorization` Header 中携带 `Bearer <accessToken>`——`HttpProtocolAuthService` 解析 JWT——验证签名和过期时间——提取用户身份信息和权限——实现无状态认证——无需 Session——支持水平扩展——任意 Nacos Server 节点均可独立验证 JWT——无需共享 Session 存储（如 Redis）——简化 Nacos 集群部署——降低运维复杂度。
 
 登录流程解决的核心问题：
 
 1. **双认证后端支持**：Nacos 内置认证——通过 `IAuthenticationManager.authenticate(request)`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/authenticate/IAuthenticationManager.java`）——使用 BCrypt 密码哈希 + JWT Token——LDAP 认证通过 Spring Security `AuthenticationManager.authenticate(authenticationToken)` 委托 LDAP 服务器验证——两种认证方式共享同一个 `/v1/auth/login` API——客户端无需感知后端认证方式——通过配置项 `nacos.core.auth.system.type` 切换——零代码变更。
 
-2. **Token 返回格式差异**：Nacos 内置认证返回 JSON——`{accessToken, tokenTtl, globalAdmin, username}`——LDAP 认证返回 `"Bearer <token>"` 字符串——两种格式不兼容——但客户端 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:40-126`）统一处理——自动提取 Token——屏蔽差异。
+2. **Token 返回格式差异**：`nacos` 与 `ldap` 两种 `system.type` 均返回 JSON——`{accessToken, tokenTtl, globalAdmin, username}`（`UserController.java:270-283`）——其余遗留认证类型走 Spring Security 分支返回 `"Bearer <token>"` 字符串——客户端 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java`）统一处理——自动提取 Token——屏蔽差异。
 
-3. **首次管理员初始化**：当系统首次启动——不存在任何管理员用户时——`POST /v1/auth/users/admin` API（`UserController.createAdminUser()`——`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:142-163`）——自动生成随机密码——返回 `{username: "nacos", password: "<random>"}`——用户据此登录——系统引导完成。
+3. **首次管理员初始化**：当系统首次启动——不存在任何管理员用户时——`POST /v1/auth/users/admin` API（`UserController.createAdminUser()`——`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:122-142`）——自动生成随机密码——返回 `{username: "nacos", password: "<random>"}`——用户据此登录——系统引导完成。
 
 #### 7.5.2 核心类关系图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 登录认证全链路</span><span class="s">用户浏览器/控制台</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">POST /v1/auth/login</div><ul class="dgm-kv"><li><span class="fld">Body</span><span class="typ">: {"username":"nacos","password":"***"}</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UserController.login()</span><span class="s">1. authManager.login(username, password)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ NacosAuthPluginService.identityAuthenticate()</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ BCryptPasswordEncoder.matches(password, storedHash)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 认证成功: 返回 User 对象</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. JwtTokenUtils.generateToken(user):</div><ul class="dgm-kv"><li><span class="fld">Header</span><span class="typ">: {"alg":"HS256","typ":"JWT"}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Payload</span><span class="typ">: {"sub":"nacos","exp":1629966600,"iat":…}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Signature</span><span class="typ">: HMAC-SHA256(Header.Payload, secretKey)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ accessToken = Header.Payload.Signature</div></div></div><div class="dgm-note">HTTP Response 200 {"accessToken":"eyJhbG…","tokenTtl":18000}</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">后续 API 请求—携带 Authorization Header</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Authorization</span><span class="typ">: Bearer eyJhbG…9...</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">HttpProtocolAuthService:</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. 提取 Authorization Header</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 解析 JWT—验证 HMAC-SHA256 签名</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 验证 exp—是否过期</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. 提取 sub—username</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. 查询用户角色+权限—RBAC 鉴权</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 登录认证全链路</span><span class="s">用户浏览器/控制台</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">POST /v1/auth/login</div><ul class="dgm-kv"><li><span class="fld">Body</span><span class="typ">: {"username":"nacos","password":"***"}</span></li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">UserController.login()</span><span class="s">1. authManager.login(username, password)</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">→ iAuthenticationManager.authenticate(request)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ PasswordEncoderUtil.matches(password, storedHash)</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 认证成功: 返回 User 对象</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. JwtTokenManager/NacosJwtParser.createToken(user):</div><ul class="dgm-kv"><li><span class="fld">Header</span><span class="typ">: {"alg":"HS256","typ":"JWT"}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Payload</span><span class="typ">: {"sub":"nacos","exp":1629966600,"iat":…}</span></li></ul><ul class="dgm-kv"><li><span class="fld">Signature</span><span class="typ">: HMAC-SHA256(Header.Payload, secretKey)</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">→ accessToken = Header.Payload.Signature</div></div></div><div class="dgm-note">HTTP Response 200 {"accessToken":"eyJhbG…","tokenTtl":18000}</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">后续 API 请求—携带 Authorization Header</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">Authorization</span><span class="typ">: Bearer eyJhbG…9...</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">HttpProtocolAuthService:</div><div class="dgm-note" style="border:none;background:none;padding:0;">1. 提取 Authorization Header</div><div class="dgm-note" style="border:none;background:none;padding:0;">2. 解析 JWT—验证 HMAC-SHA256 签名</div><div class="dgm-note" style="border:none;background:none;padding:0;">3. 验证 exp—是否过期</div><div class="dgm-note" style="border:none;background:none;padding:0;">4. 提取 sub—username</div><div class="dgm-note" style="border:none;background:none;padding:0;">5. 查询用户角色+权限—RBAC 鉴权</div></div></div></div>
 
 #### 7.5.3 源码走读
 
 ##### 7.5.3.1 UserController——登录 API
 
-`UserController`（`console/src/main/java/com/alibaba/nacos/console/controller/UserController.java`）——`POST /v1/auth/login`——`@Secured enableAuth=false`——免认证——任何人都可调用登录 API：
+登录接口 `POST /v1/auth/login`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:266-302`）——无 `@Secured` 注解即可匿名访问——任何人都可调用登录 API：
 
 ```java
-// console/controller/UserController.java (关键代码)
-@RestController("consoleUser")
-@RequestMapping("/v1/auth")
-public class UserController {
-    
-    @Autowired
-    private AuthManager authManager;
-    @Autowired
-    private JwtTokenUtils jwtTokenUtils;
-    
-    // POST /v1/auth/login—用户登录
-    @PostMapping("/login")
-    @Secured(action = ActionTypes.READ, signType = SignType.HTTP, 
-             enableAuth = false) // 登录API免认证—任何人都可调用
-    public ResponseEntity<Object> login(
-            @RequestBody UserLoginRequest loginRequest) {
-        
-        // 1. 身份认证—验证username+password
-        User user = authManager.login(
-            loginRequest.getUsername(), 
-            loginRequest.getPassword());
-        
-        if (user == null) {
-            throw new AccessException("username or password error");
-        }
-        
-        // 2. 生成JWT Token—5小时TTL
-        String accessToken = jwtTokenUtils.generateToken(user);
-        
-        // 3. 返回Token—包含isAdmin标志
-        Map<String, Object> result = new HashMap<>();
-        result.put("accessToken", accessToken);
-        result.put("tokenTtl", jwtTokenUtils.getTokenValidityInSeconds());
-        result.put("globalAdmin", user.isAdmin());
-        return ResponseEntity.ok(result);
-    }
+// plugin-default-impl/.../controller/UserController.java:266-302 (关键代码)
+@PostMapping("/login")
+public Object login(@RequestParam String username, @RequestParam String password) {
+    // 1. 构建User请求—委托 IAuthenticationManager.authenticate(request)
+    //    完成身份认证（BCrypt 密码验证 + JWT Token 生成）
+    User user = new User();
+    user.setUsername(username);
+    user.setPassword(password);
+    return iAuthenticationManager.authenticate(user);
 }
 ```
 
-##### 7.5.3.2 BCrypt 密码验证——12轮 salt rounds
+##### 7.5.3.2 BCrypt 密码验证——默认 10 轮 salt rounds
 
-`NacosAuthPluginService.identityAuthenticate()`（`plugin/auth/src/main/java/com/alibaba/nacos/plugin/auth/spi/server/AuthPluginService.java:78-84`）——BCrypt 密码验证——12轮 salt rounds——高安全性——防止彩虹表攻击：
+用户名密码验证位于 `AbstractAuthenticationManager.authenticate(username, rawPassword)`（`plugin-default-impl/.../authenticate/AbstractAuthenticationManager.java`）——通过 `PasswordEncoderUtil.matches` 进行 BCrypt 密码验证——高安全性——防止彩虹表攻击：
 
 ```java
-// plugin/auth/spi/server/AuthPluginService.java:78-84
-default User identityAuthenticate(String username, String password) {
-    // 1. 从数据库加载用户信息
-    User user = userService.findByUsername(username);
-    if (user == null) {
-        return null; // 用户不存在
-    }
-    
-    // 2. BCrypt密码验证—12轮salt rounds
-    // BCryptPasswordEncoder构造参数12=2^12=4096次hash迭代
-    // 每次登录验证耗时约100ms—可接受的延迟
-    BCryptPasswordEncoder encoder = new BCryptPasswordEncoder(12);
-    if (!encoder.matches(password, user.getPassword())) {
-        return null; // 密码错误
-    }
-    return user; // 认证成功
+// plugin-default-impl/.../authenticate/AbstractAuthenticationManager.java (关键逻辑)
+// 1. 从数据库加载用户信息
+NacosUserDetails user = (NacosUserDetails) userDetailsService
+    .loadUserByUsername(username);
+if (user == null) {
+    throw new AccessException("user not found"); // 用户不存在
 }
+
+// 2. BCrypt密码验证—PasswordEncoderUtil.matches（BCrypt 默认 10 轮）
+if (!PasswordEncoderUtil.matches(rawPassword, user.getPassword())) {
+    throw new AccessException("unknown user or wrong password"); // 密码错误
+}
+// 3. 认证成功—由 JwtTokenManager.createToken() 签发 JWT
 ```
 
-**BCrypt 安全参数选择——12轮 salt rounds**：
-- 2^12 = 4096 次 hash 迭代——每次登录验证耗时约 100ms——在安全性和性能之间取平衡
-- 10轮（1024次迭代）——耗时约 25ms——安全性较低——易受 GPU 暴力破解
-- 12轮（4096次迭代）——耗时约 100ms——安全性合理——GPU暴力破解成本高
+**BCrypt 安全参数选择——默认 10 轮 salt rounds**：
+- BCrypt 哈希以 `$2a$10$` 开头——10 轮 = 2^10 = 1024 次 hash 迭代——每次登录验证耗时约 25-100ms——在安全性和性能之间取平衡
+- 2.5.3 新增 `SafeBcryptPasswordEncoder`——对超过 72 字符的密码直接返回 `false`（CVE 修复——防止 BCrypt 截断导致的安全问题）
 - 14轮（16384次迭代）——耗时约 400ms——安全性高——但登录延迟较高——用户体验差
-- Nacos 2.5.3 选择 12 轮——平衡安全性和性能——生产环境可接受
+- Nacos 2.5.3 选择默认 10 轮——平衡安全性和性能——生产环境可接受
 
 ##### 7.5.3.3 JWT Token 生成与验证
 
-`JwtTokenUtils`（`auth/src/main/java/com/alibaba/nacos/auth/JwtTokenUtils.java`）——HMAC-SHA256 签名——5 小时 TTL：
+JWT Token 生成与验证由 `JwtTokenManager`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/token/impl/JwtTokenManager.java`）配合 `NacosJwtParser`（`.../token/impl/jwt/NacosJwtParser.java`）完成——HMAC-SHA256 签名——默认 5 小时 TTL：
 
 ```java
-// auth/JwtTokenUtils.java (简化)
-public class JwtTokenUtils {
-    
-    private static final String SECRET_KEY = Base64.getEncoder().encodeToString(
-        // 从配置读取—默认随机生成32字节密钥
-        EnvUtil.getProperty("nacos.core.auth.plugin.nacos.token.secret.key")
-            .getBytes(StandardCharsets.UTF_8));
-    
-    private static final long TOKEN_VALIDITY_IN_SECONDS = 18000L; // 5小时
-    
-    // generateToken()—生成JWT Token
-    public String generateToken(User user) {
-        long now = System.currentTimeMillis();
-        // JWT Payload—包含sub(主体)、exp(过期时间)、iat(签发时间)
-        String token = Jwts.builder()
-            .setSubject(user.getUserName())
-            .setIssuedAt(new Date(now))
-            .setExpiration(new Date(now + TOKEN_VALIDITY_IN_SECONDS * 1000))
-            .signWith(SignatureAlgorithm.HS256, 
-                SECRET_KEY.getBytes(StandardCharsets.UTF_8))
-            .compact();
-        return token;
+// plugin-default-impl/.../token/impl/jwt/NacosJwtParser.java (简化)
+public class NacosJwtParser implements TokenParser {
+
+    private final Algorithm algorithm; // HMAC-SHA256—密钥来自配置
+    private final String secretKey;
+    private final long expireTime;     // nacos.core.auth.plugin.nacos.token.expire.seconds
+
+    // createToken()—生成JWT Token
+    @Override
+    public String createToken(String userName) {
+        long validOfTime = getExpiredTimeInSeconds();
+        return JWT.create()
+            .withTokenVersion(TOKEN_VERSION)             // token 版本号
+            .withSubject(userName)                       // sub=用户名
+            .withIssuedAt(new Date())
+            .withExpiresAt(new Date(validOfTime * 1000L))
+            .sign(algorithm);
     }
-    
-    // validateToken()—验证JWT Token
-    public Claims validateToken(String token) {
-        try {
-            // 解析JWT—自动验证签名+过期时间
-            return Jwts.parser()
-                .setSigningKey(SECRET_KEY.getBytes(StandardCharsets.UTF_8))
-                .parseClaimsJws(token)
-                .getBody();
-        } catch (ExpiredJwtException e) {
-            LOGGER.warn("JWT Token expired: {}", e.getMessage());
-            return null; // Token已过期
-        } catch (JwtException e) {
-            LOGGER.error("Invalid JWT Token: {}", e.getMessage());
-            return null; // Token无效—签名不匹配
-        }
+
+    // parseToken()—验证JWT Token—自动验证签名+过期时间
+    @Override
+    public Authentication parseToken(String token) throws ExpiredException {
+        // 验证签名与 exp—返回 NacosAuthentication（含 NacosUser）
     }
 }
 ```
 
 ##### 7.5.3.4 Client 端自动刷新 Token
 
-客户端 SDK——`SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:100-118`）——在 Token 过期前 5 秒自动刷新——透明化 Token 管理——用户无感知：
+客户端 SDK——`NacosClientAuthServiceImpl`（`client/src/main/java/com/alibaba/nacos/client/auth/impl/NacosClientAuthServiceImpl.java:84-88,135-139`）——在距 Token 过期 `tokenTtl/15 ~ tokenTtl/10` 的随机窗口内自动重登续期（默认 TTL 18000s 下约提前 20-30 分钟）——透明化 Token 管理——用户无感知：
 
 ```java
-// client/security/SecurityProxy.java:100-118
-public String getAccessToken() {
-    // 检查Token是否需刷新
-    if (accessToken == null || isTokenExpired()) {
-        // 自动重新登录—获取新Token
-        login();
-    }
-    return accessToken;
-}
+// client/auth/impl/NacosClientAuthServiceImpl.java:84-88 (关键代码)
+// 登录成功后计算下次续期窗口
+this.tokenTtl = result.get("tokenTtl").longValue();
+// tokenRefreshWindow: 在 [tokenTtl/15, tokenTtl/10] 区间内取随机值
+this.tokenRefreshWindow = new Random()
+    .nextLong(tokenTtl / 15, tokenTtl / 10);
 
-// isTokenExpired()—判断Token是否过期（提前5秒刷新）
-private boolean isTokenExpired() {
-    // System.currentTimeMillis() + 5000 = 提前5秒
-    return tokenExpireTime - System.currentTimeMillis() < 5000;
-}
-
-// login()—自动登录—获取新Token
-private void login() {
-    String username = properties.getProperty(PropertyKeyConst.USERNAME);
-    String password = properties.getProperty(PropertyKeyConst.PASSWORD);
-    // POST /v1/auth/login—返回{accessToken, tokenTtl}
-    String token = nacosAuthLoginService.login(username, password);
-    this.accessToken = token;
-    this.tokenExpireTime = System.currentTimeMillis() 
-        + TOKEN_VALIDITY_IN_SECONDS * 1000;
+// :135-139—getIdentityContext()—判断是否需要重新登录
+if (tokenTtl - TimeUnit.SECONDS.toMillis(
+        TimeUnit.MILLISECONDS.toSeconds(
+            System.currentTimeMillis() - lastRefreshTime))
+        < tokenRefreshWindow) {
+    login(properties); // 进入续期窗口—自动重登获取新 Token
 }
 ```
 
-**客户端自动刷新机制——提前 5 秒**：在 Token 过期前 5 秒自动刷新——避免 Token 过期导致 API 请求失败——保证 API 调用的连续性——用户无感知——封装在 `SecurityProxy` 内部——用户只需配置 `username` 和 `password`——无需手动管理 Token 生命周期——降低客户端 SDK 使用复杂度。
+**客户端自动刷新机制——随机续期窗口**：在距 Token 过期 tokenTtl/15~tokenTtl/10 的随机窗口内自动刷新——避免 Token 过期导致 API 请求失败——保证 API 调用的连续性——用户无感知——随机窗口可避免集群大量客户端在同一时刻集中重登——平滑服务端认证负载——用户只需配置 `username` 和 `password`——无需手动管理 Token 生命周期——降低客户端 SDK 使用复杂度。
 
 #### 7.5.4 Trade-off 分析
 
@@ -999,7 +874,7 @@ Nacos 2.5.3 选择 JWT HMAC-SHA256 作为 Token 签名算法——对称密钥�
 
 **Trade-off 2：双认证后端（Nacos 内置 + LDAP）vs 单一认证后端**
 
-`UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:238-280`）通过 `if (AuthSystemTypes.NACOS...)` 分支判断——运行时选择认证后端。
+`UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:266-302`）通过 `if (AuthSystemTypes.NACOS...)` 分支判断——运行时选择认证后端。
 
 - **选择**：双认证后端支持
 - **优势**：(1) 中小规模使用内置认证——零外部依赖——开箱即用；(2) 企业级切换到 LDAP——复用现有目录服务——无需迁移用户数据
@@ -1034,7 +909,7 @@ Nacos 2.5.3 选择 JWT HMAC-SHA256——优先追求高性能和无状态——T
 
 #### 7.5.6 小结
 
-Nacos 2.5.3 用户登录 API——`POST /v1/auth/login`——定义在 `UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:238-280`）——`username`+`password` → BCrypt 密码验证（12 轮 salt rounds——约 100ms）→ JWT Token（HMAC-SHA256 签名——5 小时 TTL）——所有后续 API 请求携带 `Authorization: Bearer <accessToken>`——`HttpProtocolAuthService` 自动解析 JWT——验证签名和过期时间——提取用户身份信息——结合 RBAC 权限模型执行权限鉴权——客户端 `SecurityProxy`（`client/src/main/java/com/alibaba/nacos/client/security/SecurityProxy.java:40-126`）自动刷新 Token（过期前 5 秒）——透明化 Token 管理——双认证后端支持（Nacos 内置 + LDAP）——通过 `AuthSystemTypes` 配置运行时切换——首次管理员初始化通过 `POST /v1/auth/users/admin` API 自动生成随机密码——策略模式支持双认证后端——工厂模式封装 JWT 构建——无状态 JWT 支持水平扩展——无需共享 Session 存储——简化 Nacos 集群部署——降低运维复杂度。
+Nacos 2.5.3 用户登录 API——`POST /v1/auth/login`——定义在 `UserController.login()`（`plugin-default-impl/nacos-default-auth-plugin/src/main/java/com/alibaba/nacos/plugin/auth/impl/controller/UserController.java:266-302`）——`username`+`password` → BCrypt 密码验证（`PasswordEncoderUtil.matches`，默认 10 轮 salt rounds）→ JWT Token（HMAC-SHA256 签名——5 小时 TTL）——所有后续 API 请求携带 `Authorization: Bearer <accessToken>`——`HttpProtocolAuthService` 自动解析 JWT——验证签名和过期时间——提取用户身份信息——结合 RBAC 权限模型执行权限鉴权——客户端 `NacosClientAuthServiceImpl` 自动刷新 Token（距过期 tokenTtl/15~tokenTtl/10 的随机窗口）——透明化 Token 管理——双认证后端支持（Nacos 内置 + LDAP）——通过 `AuthSystemTypes` 配置运行时切换——首次管理员初始化通过 `POST /v1/auth/users/admin` API 自动生成随机密码——策略模式支持双认证后端——工厂模式封装 JWT 构建——无状态 JWT 支持水平扩展——无需共享 Session 存储——简化 Nacos 集群部署——降低运维复杂度。
 
 ### 7.6 命名空间管理：增删改查 + namespaceId 生成规则
 
@@ -1046,9 +921,9 @@ Nacos 2.5.3 命名空间（Namespace）——用于实现多环境隔离（开�
 
 1. **配置隔离（Configuration Isolation）**：不同命名空间的配置数据在数据库层面通过 `tenant_id` 字段隔离——`config_info` 表的 `tenant_id` 列区分不同命名空间的配置——SQL 查询自动带 `tenant_id` 过滤条件——保证命名空间 A 的配置不会被命名空间 B 的用户读取或修改——实现数据库级别的硬隔离——安全性高于应用层软隔离。
 
-2. **服务发现隔离（Service Discovery Isolation）**：不同命名空间的服务实例在 `naming_instance` 表中通过 `tenant_id` 字段隔离——命名空间 A 的服务消费者只能发现命名空间 A 注册的服务实例——无法跨命名空间发现服务——避免开发环境的服务消费者误调用生产环境的服务——确保服务调用链路的环境正确性。
+2. **服务发现隔离（Service Discovery Isolation）**：2.x 命名实例保存于服务端内存并由 Distro 协议在节点间同步，不落库——命名空间隔离在服务端按 Service 的 namespace 维度实现——命名空间 A 的服务消费者只能发现命名空间 A 注册的服务实例——无法跨命名空间发现服务——避免开发环境的服务消费者误调用生产环境的服务——确保服务调用链路的环境正确性。
 
-3. **namespaceId 自动生成规则**：通过 `NamespaceController.createNamespace()` API 创建命名空间时——若未指定 `namespaceId`——系统调用 `ParamUtils.checkNamespaceId()` 自动生成——生成规则为随机 8 位字母数字组合——保证全局唯一性——避免命名空间 ID 冲突——用户也可手动指定有意义的 `namespaceId`（如 `prod`、`dev`、`tenant-a`）——便于运维管理。
+3. **namespaceId 生成规则**：通过 `NamespaceController.createNamespace()` API 创建命名空间时——`customNamespaceId` 为空时由 `NamespaceController` 内联生成 `UUID.randomUUID().toString()`（36 字符）——非空时做正则校验（仅允许字母数字与中划线，长度上限）与唯一性校验——保证全局唯一性——避免命名空间 ID 冲突——用户也可手动指定有意义的 `namespaceId`（如 `prod`、`dev`、`tenant-a`）——便于运维管理。
 
 命名空间的核心设计目标：
 
@@ -1075,50 +950,35 @@ public class NamespaceController {
     @Autowired
     private NamespaceService namespaceService;
     
-    // :55-83—GET—查询命名空间列表
+    // :47-53—GET—查询命名空间列表—无 @Secured 注解（查询接口无鉴权）
     @GetMapping
-    @Secured(action = ActionTypes.READ, resource = "namespace:*:*")
     public ResponseEntity<List<Namespace>> getNamespaces() {
         return ResponseEntity.ok(namespaceService.getNamespaceList());
     }
     
-    // :90-110—POST—创建命名空间
+    // :71-95—POST—创建命名空间—需 @Secured(resource = "console/namespaces", action = WRITE)
     @PostMapping
-    @Secured(action = ActionTypes.WRITE, resource = "namespace:*:*")
-    public ResponseEntity<Boolean> createNamespace(
-            @RequestBody Namespace namespace) {
-        // 1. 生成唯一的namespaceId—UUID v4—36字符
-        String namespaceId = UUID.randomUUID().toString();
-        namespace.setNamespaceId(namespaceId);
-        
-        // 2. 验证命名空间名唯一性
-        if (namespaceService.findByNamespaceName(namespace.getNamespaceName()) != null) {
-            throw new IllegalArgumentException("Namespace already exists");
-        }
-        
-        // 3. 默认quota=200—防止单个命名空间配置过多
-        namespace.setQuota(200);
-        
-        // 4. type=2—自定义类型
-        namespace.setType(2);
-        
-        // 5. 持久化到MySQL tenant_info表
-        namespaceService.createNamespace(namespace);
-        return ResponseEntity.ok(true);
+    @Secured(resource = "console/namespaces", action = ActionTypes.WRITE)
+    public Boolean createNamespace(@RequestBody Namespace namespace) {
+        // 1. customNamespaceId 为空时内联生成 UUID（36 字符）
+        //    非空时校验正则/长度与唯一性
+        namespaceHandleService.createNamespace(
+            namespace.getCustomNamespaceId(), namespace.getNamespaceName(),
+            namespace.getNamespaceDesc(), namespace.getQuota());
+        return true;
     }
     
-    // :145-160—DELETE—删除命名空间
+    // :147-167—DELETE—删除命名空间—同样需 @Secured(resource = "console/namespaces")
     @DeleteMapping
-    @Secured(action = ActionTypes.WRITE, resource = "namespace:*:*")
-    public ResponseEntity<Boolean> deleteNamespace(
-            @RequestParam String namespaceId) {
+    @Secured(resource = "console/namespaces", action = ActionTypes.WRITE)
+    public Boolean deleteNamespace(@RequestParam("customNamespaceId") String namespaceId) {
         // 1. 保护保留命名空间—不可删除
-        if ("".equals(namespaceId)) {
-            throw new IllegalArgumentException("Cannot delete reserved namespace");
+        if (StringUtils.isEmpty(namespaceId)) {
+            throw new IllegalArgumentException("cannot delete reserved namespace");
         }
         // 2. 删除命名空间—同时删除该命名空间下的所有配置
-        namespaceService.deleteNamespace(namespaceId);
-        return ResponseEntity.ok(true);
+        namespaceHandleService.removeNamespace(namespaceId);
+        return true;
     }
 }
 ```
@@ -1165,40 +1025,52 @@ Nacos 2.5.3 支持 3 种命名空间类型——满足不同隔离需求：
 每个命名空间有默认配额 `quota=200`——限制单个命名空间的配置数量——防止单个命名空间配置过多——占用过多 MySQL 存储——影响其他命名空间的配置查询性能：
 
 ```sql
--- MySQL tenant_info表DDL
+-- MySQL tenant_info表DDL（distribution/conf/mysql-schema.sql:147-159）
 CREATE TABLE tenant_info (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    tenant_id VARCHAR(128) NOT NULL COMMENT 'namespaceId—UUID v4',
-    tenant_name VARCHAR(128) NOT NULL COMMENT '命名空间名称',
-    tenant_desc VARCHAR(256) COMMENT '命名空间描述',
-    quota INT DEFAULT 200 COMMENT '配额—最多配置数量',
-    config_count INT DEFAULT 0 COMMENT '当前配置数量',
-    type INT DEFAULT 2 COMMENT '类型: 0=全局 1=私有 2=自定义',
-    gmt_create DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    gmt_modified DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP 
-        ON UPDATE CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_tenant_id (tenant_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='命名空间表';
+    id bigint(20) NOT NULL AUTO_INCREMENT,
+    kp varchar(128) NOT NULL COMMENT 'kp—固定值 "1"（租户记录标识）',
+    tenant_id varchar(128) DEFAULT '' COMMENT 'namespaceId',
+    tenant_name varchar(128) DEFAULT '' COMMENT '命名空间名称',
+    tenant_desc varchar(256) DEFAULT NULL COMMENT '命名空间描述',
+    create_source varchar(32) DEFAULT NULL COMMENT '创建来源',
+    gmt_create bigint(20) NOT NULL COMMENT '创建时间（毫秒时间戳）',
+    gmt_modified bigint(20) NOT NULL COMMENT '修改时间（毫秒时间戳）',
+    PRIMARY KEY (id),
+    UNIQUE KEY uk_tenant_info_kptenantid (kp, tenant_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='tenant_info';
 ```
 
-**配额管控流程**——创建配置时检查配额：
+> 注：`tenant_info` 表实际 DDL 中没有 `quota`/`config_count`/`type` 列——配额信息存储在 `tenant_capacity` 表（`quota` 默认 200）——时间戳为 bigint 毫秒值而非 DATETIME。
+
+**配额管控流程**——命名空间配额/用量属 `tenant_capacity` 容量体系（由 `CapacityService` 维护）——配置发布主链路（`ConfigController.publishConfig` → `ConfigOperationService.publishConfig`）本身不校验配额——配额校验由 `CapacityManagementAspect` 切面（`config/src/main/java/com/alibaba/nacos/config/server/aspect/CapacityManagementAspect.java:70-100`）以 AOP 环绕 `ConfigOperationService.publishConfig/deleteConfig` 完成：
 
 ```java
-// config/ConfigController—创建配置时检查配额
-public Boolean publishConfig(ConfigForm configForm) {
-    // 1. 获取命名空间配额
-    Namespace namespace = namespaceService.getNamespace(configForm.getNamespaceId());
-    if (namespace.getConfigCount() >= namespace.getQuota()) {
-        throw new IllegalArgumentException(
-            "Config count exceeded quota: " + namespace.getQuota());
+// config/aspect/CapacityManagementAspect.java:70-151 (关键流程，Nacos 2.5.3)
+@Around(PUBLISH_CONFIG) // execution(* ...ConfigOperationService.publishConfig(..))
+public Object aroundPublishConfig(ProceedingJoinPoint pjp) throws Throwable {
+    if (!PropertyUtil.isManageCapacity()) {
+        return pjp.proceed(); // 容量管理总开关关闭时直接放行
     }
-    
-    // 2. 创建配置—原子递增configCount
-    configService.insertConfig(configForm);
-    namespaceService.incrementConfigCount(configForm.getNamespaceId());
-    return true;
+    // ... 提取 dataId/group/namespaceId/content/betaIps/tag
+    if (StringUtils.isBlank(betaIps) && StringUtils.isBlank(tag)
+            && StringUtils.isBlank(configForm.getGrayName())) {
+        if (configInfoPersistService.findConfigInfo(dataId, group, namespaceId) == null) {
+            return do4Insert(pjp, group, namespaceId, content);  // 新增：检查配额
+        } else {
+            return do4Update(pjp, dataId, group, namespaceId, content); // 更新：仅检查内容大小
+        }
+    }
+    return pjp.proceed();
 }
+
+// 新增配置时（do4Insert）：
+// 1. PropertyUtil.isCapacityLimitCheck() 开启时——经 CapacityService 读取
+//    tenant_capacity/group_capacity 表的 quota 与 usage——超限则抛
+//    NacosException(OVER_MAX_CAPACITY / OVER_MAX_SIZE)
+// 2. 未开启限额检查时——仅 insertOrUpdateUsage 递增 tenant_capacity.usage 用量
 ```
+
+即：配额（`tenant_capacity.quota`，默认 200）与用量（`usage`）由 `CapacityService` 维护——**仅当 `nacos.capacity.management.enabled`（`PropertyUtil.isManageCapacity()`）开启且容量限额检查开启时**——新增配置才会在切面层被配额拦截——删除配置时切面同步递减用量。
 
 #### 7.6.4 Trade-off 分析
 
@@ -1234,34 +1106,34 @@ Nacos 2.5.3 选择 UUID v4 作为 `namespaceId` 生成算法——36 字符随�
 
 `NamespaceController.createNamespace()` 接收 `namespaceId`（可选）+ `namespaceName` + `namespaceDesc` 参数——构建 `Namespace` 对象——若未指定 `namespaceId`——自动生成 UUID v4——封装了 namespaceId 生成逻辑——调用方只需传入名称和描述——无需关心 ID 生成细节。
 
-- **角色映射**：`NamespaceController.createNamespace()` = Director、`ParamUtils.checkNamespaceId()` = Builder、`Namespace` = Product
+- **角色映射**：`NamespaceController.createNamespace()` = Director、`NamespaceHandleService`（内联 UUID 生成 + 校验）= Builder、`Namespace` = Product
 - **收益**：namespaceId 生成逻辑集中管理——调用方无需关心 ID 生成算法——未来可切换 ID 生成策略而不影响调用方
 
 #### 7.6.5 小结
 
-Nacos 2.5.3 命名空间管理通过 `NamespaceController`（`console/src/main/java/com/alibaba/nacos/console/controller/NamespaceController.java:30-171`）提供 CRUD API——创建命名空间自动生成 UUID v4 `namespaceId`——36 字符——全局唯一——去中心化生成——无需中心化 ID生成器——默认配额 `quota=200`——防止单个命名空间配置过多——保证多租户公平性——支持 3 种命名空间类型（0=全局/1=私有/2=自定义）——生产环境典型使用：全局命名空间作为默认命名空间——开发/测试/生产各一个自定义命名空间——实现环境隔离。
+Nacos 2.5.3 命名空间管理通过 `NamespaceController`（`console/src/main/java/com/alibaba/nacos/console/controller/NamespaceController.java:30-171`）提供 CRUD API——`customNamespaceId` 为空时内联生成 UUID v4（36 字符）——全局唯一——去中心化生成——无需中心化 ID生成器——写操作需 `@Secured(resource = "console/namespaces", action = WRITE)`——创建/删除经 `NamespaceHandleService` 校验并落库 `tenant_info` 表——配额信息存储在 `tenant_capacity` 表（quota 默认 200）——生产环境典型使用：全局命名空间作为默认命名空间——开发/测试/生产各一个自定义命名空间——实现环境隔离。
 
-### 7.7 系统健康检查 API：/v1/console/health + /v1/console/health/metrics
+### 7.7 系统健康检查 API：/v1/console/health/liveness + /v2/console/health/readiness
 
 #### 7.7.1 设计背景
 
 Nacos 2.5.3 系统健康检查 API 通过 `HealthController`（`console/src/main/java/com/alibaba/nacos/console/controller/HealthController.java:30-67`）和 `HealthControllerV2`（`console/src/main/java/com/alibaba/nacos/console/controller/v2/HealthControllerV2.java`）提供三层健康检查——适应 Kubernetes 容器编排环境的自动化健康管理需求：
 
-1. **Liveness Probe——进程存活检测**：`GET /v1/console/health`——返回 `200 OK`——Kubernetes 定期调用（默认每 10 秒）——连续失败 3 次——Kubernetes 自动杀死 Pod 并重启——保证 Nacos Server 进程级别高可用——无需认证——`@Secured enableAuth()` 返回 `false`——减少健康检查延迟——降低 Liveness Probe 超时风险。
+1. **Liveness Probe——进程存活检测**：`GET /v1/console/health/liveness`——直接返回 `OK`（200）——不接入鉴权——Kubernetes 定期调用（默认每 10 秒）——连续失败 3 次——Kubernetes 自动杀死 Pod 并重启——保证 Nacos Server 进程级别高可用。
 
-2. **Readiness Probe——就绪状态检测**：`GET /v1/console/health/readiness`——返回各模块状态（Config/Naming/Database）——任一模块未就绪——返回 `503 Service Unavailable`——Kubernetes 自动将该 Pod 从 Service Endpoint 移除——停止转发流量——直到模块恢复就绪——保证流量只转发到完全健康的 Pod——避免部分请求失败——提升 Nacos 集群整体可用性。
+2. **Readiness Probe——就绪状态检测**：`/v2/console/health/readiness`——通过 `ModuleHealthCheckerHolder` 汇聚各模块 ReadinessCheck 结果聚合判定——任一模块未就绪——返回 `Result.failure`（HTTP 500 INTERNAL_SERVER_ERROR）——Kubernetes 自动将该 Pod 从 Service Endpoint 移除——停止转发流量——直到模块恢复就绪——保证流量只转发到完全健康的 Pod——避免部分请求失败——提升 Nacos 集群整体可用性。
 
-3. **Metrics——Prometheus 监控指标**：`GET /v1/console/health/metrics`——返回 Prometheus Metrics 格式数据——供 Prometheus + Grafana 监控系统采集——建立 Nacos 监控 Dashboard——实时监控 Nacos 集群健康状态——异常指标触发 Prometheus AlertManager 告警——通知运维人员——快速响应故障——提升 Nacos 集群可观测性。
+3. **Metrics——Prometheus 监控指标**：Prometheus 指标由 actuator 的 prometheus 端点暴露（非 `/v1/console/health/metrics`）——供 Prometheus + Grafana 监控系统采集——建立 Nacos 监控 Dashboard——实时监控 Nacos 集群健康状态——异常指标触发 Prometheus AlertManager 告警——通知运维人员——快速响应故障——提升 Nacos 集群可观测性。
 
 #### 7.7.2 核心类关系图
 
 <div class="dgm"><div class="dgm-cap"><span class="no">7.7.3</span><span class="tt">Liveness vs Readiness 探针对比</span></div><table><thead><tr><th>维度</th><th>Liveness Probe</th><th>Readiness Probe</th></tr></thead><tbody>
 <tr><td>检测目标</td><td>进程存活</td><td>模块就绪</td></tr>
 <tr><td>返回 200</td><td>进程存活</td><td>所有模块就绪</td></tr>
-<tr><td>返回 503</td><td>N/A</td><td>任一模块未就绪</td></tr>
+<tr><td>返回 500</td><td>N/A</td><td>任一模块未就绪（Result.failure）</td></tr>
 <tr><td>失败动作</td><td>杀死 Pod 重启</td><td>从 Service Endpoint 摘除 Pod</td></tr>
 <tr><td>恢复动作</td><td>新 Pod 启动</td><td>重新加入 Service Endpoint</td></tr>
-<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 503</td></tr>
+<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 500</td></tr>
 <tr><td>误杀风险</td><td>低——仅检测进程</td><td>低——仅摘除流量不重启</td></tr>
 <tr><td>检测频率</td><td>每 10 秒</td><td>每 10 秒</td></tr>
 <tr><td>initialDelay</td><td>30 秒</td><td>60 秒——给模块充分启动时间</td></tr>
@@ -1276,13 +1148,11 @@ Nacos 2.5.3 系统健康检查 API 通过 `HealthController`（`console/src/main
 ```java
 // console/controller/HealthController.java:30-67
 @RestController("consoleHealth")
-@RequestMapping("/v1/console/health")
 public class HealthController {
     
-    // :40-46—GET /v1/console/health—Liveness Probe
-    // @Secured enableAuth=false—无需认证—减少延迟
-    @GetMapping
-    @Secured(action = ActionTypes.READ, signType = SignType.HTTP)
+    // :47-50—GET /v1/console/health/liveness—Liveness Probe
+    // 无 @Secured 注解—直接返回 OK—减少延迟
+    @GetMapping("/v1/console/health/liveness")
     public String liveness() {
         return "OK";
     }
@@ -1297,7 +1167,7 @@ public class HealthController {
 # Kubernetes Deployment YAML—Liveness Probe配置
 livenessProbe:
   httpGet:
-    path: /v1/console/health
+    path: /v1/console/health/liveness
     port: 8848
   initialDelaySeconds: 30    # 容器启动后30秒开始检测
   periodSeconds: 10          # 每10秒检测一次
@@ -1313,79 +1183,48 @@ livenessProbe:
 
 ##### 7.7.3.2 HealthControllerV2——详细健康检查
 
-`HealthControllerV2`（`console/src/main/java/com/alibaba/nacos/console/controller/v2/HealthControllerV2.java`）提供详细健康状态信息——`readiness()` 方法返回各模块状态——用于 Kubernetes Readiness Probe：
+`HealthControllerV2`（`console/src/main/java/com/alibaba/nacos/console/controller/v2/HealthControllerV2.java:36-64`）提供详细健康状态信息——`liveness()`/`readiness()` 端点位于 `/v2/console/health`——统一以 `Result` 封装响应——用于 Kubernetes 探针：
 
 ```java
-// console/controller/v2/HealthControllerV2.java (关键代码)
+// console/controller/v2/HealthControllerV2.java:36-64 (关键代码)
 @RestController("consoleHealthV2")
-@RequestMapping("/v1/console/health")
 public class HealthControllerV2 {
     
-    @Autowired
-    private ConfigModuleStateBuilder configModuleStateBuilder;
-    @Autowired
-    private NamingModuleStateBuilder namingModuleStateBuilder;
-    @Autowired
-    private DataSource dataSource;
-    
-    // GET /v1/console/health/readiness—Readiness Probe
-    @GetMapping("/readiness")
-    @Secured(action = ActionTypes.READ, signType = SignType.HTTP)
-    public ResponseEntity<Map<String, Object>> readiness() {
-        Map<String, Object> result = new HashMap<>();
-        
-        // 1. 检查Config模块—是否完全启动并加载所有配置
-        boolean configReady = configModuleStateBuilder.checkReady();
-        result.put("config", configReady ? "UP" : "DOWN");
-        
-        // 2. 检查Naming模块—是否完成服务实例同步
-        boolean namingReady = namingModuleStateBuilder.checkReady();
-        result.put("naming", namingReady ? "UP" : "DOWN");
-        
-        // 3. 检查数据库—MySQL是否可达
-        boolean dbReady = checkDatabaseReady();
-        result.put("database", dbReady ? "UP" : "DOWN");
-        
-        // 4. 整体状态—所有模块就绪才返回UP
-        boolean overallReady = configReady && namingReady && dbReady;
-        result.put("overall", overallReady ? "UP" : "DOWN");
-        
-        if (!overallReady) {
-            // 任一模块未就绪—返回503 Service Unavailable
-            return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE).body(result);
-        }
-        return ResponseEntity.ok(result);
+    // GET /v2/console/health/liveness—Liveness Probe
+    @GetMapping("/v2/console/health/liveness")
+    public Result<String> liveness() {
+        return Result.success(HealthController.ALIVE); // 直接返回 OK
     }
     
-    // checkDatabaseReady()—检查MySQL是否可达
-    private boolean checkDatabaseReady() {
-        try {
-            // 执行简单SQL查询—SELECT 1
-            // 避免复杂SQL查询增加数据库负载
-            jdbcTemplate.queryForObject("SELECT 1", Integer.class);
-            return true;
-        } catch (DataAccessException e) {
-            return false;
+    // GET /v2/console/health/readiness—Readiness Probe
+    @GetMapping("/v2/console/health/readiness")
+    public Result<String> readiness() {
+        // 经 ModuleHealthCheckerHolder 汇聚各模块 ReadinessCheck 结果聚合判定
+        // 不直接注入 DataSource/jdbcTemplate—各模块健康检查由各自 ReadinessCheck 实现提供
+        if (ModuleHealthCheckerHolder.getInstance().checkReadiness()) {
+            return Result.success(HealthController.ALIVE);
         }
+        // 任一模块未就绪—返回 Result.failure（HTTP 500 INTERNAL_SERVER_ERROR）
+        return Result.failure(ErrorCode.SERVER_ERROR);
     }
 }
 ```
 
 **Readiness Probe 关键设计决策**：
 
-1. **模块级别健康检查**：分别检查 Config 模块、Naming 模块、Database——任一模块未就绪——整体状态 `DOWN`——返回 `503 Service Unavailable`——Kubernetes 自动将该 Pod 从 Service Endpoint 移除——停止转发流量——直到所有模块恢复就绪——保证流量只转发到完全健康的 Pod——避免部分请求失败——提升 Nacos 集群整体可用性。
+1. **模块级别健康检查**：由 `ModuleHealthCheckerHolder` 汇聚 Config、Naming 等各模块注册的 `ReadinessCheck` 结果聚合判定——任一模块未就绪——返回 `Result.failure`（HTTP 500）——Kubernetes 自动将该 Pod 从 Service Endpoint 移除——停止转发流量——直到所有模块恢复就绪——保证流量只转发到完全健康的 Pod——避免部分请求失败——提升 Nacos 集群整体可用性。
 
-2. **数据库健康检查轻量化**：执行 `SELECT 1`——最简单的 SQL 查询——检测 MySQL 是否可达——避免复杂 SQL 查询（如 `SELECT COUNT(*) FROM config_info`）增加数据库负载——Readiness Probe 调用频率高（默认每 10 秒）——需保持轻量——避免影响数据库性能——单次 `SELECT 1` 耗时 <1ms——几乎不增加数据库负载。
+2. **健康检查轻量化**：各模块 `ReadinessCheck` 实现只做状态标记判断，不执行重查询——Readiness Probe 调用频率高（默认每 10 秒）——需保持轻量——避免影响服务性能。
 
 3. **与 Liveness Probe 分离关注点**：
 
 <div class="dgm"><div class="dgm-cap"><span class="no">7.7.3</span><span class="tt">Liveness vs Readiness 探针对比</span></div><table><thead><tr><th>维度</th><th>Liveness Probe</th><th>Readiness Probe</th></tr></thead><tbody>
 <tr><td>检测目标</td><td>进程存活</td><td>模块就绪</td></tr>
 <tr><td>返回 200</td><td>进程存活</td><td>所有模块就绪</td></tr>
-<tr><td>返回 503</td><td>N/A</td><td>任一模块未就绪</td></tr>
+<tr><td>返回 500</td><td>N/A</td><td>任一模块未就绪（Result.failure）</td></tr>
 <tr><td>失败动作</td><td>杀死 Pod 重启</td><td>从 Service Endpoint 摘除 Pod</td></tr>
 <tr><td>恢复动作</td><td>新 Pod 启动</td><td>重新加入 Service Endpoint</td></tr>
-<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 503</td></tr>
+<tr><td>MySQL 不可达</td><td>进程仍存活 → 200</td><td>数据库未就绪 → 500</td></tr>
 <tr><td>误杀风险</td><td>低——仅检测进程</td><td>低——仅摘除流量不重启</td></tr>
 <tr><td>检测频率</td><td>每 10 秒</td><td>每 10 秒</td></tr>
 <tr><td>initialDelay</td><td>30 秒</td><td>60 秒——给模块充分启动时间</td></tr>
@@ -1393,14 +1232,14 @@ public class HealthControllerV2 {
 
 **关键场景**——MySQL 短暂不可达（网络抖动 2 秒）：
 - Liveness Probe——进程存活 → 返回 `200 OK`——Pod 不重启——无影响。
-- Readiness Probe——数据库未就绪 → 返回 `503`——Kubernetes 暂时从 Service Endpoint 摘除 Pod——停止转发流量——MySQL 恢复后（2 秒后）——Readiness Probe 返回 `200`——Kubernetes 重新加入 Service Endpoint——恢复流量——Pod 无需重启——避免 Pod 频繁重启——提升 Nacos 集群稳定性。
+- Readiness Probe——数据库未就绪 → 返回 `500`（Result.failure）——Kubernetes 暂时从 Service Endpoint 摘除 Pod——停止转发流量——MySQL 恢复后（2 秒后）——Readiness Probe 返回 `200`——Kubernetes 重新加入 Service Endpoint——恢复流量——Pod 无需重启——避免 Pod 频繁重启——提升 Nacos 集群稳定性。
 
 **Kubernetes Readiness Probe 配置示例**：
 
 ```yaml
 readinessProbe:
   httpGet:
-    path: /v1/console/health/readiness
+    path: /v2/console/health/readiness
     port: 8848
   initialDelaySeconds: 60    # 容器启动后60秒开始检测—给模块充分启动时间
   periodSeconds: 10          # 每10秒检测一次
@@ -1411,64 +1250,77 @@ readinessProbe:
 
 ##### 7.7.3.3 Prometheus Metrics 端点
 
-Nacos 2.5.3 通过 `Micrometer` 指标库（`io.micrometer:micrometer-registry-prometheus`）自动暴露 Prometheus Metrics 端点——`GET /v1/console/health/metrics`——返回 Prometheus 格式数据——供 Prometheus Server 定期 scrape（默认每 30 秒）——存储到时序数据库——通过 Grafana Dashboard 可视化展示——建立 Nacos 监控体系：
+Nacos 2.5.3 通过 `Micrometer` 指标库（`io.micrometer:micrometer-registry-prometheus`）自动暴露 Prometheus 指标——由 actuator 的 prometheus 端点提供（并非 `/v1/console/health/metrics`——该端点在 2.5.3 中不存在）——供 Prometheus Server 定期 scrape（默认每 30 秒）——存储到时序数据库——通过 Grafana Dashboard 可视化展示——建立 Nacos 监控体系：
 
 ```prometheus
-# HELP nacos_config_publish_total Total number of config publish
-# TYPE nacos_config_publish_total counter
-nacos_config_publish_total 12345 1629964800
+# Nacos 2.5.3 实际导出的指标名（源自 config/naming/core 三个 MetricsMonitor）
+# 配置模块指标：统一挂在 nacos_monitor 下，以 module/name 标签区分
+# （config/server/monitor/MetricsMonitor.java:78-131）
+# HELP nacos_monitor nacos monitor metrics
+# TYPE nacos_monitor gauge
+nacos_monitor{module="config",name="getConfig",} 120.0
+nacos_monitor{module="config",name="publish",} 3.0
+nacos_monitor{module="config",name="longPolling",} 156.0
+nacos_monitor{module="config",name="configCount",} 12345.0
 
-# HELP nacos_config_query_total Total number of config query
-# TYPE nacos_config_query_total counter
-nacos_config_query_total 45678 1629964800
+# 服务发现模块指标：同样挂在 nacos_monitor 下（naming/monitor/MetricsMonitor.java:130-135）
+nacos_monitor{module="naming",name="serviceCount",} 890.0
+nacos_monitor{module="naming",name="ipCount",} 4321.0
+nacos_monitor{module="naming",name="totalPush",} 9999.0
 
-# HELP nacos_naming_register_total Total number of service register
-# TYPE nacos_naming_register_total counter
-nacos_naming_register_total 6789 1629964800
+# 配置/服务订阅者数：独立指标名，以 version 标签区分 v1/v2
+# HELP nacos_config_subscriber config subscriber count
+# TYPE nacos_config_subscriber gauge
+nacos_config_subscriber{version="v1",} 456.0
+nacos_config_subscriber{version="v2",} 789.0
 
-# HELP nacos_naming_subscribe_total Total number of service subscribe
-# TYPE nacos_naming_subscribe_total counter
-nacos_naming_subscribe_total 11223 1629964800
+# HELP nacos_naming_subscriber naming subscriber count
+# TYPE nacos_naming_subscriber gauge
+nacos_naming_subscriber{version="v2",} 654.0
 
-# HELP nacos_grpc_connections_active Active gRPC connections
-# TYPE nacos_grpc_connections_active gauge
-nacos_grpc_connections_active 156
+# gRPC Server 线程池指标（core/monitor/MetricsMonitor.java:101-131）与 gRPC 请求耗时
+# HELP grpc_server_executor grpc server executor metrics
+# TYPE grpc_server_executor gauge
+grpc_server_executor{name="activeCount",type="sdk",} 12.0
 
-# HELP nacos_http_requests_total Total HTTP requests
-# TYPE nacos_http_requests_total counter
-nacos_http_requests_total 23456
+# 读写耗时（Timer）与异常计数（Counter）
+# HELP nacos_timer_seconds nacos timer
+# TYPE nacos_timer_seconds summary
+nacos_timer_seconds_count{module="config",name="readConfigRt",} 567890.0
+# HELP nacos_exception_total nacos exception
+# TYPE nacos_exception_total counter
+nacos_exception_total{module="config",name="nacos",} 12.0
 
-# HELP nacos_http_request_duration_seconds HTTP request duration
-# TYPE nacos_http_request_duration_seconds histogram
-nacos_http_request_duration_seconds_bucket{le="0.005"} 1234
-nacos_http_request_duration_seconds_bucket{le="0.01"} 5678
-nacos_http_request_duration_seconds_bucket{le="0.025"} 9876
-nacos_http_request_duration_seconds_bucket{le="+Inf"} 23456
+# HTTP 请求指标由 Spring Boot Actuator（Micrometer http_server_requests）自动提供
+# HELP http_server_requests_seconds HTTP request duration
+# TYPE http_server_requests_seconds histogram
+http_server_requests_seconds_bucket{method="GET",uri="/nacos/v1/cs/configs",le="0.01",} 5678
+http_server_requests_seconds_bucket{method="GET",uri="/nacos/v1/cs/configs",le="+Inf",} 23456
 
+# JVM 指标由 Micrometer JVM 绑定自动提供
 # HELP jvm_memory_used_bytes JVM memory used
 # TYPE jvm_memory_used_bytes gauge
-jvm_memory_used_bytes 536870912
-
-# HELP jvm_gc_collection_seconds_sum GC collection time
-# TYPE jvm_gc_collection_seconds_sum summary
-jvm_gc_collection_seconds_sum{action="end of major GC"} 12.5
-jvm_gc_collection_seconds_sum{action="end of minor GC"} 3.2
+jvm_memory_used_bytes{area="heap",} 536870912
 ```
 
-支持的 Metrics 指标分类完整列表：
+支持的 Metrics 指标分类完整列表（均为 Nacos 2.5.3 实际导出指标名）：
 
 | 指标类别 | 指标名称 | 类型 | 说明 | PromQL查询示例 |
 |---------|---------|------|------|---------------|
-| **配置管理** | `nacos_config_publish_total` | Counter | 配置发布总次数 | `rate(nacos_config_publish_total[5m])` |
-| | `nacos_config_query_total` | Counter | 配置拉取总次数 | `rate(nacos_config_query_total[5m])` |
-| | `nacos_config_listener_total` | Gauge | 当前配置监听器数量 | `nacos_config_listener_total` |
-| **服务发现** | `nacos_naming_register_total` | Counter | 服务注册总次数 | `rate(nacos_naming_register_total[5m])` |
-| | `nacos_naming_subscribe_total` | Counter | 服务订阅总次数 | `rate(nacos_naming_subscribe_total[5m])` |
-| | `nacos_naming_instance_total` | Gauge | 当前服务实例总数 | `nacos_naming_instance_total` |
-| **gRPC通信** | `nacos_grpc_connections_active` | Gauge | 活跃gRPC连接数 | `nacos_grpc_connections_active` |
-| | `nacos_grpc_requests_total` | Counter | gRPC请求总次数 | `rate(nacos_grpc_requests_total[5m])` |
-| **HTTP通信** | `nacos_http_requests_total` | Counter | HTTP请求总次数 | `rate(nacos_http_requests_total[5m])` |
-| | `nacos_http_request_duration_seconds` | Histogram | HTTP请求延迟分布 | `histogram_quantile(0.99, rate(nacos_http_request_duration_seconds_bucket[5m]))` |
+| **配置管理** | `nacos_monitor{module="config",name="publish"}` | Gauge | 发布中/近期发布计数 | `nacos_monitor{module="config",name="publish"}` |
+| | `nacos_monitor{module="config",name="getConfig"}` | Gauge | 配置读取并发计数 | `nacos_monitor{module="config",name="getConfig"}` |
+| | `nacos_monitor{module="config",name="longPolling"}` | Gauge | 长轮询客户端数 | `nacos_monitor{module="config",name="longPolling"}` |
+| | `nacos_monitor{module="config",name="configCount"}` | Gauge | 当前配置总数 | `nacos_monitor{module="config",name="configCount"}` |
+| | `nacos_config_subscriber{version="v2"}` | Gauge | 配置订阅者数 | `nacos_config_subscriber` |
+| | `nacos_timer_seconds{module="config",name="writeConfigRt"}` | Timer | 配置写入耗时 | `rate(nacos_timer_seconds_sum{module="config",name="writeConfigRt"}[5m])` |
+| **服务发现** | `nacos_monitor{module="naming",name="serviceCount"}` | Gauge | 服务总数 | `nacos_monitor{module="naming",name="serviceCount"}` |
+| | `nacos_monitor{module="naming",name="ipCount"}` | Gauge | 实例总数 | `nacos_monitor{module="naming",name="ipCount"}` |
+| | `nacos_naming_subscriber{version="v2"}` | Gauge | 服务订阅者数 | `nacos_naming_subscriber` |
+| | `nacos_naming_publisher{version="v2"}` | Gauge | 服务发布者数 | `nacos_naming_publisher` |
+| **gRPC通信** | `grpc_server_executor{name="activeCount",type="sdk"}` | Gauge | gRPC Server 线程池活跃线程 | `grpc_server_executor{name="activeCount",type="sdk"}` |
+| | `grpc_server_executor{name="maximumPoolSize",type="sdk"}` | Gauge | gRPC Server 线程池最大线程 | `grpc_server_executor{name="maximumPoolSize",type="sdk"}` |
+| | `grpc_server_requests_seconds` | Timer | gRPC 请求耗时 | `rate(grpc_server_requests_seconds_count[5m])` |
+| **HTTP通信** | `http_server_requests_seconds` | Histogram | HTTP请求延迟分布 | `histogram_quantile(0.99, rate(http_server_requests_seconds_bucket[5m]))` |
 | **JVM** | `jvm_memory_used_bytes` | Gauge | JVM内存使用量 | `jvm_memory_used_bytes / jvm_memory_max_bytes` |
 | | `jvm_gc_collection_seconds_sum` | Summary | GC总耗时 | `rate(jvm_gc_collection_seconds_sum[5m])` |
 | | `jvm_threads_current` | Gauge | 当前线程数 | `jvm_threads_current` |
@@ -1490,15 +1342,15 @@ groups:
           summary: "Nacos Server {{ $labels.instance }} is down"
           description: "Nacos Server {{ $labels.instance }} has been down for more than 1 minute."
       
-      # 2. 配置发布成功率过低—可能数据库不可达或Server过载
-      - alert: NacosConfigPublishSuccessRateLow
-        expr: rate(nacos_config_publish_total{result="success"}[5m]) / rate(nacos_config_publish_total[5m]) < 0.9
+      # 2. 配置异常计数过高——可能数据库不可达或Server过载
+      - alert: NacosConfigExceptionHigh
+        expr: rate(nacos_exception_total{module="config",name="nacos"}[5m]) > 1
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Config publish success rate is {{ $value | humanizePercentage }}"
-          description: "Config publish success rate dropped below 90% for 5 minutes."
+          summary: "Config exception rate is {{ $value }}"
+          description: "Config module exception rate exceeded 1/s for 5 minutes."
       
       # 3. JVM内存使用率过高—可能内存泄漏
       - alert: NacosJvmMemoryHigh
@@ -1510,19 +1362,19 @@ groups:
           summary: "JVM memory usage is {{ $value | humanizePercentage }}"
           description: "JVM memory usage exceeded 85% for 10 minutes, possible memory leak."
       
-      # 4. gRPC连接数异常下降—可能网络故障
-      - alert: NacosGrpcConnectionsDrop
-        expr: nacos_grpc_connections_active < 10
+      # 4. gRPC Server 线程池打满——可能连接数异常增长或处理过载
+      - alert: NacosGrpcExecutorSaturated
+        expr: grpc_server_executor{name="activeCount",type="sdk"} / grpc_server_executor{name="maximumPoolSize",type="sdk"} > 0.9
         for: 5m
         labels:
           severity: warning
         annotations:
-          summary: "Active gRPC connections dropped to {{ $value }}"
-          description: "Active gRPC connections dropped below 10 for 5 minutes, possible network issue."
+          summary: "gRPC server executor active threads ratio is {{ $value | humanizePercentage }}"
+          description: "gRPC server executor active threads exceeded 90% for 5 minutes, possible overload."
       
       # 5. HTTP请求P99延迟过高—可能Server过载
       - alert: NacosHttpLatencyHigh
-        expr: histogram_quantile(0.99, rate(nacos_http_request_duration_seconds_bucket[5m])) > 1
+        expr: histogram_quantile(0.99, rate(http_server_requests_seconds_bucket[5m])) > 1
         for: 5m
         labels:
           severity: warning
@@ -1554,7 +1406,7 @@ Nacos 2.5.3 选择 Prometheus Metrics 格式——基于 Micrometer 自动暴露
 |---------|--------------------------------------------------|----------------------|
 | **进程存活检测** | ✅ Liveness Probe——进程死亡自动重启Pod | ✅ Liveness Probe——进程死亡自动重启Pod |
 | **模块就绪检测** | ✅ Readiness Probe——模块未就绪自动摘除Pod——停止流量 | ❌ 只能检测进程死亡——模块故障但进程存活——流量继续转发——部分请求失败 |
-| **MySQL短暂不可达** | ✅ Readiness返回503——暂时摘除流量——MySQL恢复后恢复——Pod无需重启 | ❌ Liveness不受影响——但流量继续转发——请求失败——体验受损 |
+| **MySQL短暂不可达** | ✅ Readiness返回500——暂时摘除流量——MySQL恢复后恢复——Pod无需重启 | ❌ Liveness不受影响——但流量继续转发——请求失败——体验受损 |
 | **Pod误重启风险** | ✅ 分离关注点——Liveness只检测进程——Readiness只摘除流量——不重启Pod | ❌ 如果Liveness检测MySQL——MySQL临时不可达→误杀Pod→频繁重启 |
 | **流量保护** | ✅ Readiness Probe——模块故障自动摘除——流量只转发到健康Pod | ❌ 模块故障但进程存活——流量继续转发——部分请求失败 |
 | **实现复杂度** | ⚠️ 需实现各模块健康检查逻辑——Config/Naming/Database | ✅ 仅需检查进程存活——实现简单 |
@@ -1563,7 +1415,7 @@ Nacos 2.5.3 选择 Prometheus Metrics 格式——基于 Micrometer 自动暴露
 Nacos 2.5.3 选择 Liveness + Readiness 双探针方案——牺牲一定的实现复杂度——换取：(1) 进程自愈——Liveness Probe 保证进程死亡自动重启——无需人工干预；(2) 流量保护——Readiness Probe 保证模块未就绪自动摘除流量——保护用户请求不转发到不健康 Pod；(3) 误杀预防——Liveness 和 Readiness 分离关注点——避免 MySQL 临时不可达误杀 Pod——提升 Nacos 集群稳定性；(4) 可观测性——Prometheus Metrics 提供丰富的监控指标——建立 Dashboard 实时监控——异常告警——快速响应故障。|---------|--------------------------------------------------|----------------------|
 | **进程存活检测** | ✅ Liveness Probe——进程死亡自动重启Pod | ✅ Liveness Probe——进程死亡自动重启Pod |
 | **模块就绪检测** | ✅ Readiness Probe——模块未就绪自动摘除Pod——停止流量 | ❌ 只能检测进程死亡——模块故障但进程存活——流量继续转发——部分请求失败 |
-| **MySQL短暂不可达** | ✅ Readiness返回503——暂时摘除流量——MySQL恢复后恢复——Pod无需重启 | ❌ Liveness不受影响——但流量继续转发——请求失败——体验受损 |
+| **MySQL短暂不可达** | ✅ Readiness返回500——暂时摘除流量——MySQL恢复后恢复——Pod无需重启 | ❌ Liveness不受影响——但流量继续转发——请求失败——体验受损 |
 | **Pod误重启风险** | ✅ 分离关注点——Liveness只检测进程——Readiness只摘除流量——不重启Pod | ❌ 如果Liveness检测MySQL——MySQL临时不可达→误杀Pod→频繁重启 |
 | **流量保护** | ✅ Readiness Probe——模块故障自动摘除——流量只转发到健康Pod | ❌ 模块故障但进程存活——流量继续转发——部分请求失败 |
 | **实现复杂度** | ⚠️ 需实现各模块健康检查逻辑——Config/Naming/Database | ✅ 仅需检查进程存活——实现简单 |
@@ -1577,33 +1429,33 @@ Nacos 2.5.3 选择 Liveness + Readiness 双探针方案——牺牲一定的实�
 
 #### 7.7.5 设计模式分析
 
-1. **模板方法模式（Template Method Pattern）**：`HealthControllerV2.readiness()`（`console/src/main/java/com/alibaba/nacos/console/controller/HealthController.java`）定义了健康检查的标准流程骨架——1) 检查 Config 模块健康状态 → 2) 检查 Naming 模块健康状态 → 3) 检查 Database 连接状态 → 4) 汇总整体健康状态——子类可覆盖各模块的健康检查逻辑——实现特定的健康检查策略——Spring Boot Actuator `HealthIndicator` 接口也采用了相同的模板方法模式——标准化健康检查流程——新增模块健康检查只需添加新的 `HealthIndicator` 实现——无需修改 `HealthControllerV2`——符合开闭原则。
+1. **模板方法模式（Template Method Pattern）**：`HealthControllerV2.readiness()`（`console/src/main/java/com/alibaba/nacos/console/controller/v2/HealthControllerV2.java`）定义了健康检查的标准流程骨架——经 `ModuleHealthCheckerHolder` 遍历各模块注册的 `ReadinessCheck` 实现逐项检查并聚合结果——新增模块健康检查只需添加新的 `ReadinessCheck` 实现并注册——无需修改 `HealthControllerV2`——符合开闭原则。
 
-2. **观察者模式（Observer Pattern）**：Prometheus Server 作为观察者——定期 scrape Nacos Server 的 Metrics 端点（`GET /v1/console/health/metrics`）——观察 Nacos Server 的健康状态和业务指标（JVM 内存、GC 次数、线程数、API 请求量、配置数量、服务实例数）——当指标异常时（如 JVM 内存 >85%）——Prometheus AlertManager 触发告警——通知运维人员（邮件/钉钉/Slack）——运维人员无需持续人工监控——降低人工监控成本——提升故障响应速度——观察者模式实现监控告警的自动响应——实现从数据采集 → 指标计算 → 阈值判断 → 告警通知的全链路自动化。
+2. **观察者模式（Observer Pattern）**：Prometheus Server 作为观察者——定期 scrape Nacos Server 的 actuator prometheus 端点——观察 Nacos Server 的健康状态和业务指标（JVM 内存、GC 次数、线程数、API 请求量、配置数量、服务实例数）——当指标异常时（如 JVM 内存 >85%）——Prometheus AlertManager 触发告警——通知运维人员（邮件/钉钉/Slack）——运维人员无需持续人工监控——降低人工监控成本——提升故障响应速度——观察者模式实现监控告警的自动响应——实现从数据采集 → 指标计算 → 阈值判断 → 告警通知的全链路自动化。
 
 3. **适配器模式（Adapter Pattern）**：Micrometer 作为指标适配层——将 Nacos Server 的内部指标（JVM Metrics、API 调用统计）——适配为 Prometheus 格式——Prometheus Server 无需感知 Nacos 内部指标数据结构——Micrometer 自动完成格式转换——Nacos 升级内部指标数据结构——不影响 Prometheus 采集——解耦 Nacos 与 Prometheus——双方独立演化——符合适配器模式——降低系统耦合度。
 
 #### 7.7.6 小结
 
-Nacos 2.5.3 健康检查 API 通过 Liveness Probe（`GET /v1/console/health`）+ Readiness Probe（`GET /v1/console/health/readiness`）+ Prometheus Metrics（`GET /v1/console/health/metrics`）三层架构——Liveness 保证进程自愈——Readiness 保证流量保护——Metrics 保证可观测性——分离 Liveness 和 Readiness 关注点——避免误杀 Pod——基于 Micrometer 自动暴露 Prometheus Metrics——通过 Prometheus + Grafana 建立监控 Dashboard + AlertManager 告警规则——实时监控 Nacos 集群健康状态——异常触发告警——快速响应故障——提升 Nacos 集群可用性和可观测性。
+Nacos 2.5.3 健康检查 API 通过 Liveness Probe（`GET /v1/console/health/liveness`）+ Readiness Probe（`GET /v2/console/health/readiness`）+ Prometheus Metrics（actuator prometheus 端点）三层架构——Liveness 保证进程自愈——Readiness 保证流量保护——Metrics 保证可观测性——分离 Liveness 和 Readiness 关注点——避免误杀 Pod——基于 Micrometer 自动暴露 Prometheus Metrics——通过 Prometheus + Grafana 建立监控 Dashboard + AlertManager 告警规则——实时监控 Nacos 集群健康状态——异常触发告警——快速响应故障——提升 Nacos 集群可用性和可观测性。
 
-### 7.8 Istio 集成：IstioServiceEntryRegistry + MCP Client + ServiceEntry 构建
+### 7.8 Istio 集成：MCP-over-xDS Server + ServiceEntry 构建
 
 #### 7.8.1 设计背景
 
 Nacos 2.5.3 通过 `istio/` 模块（27 个 Java 文件）集成 Istio Service Mesh——通过 MCP（Mesh Configuration Protocol——`xds.googleapis.com`）协议——将 Nacos 注册中心中的服务实例自动同步到 Istio ServiceEntry——实现 Nacos 到 Istio 的服务自动发现——服务上下线自动同步——无需手动创建 Istio ServiceEntry——减少运维人工成本——提升服务发现自动化水平。
-Nacos 2.5.3 通过 `istio/` 模块（27 个 Java 文件）实现与 Istio 服务网格的深度集成——核心服务 `NacosMcpService`（`istio/src/main/java/com/alibaba/nacos/istio/NacosMcpService.java`）——实现 MCP-over-XDS 协议服务——将 Nacos 注册中心的服务数据实时同步到 Istio 控制面（Istiod）——通过 MCP（Mesh Configuration Protocol）协议——`IstioServiceEntryRegistry`（`istio/src/main/java/com/alibaba/nacos/istio/IstioServiceEntryRegistry.java`）负责 ServiceEntry 资源注册——`ServiceEntryMcpGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/ServiceEntryMcpGenerator.java`）生成 Istio ServiceEntry CRD 配置——推送到 Istiod——Istiod 通过 xDS API 下发配置到 Envoy Sidecar——实现 Nacos 服务发现与 Istio 流量管理的无缝对接。
+Nacos 2.5.3 通过 `istio/` 模块（27 个 Java 文件）实现与 Istio 服务网格的深度集成——核心服务 `NacosMcpService`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/NacosMcpService.java`）——实现 MCP-over-XDS 协议服务——将 Nacos 注册中心的服务数据实时同步到 Istio 控制面（Istiod）——ServiceEntry 的生成与注册由 `ServiceEntryMcpGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/ServiceEntryMcpGenerator.java`）/`ServiceEntryXdsGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/xds/ServiceEntryXdsGenerator.java`）经 `ApiGeneratorFactory` 完成——生成的 Istio ServiceEntry CRD 配置推送到 Istiod——Istiod 通过 xDS API 下发配置到 Envoy Sidecar——实现 Nacos 服务发现与 Istio 流量管理的无缝对接。
 
 Istio 集成解决的核心问题：
 
-1. **服务数据同步**：Nacos 注册中心中的服务实例变更（新增/下线/元数据变更）——通过 `NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/NacosServiceInfoResourceWatcher.java`）监听 Nacos 服务变更事件——实时生成 MCP Resource——通过 MCP 协议推送到 Istiod——Istiod 转换为 Envoy Cluster/CDS/EDS 配置——实现 Nacos → Istio → Envoy 的服务数据实时同步链路。
+1. **服务数据同步**：Nacos 注册中心中的服务实例变更（新增/下线/元数据变更）——通过 `NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/common/NacosServiceInfoResourceWatcher.java`）以 Runnable 轮询 ServiceManager 全量服务、比对 revision 感知变更——实时生成 MCP Resource——通过 MCP 协议推送到 Istiod——Istiod 转换为 Envoy Cluster/CDS/EDS 配置——实现 Nacos → Istio → Envoy 的服务数据实时同步链路。
 
-2. **MCP-over-XDS 协议适配**：`NacosMcpService` 实现了 Istio MCP 协议——基于 gRPC 双向流——支持 MCP Request/Response 交互——处理 `List()` / `Watch()` / `Push()` 等 MCP 方法——将 Nacos 服务数据封装为 `mcp.Resource` 对象——包含 ServiceEntry、WorkloadEntry、WorkloadGroup 等 Istio CRD 类型——通过 `McpWriter` 写入 gRPC 响应流——推送到 Istiod。
+2. **MCP-over-XDS 协议适配**：`NacosMcpService` 实现了 Istio MCP 协议——基于 gRPC 双向流——仅实现 `establishResourceStream()` 方法——按 `RequestResources` 的 collection/nonce 判定推送或确认——将 Nacos 服务数据封装为 `mcp.Resource` 对象——包含 ServiceEntry、WorkloadEntry、WorkloadGroup 等 Istio CRD 类型——写入 gRPC 响应流——推送到 Istiod。
 
 3. **ServiceEntry 自动生成**：`ServiceEntryMcpGenerator` 根据 Nacos 服务实例信息——自动生成 Istio `ServiceEntry` CRD 配置——包含服务名、命名空间、端口、协议、实例 IP 列表——`shouldPush()` 判断是否需要推送——避免重复推送相同配置——降低 MCP 通信开销——`handleEvent()` 处理 Nacos 服务变更事件——增量更新 ServiceEntry——避免全量推送——提升同步效率。Istio 集成的核心工作流程：
 
-1. **Nacos 服务变更监听**：`NacosServiceInfoResourceWatcher` 订阅 Nacos 服务变更——当服务实例上线/下线——触发 `ServiceEntryMcpGenerator`——生成新的 Istio `ServiceEntry`。
-2. **MCP 推送**：`NacosMcpService` MCP Server——监听 `/mcp` 端口——Istio Pilot 通过 gRPC 双向流连接到 MCP Server——订阅 Nacos 服务变更——Nacos Server 推送 `ServiceEntry` delta 增量更新——Istio Pilot 接收后自动更新 Istio Service Mesh 配置——Envoy Sidecar 自动更新负载均衡配置。
+1. **Nacos 服务变更感知**：`NacosServiceInfoResourceWatcher` 以 Runnable 轮询 `ServiceManager` 全量服务、比对 revision——revision 变化时经 `EventProcessor.notify(SERVICE_UPDATE_EVENT)` 触发——生成新的 Istio `ServiceEntry`。
+2. **MCP 推送**：MCP gRPC Server 由 `IstioServer` 内嵌于 Nacos Server 统一构建——Istio Pilot 通过 gRPC 双向流连接到 MCP Server——订阅 Nacos 服务变更——Nacos Server 推送 `ServiceEntry` delta 增量更新——Istio Pilot 接收后自动更新 Istio Service Mesh 配置——Envoy Sidecar 自动更新负载均衡配置。
 3. **端到端延迟**：服务实例上线→Nacos Server 推送→MCP→Istio Pilot→Envoy Sidecar——整个过程 <5 秒——实现 Nacos 到 Istio 的服务自动发现——端到端延迟满足生产环境要求（通常接受 <30 秒）。
 
 #### 7.8.2 核心类关系图
@@ -1612,22 +1464,32 @@ Istio 集成解决的核心问题：
 
 #### 7.8.3 源码走读
 
-##### 7.8.3.1 IstioApp——Istio 模块启动入口
+##### 7.8.3.1 IstioServer——MCP/xDS Server 启动入口
 
-`IstioApp`（`istio/src/main/java/com/alibaba/nacos/istio/IstioApp.java:30-36`）是 Istio 集成模块的 Spring Boot 启动入口——`@SpringBootApplication`——`@EnableScheduling`——启用定时任务支持——用于定期同步 Nacos 服务信息到 Istio ServiceEntry：
+istio MCP/xDS Server 内嵌于 Nacos Server——由 `IstioServer`（`istio/src/main/java/com/alibaba/nacos/istio/IstioServer.java:61-74`）统一构建——通过配置项 `nacos.istio.mcp.server.enabled` 控制（默认关闭）——监听 `nacos.istio.mcp.server.port`（默认 18848，`IstioConfig.java:31-34`）：
 
 ```java
-// istio/IstioApp.java:30-36
-@EnableScheduling
-@SpringBootApplication
-public class IstioApp {
-    public static void main(String[] args) {
-        SpringApplication.run(IstioApp.class, args);
+// istio/IstioServer.java:61-74 (关键代码)
+@Component
+public class IstioServer {
+
+    @PostConstruct
+    public void postConstruct() throws Exception {
+        if (!istioConfig.isServerEnabled()) {
+            Loggers.MAIN.info("MCP server is disabled.");
+            return;
+        }
+        // 构建 gRPC Server—注册 NacosMcpService / NacosXdsService
+        ServerBuilder.forPort(istioConfig.getServerPort())
+            .addService(nacosMcpService)
+            .addService(nacosXdsService)
+            .build()
+            .start();
     }
 }
 ```
 
-Istio 模块独立于 Nacos Server 部署——作为一个独立的 Spring Boot 应用——通过配置项 `nacos.istio.mcp.port`（默认 18848）监听 MCP 端口——Istio Pilot 通过 gRPC 双向流连接到该端口——订阅 Nacos 服务变更——实现 Nacos 到 Istio 的服务自动发现。
+Istio 集成能力内嵌于 Nacos Server 进程——无需独立部署——配置项 `nacos.istio.mcp.server.enabled`（默认 `false`）打开后——Istio Pilot 通过 gRPC 双向流连接到 `nacos.istio.mcp.server.port`（默认 18848）端口——订阅 Nacos 服务变更——实现 Nacos 到 Istio 的服务自动发现。
 
 ##### 7.8.3.2 NacosMcpService——MCP Server 核心实现
 
@@ -1729,7 +1591,7 @@ private void process(Mcp.RequestResources requestResources,
 
 ##### 7.8.3.4 shouldPush()——判断是否需要推送
 
-`NacosMcpService.shouldPush()`（`:140-175`）判断是否需要推送 `ServiceEntry` delta 增量更新：
+`NacosMcpService.shouldPush()`（`NacosMcpService.java:113-157`）判断是否需要推送 `ServiceEntry` delta 增量更新：
 
 1. **错误检查**：`requestResources.getErrorDetail().getCode() != 0`——如果 Istio Pilot 报告错误——记录错误日志——返回 `false`——不推送——等待 Istio Pilot 重新发起请求。
 2. **首次请求判断**：`requestResources.getResponseNonce().isEmpty()`——如果 `responseNonce` 为空——首次请求——创建 `WatchedStatus`——记录 `type`（`SERVICE_ENTRY_COLLECTION`）——添加到 `connection.watchedResource`——返回 `true`——需要推送初始全量 `ServiceEntry` 列表。
@@ -1739,10 +1601,10 @@ private void process(Mcp.RequestResources requestResources,
 
 ##### 7.8.3.5 handleEvent()——Nacos 服务变更事件处理
 
-`NacosMcpService.handleEvent()`（`:177-195`）处理 Nacos 服务变更事件——当 Nacos 服务实例上线/下线——触发 `Event`——根据 `EventType` 处理：
+`NacosMcpService.handleEvent()`（`NacosMcpService.java:159-180`）处理 Nacos 服务变更事件——当 Nacos 服务实例上线/下线——触发 `Event`——根据 `EventType` 处理：
 
 ```java
-// istio/mcp/NacosMcpService.java:177-195 (简化)
+// istio/mcp/NacosMcpService.java:159-180 (简化)
 public void handleEvent(ResourceSnapshot resourceSnapshot, Event event) {
     switch (event.getType()) {
         case Service: // 服务变更事件
@@ -1774,27 +1636,13 @@ public void handleEvent(ResourceSnapshot resourceSnapshot, Event event) {
 
 ##### 7.8.3.6 ServiceEntryMcpGenerator——ServiceEntry MCP 生成器
 
-`ServiceEntryMcpGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/ServiceEntryMcpGenerator.java:30-66`）是 ServiceEntry MCP 生成器——**Singleton 模式**——`getInstance()` 返回全局唯一实例——将 Nacos `ResourceSnapshot` 转换为 Istio `ServiceEntry` protobuf 消息：
+`ServiceEntryMcpGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/ServiceEntryMcpGenerator.java:35-65`）是 ServiceEntry MCP 生成器——实现 `ApiGenerator<Resource>` 接口——经 `ApiGeneratorFactory` 注册与分发——将 Nacos `ResourceSnapshot` 转换为 MCP `Resource` 消息列表：
 
 ```java
-// istio/mcp/ServiceEntryMcpGenerator.java:30-66
+// istio/mcp/ServiceEntryMcpGenerator.java:35-65
 public class ServiceEntryMcpGenerator implements ApiGenerator<Resource> {
     
-    // Singleton—双重检查锁定
-    private volatile static ServiceEntryMcpGenerator singleton = null;
-    
-    public static ServiceEntryMcpGenerator getInstance() {
-        if (singleton == null) {
-            synchronized (ServiceEntryMcpGenerator.class) {
-                if (singleton == null) {
-                    singleton = new ServiceEntryMcpGenerator();
-                }
-            }
-        }
-        return singleton;
-    }
-    
-    // :47-65—generate()—生成ServiceEntry protobuf消息列表
+    // :35-65—generate(ResourceSnapshot)—遍历快照中 ServiceEntryWrapper 生成 MCP Resource
     @Override
     public List<Resource> generate(ResourceSnapshot resourceSnapshot) {
         List<Resource> result = new ArrayList<>();
@@ -1826,145 +1674,60 @@ public class ServiceEntryMcpGenerator implements ApiGenerator<Resource> {
 
 关键设计——**Protobuf Any 类型包装**：使用 `Any.newBuilder().setValue(serviceEntry.toByteString()).setTypeUrl(SERVICE_ENTRY_PROTO)`——将 Istio `ServiceEntry` protobuf 消息包装为 `Any` 类型——Istio Pilot 收到后根据 `typeUrl` 反序列化为具体的 `ServiceEntry` 消息——实现 protobuf 多态——支持多种资源类型（ServiceEntry/WorkloadEntry/VirtualService 等）通过同一个 MCP 通道推送——减少 gRPC 连接数——提升推送效率。
 
-```java
-// istio/mcp/NacosMcpService.java:30-194 (简化)
-@Component
-public class NacosMcpService implements McpServer {
-    
-    @Autowired
-    private ServiceEntryMcpGenerator serviceEntryMcpGenerator;
-    
-    // :50-65—构造函数—启动MCP Server—监听端口
-    public NacosMcpService(@Value("${nacos.istio.mcp.port:18848}") int port) {
-        this.port = port;
-        // 启动gRPC Server—监听MCP端口
-        this.grpcServer = ServerBuilder.forPort(port)
-            .addService(this)
-            .build();
-        grpcServer.start();
-    }
-    
-    // :80-110—onSubscriptionRequest()—Istio Pilot订阅Nacos服务变更
-    @Override
-    public void onSubscriptionRequest(SubscriptionRequest request, 
-                                      StreamObserver<Resources> responseObserver) {
-        String serviceName = request.getServiceName();
-        String groupName = request.getGroupName();
-        
-        // 订阅Nacos服务变更
-        nacosServiceInfoResourceWatcher.subscribe(serviceName, groupName, 
-            new ServiceInfoChangeListener() {
-                @Override
-                public void onServiceInfoChange(ServiceInfo serviceInfo) {
-                    // 生成ServiceEntry
-                    Resources resources = serviceEntryMcpGenerator
-                        .generateServiceEntryResources(serviceInfo);
-                    // 通过gRPC双向流推送ServiceEntry delta增量更新
-                    responseObserver.onNext(resources);
-                }
-            });
-    }
-}
-```
+##### 7.8.3.2 MCP gRPC Server 的启动与注册
 
-##### 7.8.3.2 ServiceEntryMcpGenerator——ServiceEntry MCP 生成器
-
-`ServiceEntryMcpGenerator`（`istio/src/main/java/com/alibaba/nacos/istio/mcp/ServiceEntryMcpGenerator.java:30-66`）将 Nacos `ServiceInfo` 转换为 Istio `ServiceEntry`——包含 `hosts`（服务域名）、`ports`（端口列表）、`endpoints`（实例 IP:Port 列表）、`resolution`（DNS 解析模式——`STATIC`=静态 IP 列表）：
+MCP gRPC Server 并非由 `NacosMcpService` 自行启动——而是由 `IstioServer`（`istio/src/main/java/com/alibaba/nacos/istio/IstioServer.java:72-74`）统一构建并在 `@PostConstruct` 中 `addService(nacosMcpService)` / `addService(nacosXdsService)` 完成注册——`NacosMcpService` 自身只是 `@Service` 注解的 `ResourceSourceImplBase` 子类（`NacosMcpService.java:47-60`）：
 
 ```java
-// istio/mcp/ServiceEntryMcpGenerator.java:30-66 (简化)
-@Component
-public class ServiceEntryMcpGenerator {
-    
-    // :40-63—generateServiceEntryResources()—生成ServiceEntry
-    public Resources generateServiceEntryResources(ServiceInfo serviceInfo) {
-        ServiceEntry.Builder serviceEntryBuilder = ServiceEntry.newBuilder();
-        
-        // 设置hosts—服务域名
-        String host = serviceInfo.getName() + "." + serviceInfo.getGroupName() + ".nacos";
-        serviceEntryBuilder.addHosts(host);
-        
-        // 设置ports—端口列表
-        Set<Integer> ports = extractPorts(serviceInfo);
-        for (Integer port : ports) {
-            serviceEntryBuilder.addPorts(Port.newBuilder()
-                .setNumber(port)
-                .setProtocol("HTTP")
-                .setName("http-" + port)
-                .build());
-        }
-        
-        // 设置endpoints—实例IP:Port列表
-        for (Instance instance : serviceInfo.getHosts()) {
-            if (instance.isHealthy()) { // 仅健康实例
-                serviceEntryBuilder.addEndpoints(NetworkEndpoint.newBuilder()
-                    .setAddress(instance.getIp())
-                    .putPorts("http-" + instance.getPort(), instance.getPort())
-                    .setWeight((int)(instance.getWeight() * 100))
-                    .build());
-            }
-        }
-        
-        // 设置resolution—STATIC=静态IP列表
-        serviceEntryBuilder.setResolution(ServiceEntry.Resolution.STATIC);
-        
-        // 包装为Resources对象—用于MCP推送
-        return Resources.newBuilder()
-            .addResources(Any.pack(serviceEntryBuilder.build()))
-            .setTypeUrl("type.googleapis.com/envoy.config.listener.v3.ServiceEntry")
-            .build();
-    }
-}
+// istio/IstioServer.java (简化)——gRPC Server 由 IstioServer 统一启动
+ServerBuilder.forPort(istioConfig.getServerPort())
+    .addService(nacosMcpService)   // MCP-over-xDS 服务
+    .addService(nacosXdsService)   // xDS 服务
+    .build()
+    .start();
 ```
 
 ##### 7.8.3.3 NacosServiceInfoResourceWatcher——Nacos 服务信息资源监听器
 
-`NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/common/NacosServiceInfoResourceWatcher.java`）订阅 Nacos 服务变更——当服务实例上线/下线——自动触发 `ServiceEntryMcpGenerator`——生成新的 `ServiceEntry`——通过 MCP 推送给 Istio Pilot：
+`NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/common/NacosServiceInfoResourceWatcher.java:37-100`）不通过 NamingService `subscribe()` 订阅——而是实现 `Runnable` 接口由线程池周期调度——轮询 `ServiceManager` 全量服务、比对 `ServiceStorage` 中的 revision——revision 变化时经 `EventProcessor.notify(SERVICE_UPDATE_EVENT)` 触发 ServiceEntry 重新生成与推送：
 
 ```java
-// istio/common/NacosServiceInfoResourceWatcher.java (简化)
+// istio/common/NacosServiceInfoResourceWatcher.java:37-100 (简化)
 @Component
-public class NacosServiceInfoResourceWatcher {
-    
-    @Autowired
-    private NamingService nacosNaming;
-    
-    // subscribe()—订阅Nacos服务变更
-    public void subscribe(String serviceName, String groupName, 
-                          ServiceInfoChangeListener listener) {
-        try {
-            nacosNaming.subscribe(serviceName, groupName, new EventListener() {
-                @Override
-                public void onEvent(InstancesChangeEvent event) {
-                    // 服务实例变更—获取最新ServiceInfo
-                    List<Instance> instances = nacosNaming.getAllInstances(
-                        event.getServiceName(), event.getGroupName());
-                    ServiceInfo serviceInfo = new ServiceInfo();
-                    serviceInfo.setName(event.getServiceName());
-                    serviceInfo.setGroupName(event.getGroupName());
-                    serviceInfo.setHosts(instances);
-                    // 触发回调—生成新的ServiceEntry
-                    listener.onServiceInfoChange(serviceInfo);
-                }
-            });
-        } catch (NacosException e) {
-            LOGGER.error("Subscribe Nacos service {}@{} failed", serviceName, groupName, e);
+public class NacosServiceInfoResourceWatcher implements Runnable {
+
+    private final ServiceManager serviceManager;   // 服务元数据管理
+    private final EventProcessor eventProcessor;   // 事件处理器
+
+    // run()—轮询全量服务—比对 revision
+    @Override
+    public void run() {
+        // 1. 遍历 ServiceManager 中所有 namespace 的全量 Service
+        for (Service service : serviceManager.getAllServiceNamespaces()
+                .stream().flatMap(ns -> serviceManager.getSingletons(ns).stream())
+                .collect(Collectors.toList())) {
+            // 2. 比对当前 revision 与上次记录的 revision
+            if (service.getRevision() != cachedRevision(service)) {
+                // 3. revision 变化—发布 SERVICE_UPDATE_EVENT
+                eventProcessor.notify(new ServiceChangedEvent(service));
+            }
         }
     }
 }
 ```
 
-#### 7.8.4 设计模式分析
 
 #### 7.8.4 设计模式分析
 
-1. **观察者模式（Observer）**：`NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/NacosServiceInfoResourceWatcher.java`）监听 Nacos 服务变更事件——当 Nacos 注册中心的服务实例发生变更（新增/下线/元数据变更）——触发 `handleEvent()` 方法——增量更新 Istio `ServiceEntry` CRD 配置——通过 MCP 协议推送到 Istiod——实现 Nacos → Istio 的服务数据实时同步——观察者模式实现 Nacos 服务变更的自动传播——无需手动触发同步——降低运维复杂度。
+#### 7.8.4 设计模式分析
+
+1. **观察者模式（Observer）**：`NacosServiceInfoResourceWatcher`（`istio/src/main/java/com/alibaba/nacos/istio/common/NacosServiceInfoResourceWatcher.java`）以 Runnable 轮询 `ServiceManager` 全量服务、比对 revision——感知服务实例变更（新增/下线/元数据变更）——经 `EventProcessor.notify(SERVICE_UPDATE_EVENT)` 触发 `NacosMcpService.handleEvent()`——增量更新 Istio `ServiceEntry` CRD 配置——通过 MCP 协议推送到 Istiod——实现 Nacos → Istio 的服务数据实时同步——观察者模式实现 Nacos 服务变更的自动传播——无需手动触发同步——降低运维复杂度。
 
 2. **适配器模式（Adapter Pattern）**：`NacosMcpService`（`istio/src/main/java/com/alibaba/nacos/istio/NacosMcpService.java`）作为 Nacos 服务数据与 Istio MCP 协议之间的适配器——将 Nacos 的 `ServiceInfo` 数据结构——适配为 Istio MCP `Resource` 对象——包含 `ServiceEntry`、`WorkloadEntry`、`WorkloadGroup` 等 Istio CRD 类型——`ServiceEntryMcpGenerator` 负责具体的 CRD 生成逻辑——适配器模式实现 Nacos 数据格式到 Istio MCP 格式的无缝转换——双方无需感知对方的数据结构——解耦 Nacos 与 Istio 的版本演化。
 
 3. **策略模式（Strategy）**：`shouldPush()` 方法——判断是否需要推送 ServiceEntry 到 Istiod——比较当前 ServiceEntry 与上次推送的 ServiceEntry——内容相同则跳过推送——减少 MCP 通信开销——是一种缓存策略——避免重复推送相同配置——降低 Istiod 处理压力——提升同步效率。
 
-4. **单例模式（Singleton）**：`IstioServiceEntryRegistry`（`istio/src/main/java/com/alibaba/nacos/istio/IstioServiceEntryRegistry.java`）作为 ServiceEntry 注册中心——全局唯一实例——存储所有已推送的 ServiceEntry 缓存——用于 `shouldPush()` 比较——保证缓存一致性——避免多实例缓存不一致导致的重复推送或遗漏推送。
+4. **工厂模式（Factory）**：ServiceEntry 的生成与注册由 `ServiceEntryMcpGenerator`（MCP）/`ServiceEntryXdsGenerator`（xDS）实现统一的 `ApiGenerator<Resource>` 接口——经 `ApiGeneratorFactory` 按资源类型分发——新增资源类型只需实现新的 `ApiGenerator`——无需修改推送链路——符合开闭原则。
 2. **适配器模式（Adapter）**：`ServiceEntryMcpGenerator` 适配器——将 Nacos `ServiceInfo` 适配为 Istio `ServiceEntry`——转换数据格式——Nacos `Instance` → Istio `NetworkEndpoint`——Nacos 健康状态 → Istio 实例权重——适配 Nacos 和 Istio 的数据模型差异——Istio Pilot 无需感知 Nacos 数据模型——只需接收 MCP 推送的 Istio `ServiceEntry`——降低 Istio Pilot 与 Nacos 的耦合——实现 Nacos 到 Istio 的解耦集成。
 
 #### 7.8.5 Trade-off 分析
@@ -1974,7 +1737,7 @@ public class NacosServiceInfoResourceWatcher {
 Nacos 2.5.3 选择 MCP-over-xDS 协议——直接将 `NacosMcpService` 内嵌到 Nacos Server 进程中——避免额外 MCP Server 部署。
 
 - **选择**：内嵌 MCP Server
-- **优势**：(1) 零额外部署——Nacos Server 自带 MCP 能力——无需独立 MCP Server 进程——降低运维复杂度；(2) 共享 Nacos Server 进程资源——无需额外 CPU/内存开销——资源利用率高；(3) MCP 双向流通信——`Watch()` 实时推送变更——延迟 <1s
+- **优势**：(1) 零额外部署——Nacos Server 自带 MCP 能力——无需独立 MCP Server 进程——降低运维复杂度；(2) 共享 Nacos Server 进程资源——无需额外 CPU/内存开销——资源利用率高；(3) MCP gRPC 双向流实时推送变更——延迟 <1s
 - **代价**：(1) MCP 服务与 Nacos Server 耦合——MCP 服务故障可能影响 Nacos Server 稳定性——但 MCP 服务设计隔离——影响有限；(2) Nacos Server 升级需同步升级 MCP 逻辑——版本兼容性需关注
 - **适用场景**：Istio 服务网格是 Nacos 的核心集成场景——内嵌 MCP Server 是最简部署方案
 
@@ -2005,91 +1768,53 @@ Nacos 2.5.3 选择 MCP 集成方案——通过 `NacosMcpService` MCP Server—�
 
 #### 7.8.6 小结
 
-Nacos 2.5.3 Istio 集成通过 `NacosMcpService` MCP Server + `ServiceEntryMcpGenerator` 生成器——`NacosServiceInfoResourceWatcher` 订阅 Nacos 服务变更——服务实例上线/下线触发 `ServiceEntryMcpGenerator`——生成新的 Istio `ServiceEntry`——通过 MCP gRPC 双向流推送给 Istio Pilot——Istio Pilot 更新 Envoy Sidecar 配置——实现 Nacos 到 Istio 的服务自动发现——端到端延迟 <5 秒——无需手动创建 ServiceEntry——减少运维人工成本——提升服务发现自动化水平——满足生产环境要求。
+Nacos 2.5.3 Istio 集成通过 `NacosMcpService` MCP Server（由 `IstioServer` 内嵌于 Nacos Server 统一启动，`nacos.istio.mcp.server.enabled` 控制）+ `ServiceEntryMcpGenerator`/`ServiceEntryXdsGenerator`（经 `ApiGeneratorFactory` 分发）——`NacosServiceInfoResourceWatcher` 以 Runnable 轮询 ServiceManager 全量服务、比对 revision——服务实例上线/下线经 SERVICE_UPDATE_EVENT 触发生成新的 Istio `ServiceEntry`——通过 MCP gRPC 双向流推送给 Istio Pilot——Istio Pilot 更新 Envoy Sidecar 配置——实现 Nacos 到 Istio 的服务自动发现——端到端延迟 <5 秒——无需手动创建 ServiceEntry——减少运维人工成本——提升服务发现自动化水平——满足生产环境要求。
 
 ### 7.9 CMDB 标签数据管理：CmdbService + 按标签匹配实例
 
 #### 7.9.1 设计背景
 
-Nacos 2.5.3 通过 `cmdb/` 模块（8 个 Java 文件）实现 CMDB（Configuration Management Database）标签数据管理——核心服务接口 `CmdbService`（`cmdb/src/main/java/com/alibaba/nacos/cmdb/service/CmdbService.java`）——提供标签的增删改查操作——将 Nacos 服务实例关联物理机/虚拟机/容器等 CMDB 元数据——如机房、机架、交换机、IP 段、CPU 型号、内存大小——通过 `CmdbReader` 和 `CmdbWriter` 读写 CMDB 标签数据——支持按标签匹配实例——返回特定标签的实例列表——如查询 `env=prod AND region=cn-hangzhou` 的所有实例——实现基于标签的精细化服务发现——在 Spring Cloud Gateway / Zuul 网关层实现按标签路由——将流量路由到特定机房/机架的服务实例——实现就近访问——降低跨机房网络延迟——提升用户体验。
+Nacos 2.5.3 通过 `cmdb/` 模块（8 个 Java 文件）实现 CMDB（Configuration Management Database）标签数据管理——CMDB 能力由两部分组成：api 模块的 `CmdbService` SPI（`api/src/main/java/com/alibaba/nacos/api/cmdb/spi/CmdbService.java:33-75`——提供 `getLabelNames`/`getEntityTypes`/`getLabel`/`getLabelValue` 等接口——由外部 CMDB 插件实现）+ cmdb 模块内的 `CmdbProvider`（实现 `CmdbReader`/`CmdbWriter` 接口）——将 Nacos 服务实例关联物理机/虚拟机/容器等 CMDB 元数据——如机房、机架、交换机、IP 段、CPU 型号、内存大小——支持按标签匹配实例——实现基于标签的精细化服务发现——在 Spring Cloud Gateway / Zuul 网关层实现按标签路由——将流量路由到特定机房/机架的服务实例——实现就近访问——降低跨机房网络延迟——提升用户体验。
 
 CMDB 模块解决的核心问题：
 
 1. **标签驱动的服务发现（Label-driven Service Discovery）**：传统服务发现仅基于服务名（ServiceName）——CMDB 增加了标签维度——服务消费者可指定标签过滤条件——如 `env=prod AND version=v1.0`——只发现满足标签条件的实例——实现更精细的服务路由——支持金丝雀发布（Canary Release）——将新版本服务实例打上 `version=v2.0` 标签——只有指定标签的消费者才会路由到新版本——未指定标签的消费者继续使用稳定版本——降低发布风险。
 
-2. **实例元数据管理（Instance Metadata Management）**：CMDB 存储服务实例的标签数据——通过 `CmdbService.addLabel()` / `CmdbService.removeLabel()` 动态管理标签——标签以 Key-Value 键值对形式存储——支持多标签组合——如一个实例同时有 `env=prod`、`version=v1.0`、`region=cn-shanghai` 三个标签——服务消费者可通过标签组合精确匹配目标实例——实现灵活的服务路由策略。
+2. **实例元数据管理（Instance Metadata Management）**：CMDB 存储服务实例的标签数据——由外部 CMDB 插件经 `CmdbService` SPI 提供——标签以 Key-Value 键值对形式存储——支持多标签组合——如一个实例同时有 `env=prod`、`version=v1.0`、`region=cn-shanghai` 三个标签——服务消费者可通过标签组合精确匹配目标实例——实现灵活的服务路由策略。
 
-3. **标签数据持久化（Label Persistence）**：CMDB 标签数据存储在 Nacos 内嵌数据库中——通过 `CmdbService.load()` 方法——从数据库加载所有标签数据到内存缓存——减少数据库查询——提升标签匹配性能——内存缓存定时刷新——保证标签数据的最终一致性——避免每次服务发现都查询数据库——降低数据库压力——提升服务发现响应速度。
+3. **标签数据内存化（In-memory Label Cache）**：标签数据由 `CmdbProvider` 经 SPI 从外部 CMDB 加载进内存 `ConcurrentHashMap`（`cmdb/src/main/java/com/alibaba/nacos/cmdb/memory/CmdbProvider.java:86-108`），不落库——减少查询开销——提升标签匹配性能——内存缓存定时刷新——保证标签数据的最终一致性——避免每次服务发现都查询外部 CMDB——提升服务发现响应速度。
 #### 7.9.2 核心类关系图
 
-<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 CMDB 标签数据管理——全流程</span><span class="s">外部CMDB系统（物理机/虚拟机/容器）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">0.3.100</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">ion</span><span class="typ">: cn-hz</span></li></ul><ul class="dgm-kv"><li><span class="fld">e</span><span class="typ">: az1</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">:staging</div></div></div></div></div><div class="dgm-note">定时同步标签数据（每10分钟）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos CMDB模块（cmdb/）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbService</span><span class="s">CmdbReader—query(String query): List&lt;CmdbData&gt;</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbWriter—write(String instanceId, Map labels)</div><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbQueryExprParser.parse(</div><div class="dgm-note" style="border:none;background:none;padding:0;">"env=prod AND region=cn-hangzhou")</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ AST抽象语法树 → 遍历ConcurrentHashMap</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 返回匹配标签的实例列表</div></div></div><div class="dgm-varrow"></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbWriter</span><span class="s">write()</span></div><div class="dgm-box-b"></div></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbProvider—ConcurrentHashMap内存存储</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">key</span><span class="typ">: instanceId → value: labels Map</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.1:8080" → {"env":"prod","region":"cn-hz",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"A01","zone":"az1"}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.2:8080" → {"env":"prod","region":"cn-bj",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"B03","zone":"az2"}</div></div></div></div>
+<div class="dgm"><div class="dgm-box"><div class="dgm-box-h"><span class="t">Nacos 2.5.3 CMDB 标签数据管理——全流程</span><span class="s">外部CMDB系统（物理机/虚拟机/容器）</span></div><div class="dgm-box-b"><div class="dgm-box"><div class="dgm-box-h"><span class="t">0.3.100</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">region</span><span class="typ">: cn-hz</span></li></ul><ul class="dgm-kv"><li><span class="fld">zone</span><span class="typ">: az1</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">label:staging</div></div></div></div></div><div class="dgm-note" style="border:none;background:none;padding:0;">定时同步标签数据（dump 默认 3600s）</div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbService SPI（api 模块—外部CMDB插件实现）</span><span class="s">CmdbReader—queryLabel/queryEntity 点查</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbWriter—write(String instanceId, Map labels)</div><div class="dgm-note" style="border:none;background:none;padding:0;">CmdbProvider 经 SPI 拉取标签数据</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 内存 ConcurrentHashMap</div><div class="dgm-note" style="border:none;background:none;padding:0;">→ 按标签点查返回实例/标签</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbWriter</span><span class="s">write()</span></div><div class="dgm-box-b"><div class="dgm-note" style="border:none;background:none;padding:0;">将标签变更写入外部 CMDB（由 SPI 插件实现落库）</div></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">CmdbProvider—ConcurrentHashMap内存存储</span></div><div class="dgm-box-b"><ul class="dgm-kv"><li><span class="fld">key</span><span class="typ">: instanceId → value: labels Map</span></li></ul><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.1:8080" → {"env":"prod","region":"cn-hz",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"A01","zone":"az1"}</div><div class="dgm-note" style="border:none;background:none;padding:0;">"10.0.2:8080" → {"env":"prod","region":"cn-bj",</div><div class="dgm-note" style="border:none;background:none;padding:0;">"rack":"B03","zone":"az2"}</div></div></div></div>
 
 #### 7.9.3 源码走读
 
-##### 7.9.3.1 CmdbService——CMDB 服务入口
+##### 7.9.3.1 CmdbProvider——CMDB 内存数据提供者
 
-`CmdbService` 提供 `query()`、`write()`、`remove()` 三个核心方法——`ConcurrentHashMap` 内存存储——线程安全：
+cmdb 模块内实际的数据持有者是 `CmdbProvider`（`cmdb/src/main/java/com/alibaba/nacos/cmdb/memory/CmdbProvider.java`）——实现 `CmdbReader`/`CmdbWriter` 接口——以 `ConcurrentHashMap` 内存存储标签数据——当前版本仅支持按 entity/label 点查：
 
 ```java
-// cmdb/service/CmdbService.java (简化)
-@Service
-public class CmdbService {
+// cmdb/memory/CmdbProvider.java (关键接口)
+public class CmdbProvider implements CmdbReader, CmdbWriter {
+
+    // entity2LabelMap: entityId → Map<labelName, labelValue>
+    private final Map<String, Map<String, String>> entity2LabelMap 
+        = new ConcurrentHashMap<>();
     
-    @Autowired
-    private CmdbProvider cmdbProvider;
+    // 按点查取标签
+    public String queryLabel(String entityName, String labelName) { ... }
     
-    // query()—按标签查询实例—支持AND/OR/NOT逻辑运算
-    public CmdbData query(String query) {
-        // 1. 解析查询表达式
-        CmdbQueryExpr expr = CmdbQueryExprParser.parse(query);
-        
-        CmdbData result = new CmdbData();
-        // 2. 遍历内存存储—过滤匹配标签的实例
-        for (Map.Entry<String, Map<String, String>> entry : 
-             cmdbProvider.getAllLabels().entrySet()) {
-            if (matchLabels(entry.getValue(), expr)) {
-                CmdbInstance instance = new CmdbInstance();
-                instance.setInstanceId(entry.getKey());
-                instance.setLabels(entry.getValue());
-                result.addInstance(instance);
-            }
-        }
-        return result;
+    // queryEntitiesByLabel—当前为未实现占位
+    public Set<String> queryEntitiesByLabel(String labelName, String labelValue) {
+        throw new UnsupportedOperationException(...);
     }
     
-    // matchLabels()—递归AST求值
-    private boolean matchLabels(Map<String, String> labels, CmdbQueryExpr expr) {
-        switch (expr.getOp()) {
-            case AND: return matchLabels(labels, expr.getLeft()) 
-                && matchLabels(labels, expr.getRight());
-            case OR:  return matchLabels(labels, expr.getLeft()) 
-                || matchLabels(labels, expr.getRight());
-            case NOT: return !matchLabels(labels, expr.getChild());
-            case EQ:  return expr.getValue().equals(labels.get(expr.getKey()));
-            case NEQ: return !expr.getValue().equals(labels.get(expr.getKey()));
-            case IN:  return expr.getValues().contains(labels.get(expr.getKey()));
-            default:  return false;
-        }
-    }
+    // 定时任务—经 SPI 从外部 CMDB 插件加载/刷新标签数据到内存
+    public void load() { ... }
 }
 ```
 
-##### 7.9.3.2 CmdbQueryExprParser——查询表达式解析器
-
-解析字符串查询表达式为 AST 抽象语法树——支持递归下降解析：
-
-```
-查询: "env=prod AND (region=cn-hz OR region=cn-bj)"
-
-词法分析 → tokens:
-[EQ(env,prod), AND, LPAREN, EQ(region,cn-hz), OR, EQ(region,cn-bj), RPAREN]
-
-语法分析 → AST:
-            AND
-           /            EQ     OR
-        /  \   /        env prod EQ   EQ
-               /  \ /           region cn-hz region cn-b похай
-```
+> 注：`CmdbService` SPI（`api/src/main/java/com/alibaba/nacos/api/cmdb/spi/CmdbService.java:33-75`）定义 `getLabelNames`/`getEntityTypes`/`getLabel`/`getLabelValue` 等接口——由外部 CMDB 插件实现；cmdb 模块内不存在 `query()` 字符串表达式查询与 `CmdbQueryExprParser` 解析器——`queryEntitiesByLabel` 为未实现占位（`CmdbProvider.java:126-146`）。
 
 ##### 7.9.3.3 网关层按标签路由
 
@@ -2106,13 +1831,14 @@ public class LabelBasedLoadBalancer {
     public ServiceInstance selectInstance(String serviceId) {
         List<ServiceInstance> all = discoveryClient.getInstances(serviceId);
         
-        // 查询同机房实例—优先路由
-        String query = "region=" + getLocalRegion() + " AND env=" + getLocalEnv();
-        CmdbData cmdbData = cmdbService.query(query);
+        // 查询实例的机房标签—优先路由（经 CmdbService SPI 点查）
+        String entity = resolveEntityId(serviceId);
+        String region = cmdbService.getLabelValue(entity, "region");
         
         // 过滤同机房实例
         List<ServiceInstance> sameRegion = all.stream()
-            .filter(i -> cmdbData.containsInstance(i.getInstanceId()))
+            .filter(i -> region.equals(cmdbService
+                .getLabelValue(resolveEntityId(i.getServiceId()), "region")))
             .collect(Collectors.toList());
         
         if (!sameRegion.isEmpty()) {
@@ -2134,12 +1860,12 @@ public class LabelBasedLoadBalancer {
 
 **Trade-off 1：内存 CMDB 缓存 vs 外部 CMDB 实时查询**
 
-Nacos 2.5.3 选择内存 CMDB 缓存方案——`CmdbProvider` 使用 `ConcurrentHashMap` 存储标签数据——查询延迟 <1μs——每 10 分钟从外部 CMDB 全量同步——原子替换整个缓存。
+Nacos 2.5.3 选择内存 CMDB 缓存方案——`CmdbProvider` 使用 `ConcurrentHashMap` 存储标签数据——查询延迟 <1μs——定时任务间隔由配置项控制：`nacos.cmdb.dumpTaskInterval`（默认 3600s）、`nacos.cmdb.labelTaskInterval`（默认 300s）、`nacos.cmdb.eventTaskInterval`（默认 10s）（`cmdb/src/main/java/com/alibaba/nacos/cmdb/core/SwitchAndOptions.java:31-38`）。
 
 - **选择**：内存缓存 + 定时同步
 - **优势**：(1) 查询延迟 <1μs——服务发现几乎无额外延迟——不影响 Nacos 核心 API 性能；(2) 不依赖外部 CMDB 可用性——外部 CMDB 不可达时——使用缓存数据继续工作——降级可用——避免级联故障；(3) `ConcurrentHashMap` 线程安全——高并发读——无锁竞争
-- **代价**：(1) 数据实时性延迟——最多 10 分钟滞后——外部 CMDB 数据变更后——最长 10 分钟后才能反映到 Nacos 服务发现；(2) 内存占用——标签数据量大时——可能占用较多堆内存——需监控 JVM 堆使用率
-- **适用场景**：CMDB 数据变更频率低——10 分钟同步延迟可接受——高可用优先于实时性
+- **代价**：(1) 数据实时性延迟——最长滞后一个 dump 周期（默认 3600s）——外部 CMDB 数据变更后需等下轮定时任务才能反映到 Nacos 服务发现；(2) 内存占用——标签数据量大时——可能占用较多堆内存——需监控 JVM 堆使用率
+- **适用场景**：CMDB 数据变更频率低——分钟级同步延迟可接受——高可用优先于实时性
 
 **Trade-off 2：标签路由 vs 权重路由**
 
@@ -2152,13 +1878,13 @@ CMDB 支持按标签路由——如 `env=prod AND region=cn-hangzhou`——网�
 | 权衡维度 | 内存CMDB缓存（2.5.3选择） | 外部CMDB系统查询 | 纯Nacos内置标签 |
 |---------|--------------------------|------------------|-----------------|
 | **查询延迟** | ✅ <1μs——内存查询 | ❌ ~10ms——HTTP API调用 | ✅ <1μs——内存查询 |
-| **数据实时性** | ⚠️ 定时同步（每10分钟）——可能滞后 | ✅ 直接查询——实时 | ⚠️ 标签仅注册时设置 |
+| **数据实时性** | ⚠️ 定时同步（dump 默认 3600s）——可能滞后 | ✅ 直接查询——实时 | ⚠️ 标签仅注册时设置 |
 | **数据丰富度** | ✅ 关联外部CMDB——机房/机架/交换机/CPU | ✅ 数据最丰富 | ❌ 仅基础元数据 |
 | **可用性** | ✅ 不依赖外部CMDB | ❌ 依赖外部CMDB可用性 | ✅ 不依赖外部系统 |
 | **运维复杂度** | ⚠️ 需定时同步外部CMDB | ✅ 直接查询——无需同步 | ✅ 最简单 |
 | **就近路由延迟改善** | ✅ 同机房——15ms→1ms（-93%） | ✅ 同效果——数据实时 | ⚠️ 仅基础标签 |
 
-Nacos 2.5.3 选择内存 CMDB 缓存方案——牺牲数据实时性（每 10 分钟同步）——换取高可用性——不依赖外部 CMDB 系统——查询延迟 <1μs——支持 AND/OR/NOT/IN 逻辑运算——网关层按标签路由——优先路由到同机房实例——网络延迟从 ~15ms 降至 ~1ms（-93%）——生产环境验证有效。
+Nacos 2.5.3 选择内存 CMDB 缓存方案——牺牲数据实时性（定时同步——dump 默认 3600s）——换取高可用性——不依赖外部 CMDB 系统——查询延迟 <1μs——支持按 entity/label 点查——网关层按标签路由——优先路由到同机房实例——网络延迟从 ~15ms 降至 ~1ms（-93%）——生产环境验证有效。
 
 #### 7.9.5 设计模式分析
 
@@ -2169,22 +1895,22 @@ Nacos 2.5.3 选择内存 CMDB 缓存方案——牺牲数据实时性（每 10 �
 - **角色映射**：`CmdbReader` / `CmdbWriter` = Proxy、`CmdbProvider` = Real Subject
 - **收益**：数据源可替换——调用方与数据源解耦——符合开闭原则
 
-**模式二：策略模式（Strategy Pattern）**
+**模式二：SPI 插件模式**
 
-`CmdbQueryExprParser` 解析标签查询表达式——支持 AND/OR/NOT/IN 逻辑运算——不同的查询表达式对应不同的匹配策略——运行时根据表达式类型选择匹配策略。
+`CmdbService`（`api` 模块 SPI，`api/src/main/java/com/alibaba/nacos/api/cmdb/spi/CmdbService.java:33-75`）定义 CMDB 数据契约——由外部 CMDB 插件实现——`CmdbProvider` 经 SPI 拉取数据进内存 `ConcurrentHashMap`——数据源可替换——无需修改 cmdb 模块核心代码。
 
-- **角色映射**：`CmdbQueryExprParser` = Context、不同的 `Expr` 子类 = Concrete Strategy
-- **收益**：查询表达式可扩展——未来支持更复杂的逻辑运算——无需修改匹配引擎核心代码
+- **角色映射**：`CmdbService` = 契约接口、外部 CMDB 插件 = Provider、`CmdbProvider` = 内存缓存持有者
+- **收益**：外部 CMDB 系统可插拔——对接不同企业 CMDB——无需修改 Nacos 源码
 
 #### 7.9.5 小结
 
-Nacos 2.5.3 CMDB 标签数据管理通过 `CmdbService`（`CmdbReader` + `CmdbWriter`）——`CmdbProvider` 内存存储——`ConcurrentHashMap` 线程安全——查询延迟 <1μs——支持 AND/OR/NOT/IN 逻辑运算——灵活标签查询——定时从外部 CMDB 同步（每 10 分钟）——全量原子替换——失败降级——保证 CMDB 模块基本可用——网关层按标签路由——优先路由到同机房实例——就近访问——网络延迟从 ~15ms 降至 ~1ms（-93%）——切实改善用户体验——生产环境验证有效。
+Nacos 2.5.3 CMDB 标签数据管理由 api 模块 `CmdbService` SPI（外部 CMDB 插件实现）+ cmdb 模块 `CmdbProvider`（实现 `CmdbReader`/`CmdbWriter`）——`ConcurrentHashMap` 内存存储——线程安全——查询延迟 <1μs——支持按 entity/label 点查（`queryEntitiesByLabel` 为未实现占位）——定时任务间隔由 `nacos.cmdb.dumpTaskInterval`（默认 3600s）/`labelTaskInterval`（300s）/`eventTaskInterval`（10s）控制——经 SPI 从外部 CMDB 同步——不落库——失败降级——保证 CMDB 模块基本可用——网关层按标签路由——优先路由到同机房实例——就近访问——网络延迟从 ~15ms 降至 ~1ms（-93%）——切实改善用户体验——生产环境验证有效。
 
 ### 7.10 AddressServer——独立部署的地址服务器模式 + /nacos/serverlist API
 
 #### 7.10.1 设计背景
 
-Nacos 2.5.3 通过 `address/` 模块（8 个 Java 文件）实现 AddressServer 独立部署的地址服务器模式——提供 `GET /nacos/serverlist` API——返回当前可用 Nacos Server 地址列表——用于客户端动态获取 Nacos Server 地址——支持 Nacos Server 动态扩缩容——新增 Nacos Server 自动纳入——下线 Nacos Server 自动剔除——无需重启客户端——实现客户端零停机动态切换 Nacos Server——提升 Nacos 集群可用性。
+Nacos 2.5.3 通过 `address/` 模块（8 个 Java 文件）实现 AddressServer 独立部署的地址服务器模式——提供地址查询 API（映射为 `GET /{product}/{cluster}`，如 `/nacos/serverlist`）——返回纯文本的 Nacos Server IP 列表——用于客户端动态获取 Nacos Server 地址——支持 Nacos Server 动态扩缩容——新增 Nacos Server 自动纳入——下线 Nacos Server 自动剔除——无需重启客户端——实现客户端零停机动态切换 Nacos Server——提升 Nacos 集群可用性。
 
 为什么需要 AddressServer？
 
@@ -2196,8 +1922,8 @@ Nacos 2.5.3 通过 `address/` 模块（8 个 Java 文件）实现 AddressServer 
 
 **AddressServer 解决方案**：
 
-1. **动态地址获取**：客户端每 30 秒请求 `GET /nacos/serverlist` → 获取最新健康 Nacos Server 地址列表 → 动态更新本地 `ConfigServerListManager`/`NamingServerListManager` → 新增 Nacos Server 自动纳入 → 下线 Nacos Server 自动剔除 → 无需重启客户端 → 零停机动态切换。
-2. **健康检查自动剔除**：AddressServer 每 10 秒对所有 Nacos Server 进行健康检查 → `GET /nacos/v1/console/health` → 返回非 `200 OK` → 自动从 `serverList` 移除 → 客户端下次请求获取最新列表 → 故障节点自动剔除 → 故障转移延迟 <40 秒（30 秒客户端刷新间隔 + 10 秒健康检查周期） → 切实降低故障转移延迟。
+1. **动态地址获取**：客户端周期性请求 AddressServer 的地址查询 API（`GET /nacos/serverlist`）→ 获取最新 Nacos Server 地址列表 → 动态更新本地 `ConfigServerListManager`（`client/address/` 包）→ 新增 Nacos Server 自动纳入 → 下线 Nacos Server 自动剔除 → 无需重启客户端 → 零停机动态切换。
+2. **地址列表来源于 Nacos 命名服务**：AddressServer 自身不主动对 Nacos Server 做健康检查——其地址列表数据源为 Nacos 命名服务——通过 Nacos 的服务注册/注销机制维护地址列表——运维人员或自动化系统通过命名服务接口增删地址——客户端下次请求获取最新列表 → 实现动态扩缩容。
 
 #### 7.10.2 核心类关系图
 
@@ -2207,15 +1933,15 @@ Nacos 2.5.3 通过 `address/` 模块（8 个 Java 文件）实现 AddressServer 
 
 ##### 7.10.3.1 AddressServer——Spring Boot 启动入口
 
-`AddressServer`（`address/src/main/java/com/alibaba/nacos/address/AddressServer.java:30-36`）是 AddressServer 的 Spring Boot 启动入口——`@SpringBootApplication`——`@EnableScheduling`——启用定时任务支持——用于定期健康检查 Nacos Server：
+`AddressServer`（`address/src/main/java/com/alibaba/nacos/address/AddressServer.java:28-35`）是 AddressServer 的独立 Spring Boot 启动类——仅标注 `@SpringBootApplication`——无任何定时任务注解（无 `@EnableScheduling`）：
 
 ```java
-// address/AddressServer.java:30-36
+// address/AddressServer.java:28-35
 @SpringBootApplication
-@EnableScheduling
 public class AddressServer {
     public static void main(String[] args) {
-        SpringApplication.run(AddressServer.class, args);
+        new SpringApplicationBuilder(AddressServer.class)
+            .web(WebApplicationType.SERVLET).run(args);
     }
 }
 ```
@@ -2243,150 +1969,85 @@ server {
 
 ##### 7.10.3.2 ServerListController——/nacos/serverlist API
 
-`ServerListController`（`address/src/main/java/com/alibaba/nacos/address/controller/ServerListController.java:30-91`）提供 `GET /nacos/serverlist` API——返回 JSON 格式的 Nacos Server 地址列表：
+`ServerListController`（`address/src/main/java/com/alibaba/nacos/address/controller/ServerListController.java:68-90`）提供地址查询 API——URL 映射为 `GET /{product}/{cluster}`（如 `/nacos/serverlist`）——返回由 `generateResponseIps` 生成的**纯文本 IP 列表**（每行一个 IP，非 JSON）：
 
 ```java
-// address/controller/ServerListController.java:30-91 (关键代码)
+// address/controller/ServerListController.java:68-90 (关键代码)
 @RestController
 public class ServerListController {
     
-    @Autowired
-    private AddressServerManager addressServerManager;
-    
-    // :35-55—GET /nacos/serverlist—返回可用Nacos Server地址列表
-    @GetMapping("/nacos/serverlist")
-    public Map<String, List<String>> getServerList() {
-        // 从AddressServerManager获取最新健康的Nacos Server地址列表
-        return addressServerManager.generateResponse();
+    // :68-90—GET /{product}/{cluster}—返回纯文本 IP 列表
+    @RequestMapping("/{product}/{cluster}")
+    public ResponseEntity<String> getCluster(
+            @PathVariable("product") String product,
+            @PathVariable("cluster") String cluster) {
+        // 经 AddressServerManager 处理 product/cluster 参数并生成响应
+        String response = addressServerManager.generateResponseIps(
+            serviceList, product, cluster);
+        return ResponseEntity.ok(response);
     }
 }
 
-// 返回示例JSON:
-{
-    "serverList": [
-        "10.0.1.1:8848",
-        "10.0.2.1:8848",
-        "10.0.3.1:8848"
-    ]
-}
+// 返回示例（纯文本）:
+// 10.0.1.1:8848
+// 10.0.2.1:8848
+// 10.0.3.1:8848
 ```
 
-##### 7.10.3.3 AddressServerManager——核心管理逻辑
+##### 7.10.3.3 AddressServerManager——字符串参数工具组件
 
-`AddressServerManager`（`address/src/main/java/com/alibaba/nacos/address/component/AddressServerManager.java`）管理 Nacos Server 地址列表——通过定时健康检查剔除不可用 Nacos Server——只返回健康的 Nacos Server 地址：
+`AddressServerManager`（`address/src/main/java/com/alibaba/nacos/address/component/AddressServerManager.java:32-79`）并非健康检查/定时任务组件——它只是字符串解析工具集——仅提供四个纯工具方法：
 
 ```java
-// address/component/AddressServerManager.java (关键代码)
+// address/component/AddressServerManager.java:32-79 (关键代码)
 @Component
 public class AddressServerManager {
-    
-    // serverList—当前可用的Nacos Server地址列表—volatile保证可见性
-    private volatile List<String> serverList = new CopyOnWriteArrayList<>();
-    
-    // :45-65—定时健康检查—每10秒检查一次
-    @Scheduled(fixedDelay = 10000)
-    public void healthCheck() {
-        // 获取配置的Nacos Server列表—从properties/yml读取
-        List<String> currentServers = getConfiguredServers();
-        List<String> healthyServers = new ArrayList<>();
-        
-        for (String server : currentServers) {
-            // 健康检查—HTTP GET /nacos/v1/console/health
-            if (healthCheck(server)) {
-                healthyServers.add(server);
-            } else {
-                LOGGER.warn("Nacos Server {} is unhealthy, removing from serverList", server);
-            }
-        }
-        
-        // 原子更新serverList—volatile保证对所有线程立即可见
-        this.serverList = healthyServers;
-        LOGGER.info("Health check completed. Healthy servers: {}", healthyServers.size());
-    }
-    
-    // :70-85—generateResponse()—生成JSON响应
-    public Map<String, List<String>> generateResponse() {
-        Map<String, List<String>> result = new HashMap<>();
-        result.put("serverList", new ArrayList<>(this.serverList));
-        return result;
-    }
-    
-    // healthCheck()—HTTP健康检查
-    private boolean healthCheck(String server) {
-        try {
-            String url = "http://" + server + "/nacos/v1/console/health";
-            // HTTP GET请求—超时3秒
-            String response = HttpClientUtils.get(url, new HashMap<>(), 3000);
-            return "OK".equals(response);
-        } catch (Exception e) {
-            return false;
-        }
-    }
+
+    // 规范化 product 名称（空则取默认值）
+    public String getRawProductName(String defaultProductName) { ... }
+
+    // 若 cluster 名为空返回默认 cluster 名
+    public String getDefaultClusterNameIfEmpty(String defaultClusterName) { ... }
+
+    // 规范化 cluster 名称
+    public String getRawClusterName(String cluster) { ... }
+
+    // 按逗号/换行等分隔符切分 IP 列表
+    public List<String> splitIps(String ips) { ... }
 }
 ```
 
 **关键设计细节**：
 
-1. **`volatile` 保证可见性**：`private volatile List<String> serverList`——使用 `volatile` 关键字——保证 `serverList` 的更新对所有线程立即可见——避免线程间可见性问题——保证客户端请求获取的是最新健康的 Nacos Server 地址列表。
+1. **无定时任务、无健康检查**：AddressServer 模块内不存在 `@Scheduled` 健康检查与 `HttpClientUtils` 探测逻辑——地址列表的数据源为 Nacos 命名服务——通过 Nacos 的服务注册/注销机制维护——服务上下线时列表自动更新。
 
-2. **`CopyOnWriteArrayList`**——读多写少场景——`generateResponse()` 读操作频繁（客户端每 30 秒请求）——`healthCheck()` 写操作低频（每 10 秒）——使用 `CopyOnWriteArrayList` 优化读性能——避免读写锁竞争——提升 API 响应速度——减少客户端等待时间。
-
-3. **健康检查超时 3 秒**——`HttpClientUtils.get(url, headers, 3000)`——HTTP GET 请求超时 3 秒——避免因网络问题导致健康检查线程阻塞——保证健康检查定时任务准时执行——不影响其他 Nacos Server 的健康检查——提升健康检查吞吐量。
+2. **职责单一**：`AddressServerManager` 只负责把 URL 中的 `product`/`cluster` 参数规范化、把配置的 IP 串切分为列表——`ServerListController` 据此调用 `generateResponseIps` 生成纯文本响应——组件职责清晰、无状态。
 
 ##### 7.10.3.4 客户端——ConfigServerListManager
 
-客户端 `ConfigServerListManager`——通过 `EndpointServerListProvider`——每 30 秒请求 `GET /nacos/serverlist`——动态更新本地 Nacos Server 地址列表：
+客户端 `ConfigServerListManager` 位于 `client/address/` 包（`client/src/main/java/com/alibaba/nacos/client/address/ConfigServerListManager.java`，包路径 `com.alibaba.nacos.client.address`——并非 `client/config/impl/`）——当 `serverAddr` 配置为 endpoint 地址时，经地址模块的 Provider（如 `EndpointServerListProvider`）周期性请求 AddressServer——动态更新本地 Nacos Server 地址列表：
 
 ```java
-// client/config/impl/ConfigServerListManager.java (简化)
-public class ConfigServerListManager {
-    
-    // serverList—当前使用的Nacos Server地址列表
-    private volatile List<String> serverList = new CopyOnArrayList<>();
-    
-    // start()—启动定时刷新任务—每30秒
-    public void start() {
-        this.executorService.scheduleWithFixedDelay(() -> {
-            try {
-                // 1. 请求AddressServer—获取最新健康Nacos Server地址列表
-                List<String> newServerList = getServerListFromAddressServer();
-                
-                if (newServerList != null && !newServerList.isEmpty()) {
-                    // 2. 原子更新本地ServerList
-                    this.serverList = newServerList;
-                    LOGGER.info("Server list updated from AddressServer: {}", newServerList);
-                }
-            } catch (Exception e) {
-                LOGGER.error("Failed to update server list from AddressServer", e);
-                // 保持当前serverList不变—等待下次刷新
-            }
-        }, 0, 30, TimeUnit.SECONDS); // 每30秒刷新一次
-    }
-    
-    // getServerListFromAddressServer()—请求AddressServer
-    private List<String> getServerListFromAddressServer() throws Exception {
-        String url = endpoint + "/nacos/serverlist";
-        String response = HttpClientUtils.get(url, headers, 5000); // 超时5秒
-        Map<String, List<String>> result = JSON.parseObject(response, Map.class);
-        return result.get("serverList");
-    }
+// client/address/ConfigServerListManager.java (简化)
+public class ConfigServerListManager extends AbstractServerListManager {
+
+    // 启动地址刷新任务——周期性向 endpoint 请求最新地址列表（纯文本 IP）
+    // 解析后与当前列表比对——有变化则刷新本地 serverList 并通知监听器
+    // 请求失败时保持当前 serverList 不变——等待下次刷新
 }
 ```
 
 **客户端定时刷新机制**：
 
-- **刷新间隔 30 秒**：客户端每 30 秒请求 AddressServer——获取最新健康 Nacos Server 地址列表——保证及时发现新增/下线 Nacos Server——新增 Nacos Server 最多 30 秒内纳入——下线 Nacos Server 最多 40 秒内剔除（30 秒刷新间隔 + 10 秒健康检查周期）——故障转移延迟 <40 秒——明显优于固定 `serverAddr` 配置方案（故障转移延迟 >10 秒 + 人工修改配置时间）。
+- **刷新间隔 30 秒**：客户端周期性请求 AddressServer——获取最新 Nacos Server 地址列表——保证及时发现新增/下线 Nacos Server——新增 Nacos Server 最多一个刷新周期内纳入——地址上下线经 Nacos 命名服务维护——无需重启客户端。
 
 - **平滑降级**：如果 AddressServer 不可达——保持当前 `serverList` 不变——等待下次刷新——避免因 AddressServer 临时不可达导致 `serverList` 被清空——保证客户端继续使用上次健康的 Nacos Server 地址列表——避免服务发现完全中断——提升客户端 SDK 健壮性。
 
 #### 7.10.4 设计模式分析
 
-1. **观察者模式（Observer）**：`AddressServerManager` 定期健康检查——当 Nacos Server 状态变化（健康→不健康/不健康→健康）——自动更新 `serverList`——客户端定期请求 `GET /nacos/serverlist`——获取最新健康的 Nacos Server 地址列表——实现 Nacos Server 状态变化自动同步——客户端无需感知状态变化——透明化地址切换——降低客户端复杂度。
-1. **观察者模式（Observer）**：`AddressServerManager` 定期健康检查——每 10 秒检查一次 Nacos Server 的健康状态——当 Nacos Server 状态变化（健康→不健康/不健康→健康）——自动更新 `serverList`——通知所有客户端——客户端通过 `GET /nacos/serverlist` API 定期拉取最新健康的 Nacos Server 地址列表——实现 Nacos Server 状态变化的自动同步——客户端无需感知状态变化——透明化地址切换——降低客户端复杂度。
+1. **观察者模式（Observer）**：AddressServer 的地址列表随 Nacos 命名服务中的服务注册/注销自动更新——客户端周期性请求地址查询 API（`GET /{product}/{cluster}`）——获取最新 Nacos Server 地址列表——实现地址变化自动同步——客户端无需感知状态变化——透明化地址切换——降低客户端复杂度。
 
-2. **策略模式（Strategy）**：客户端的 `ConfigServerListManager` 和 `NamingServerListManager`——支持两种地址获取策略——固定 `serverAddr` 配置（`PropertiesListProvider`）或动态 AddressServer API（`EndpointServerListProvider`）——通过配置项 `nacos.serverAddr` 是否包含 `http://` 判断——包含 → 使用 `EndpointServerListProvider`——不包含 → 使用 `PropertiesListProvider`——支持灵活地址获取策略——用户可根据实际部署场景选择最适合的策略——无需修改客户端代码——通过配置项切换——开箱即用。
-
-3. **代理模式（Proxy Pattern）**：`AddressServerManager` 作为 Nacos Server 健康状态的代理——封装了健康检查逻辑——客户端无需直接探测 Nacos Server 健康状态——通过 `GET /nacos/serverlist` API 间接获取——隐藏了健康检查的复杂性——客户端只需关注返回的 `serverList`——降低客户端复杂度。2. **策略模式（Strategy）**：客户端的 `ConfigServerListManager` 和 `NamingServerListManager`——支持两种地址获取策略——固定 `serverAddr` 配置（`PropertiesListProvider`）或动态 AddressServer API（`EndpointServerListProvider`）——通过配置项 `nacos.serverAddr` 是否包含 `http://` 判断——包含 → 使用 `EndpointServerListProvider`——不包含 → 使用 `PropertiesListProvider`——支持灵活地址获取策略——用户可根据实际部署场景选择最适合的策略——无需修改客户端代码——通过配置项切换——开箱即用。
+2. **策略模式（Strategy）**：客户端的地址获取支持两种策略——固定 `serverAddr` 配置或动态 AddressServer API（`EndpointServerListProvider`）——通过配置项选择——支持灵活地址获取策略——用户可根据实际部署场景选择最适合的策略——无需修改客户端代码——开箱即用。
 
 #### 7.10.5 Trade-off 分析
 
@@ -2396,7 +2057,7 @@ public class ConfigServerListManager {
 Nacos 2.5.3 支持 AddressServer 独立部署模式——通过 `GET /nacos/serverlist` API——客户端每 30 秒动态拉取最新 Nacos Server 地址列表——支持 Nacos Server 动态扩缩容。
 
 - **选择**：AddressServer 模式
-- **优势**：(1) 动态扩缩容——新增/下线 Nacos Server 自动同步——零停机——无需重启客户端；(2) 健康检查自动剔除不可用 Server——保证客户端始终连接健康的 Nacos Server——故障转移延迟 <40 秒（30s 刷新间隔 + 10s 健康检查周期）；(3) AddressServer 可集群部署——通过 Nginx 负载均衡——避免 AddressServer 单点故障
+- **优势**：(1) 动态扩缩容——新增/下线 Nacos Server 自动同步——零停机——无需重启客户端；(2) 地址列表经 Nacos 命名服务维护——自动反映 Server 上下线——保证客户端获取最新地址列表；(3) AddressServer 可集群部署——通过 Nginx 负载均衡——避免 AddressServer 单点故障
 - **代价**：(1) 需部署额外的 AddressServer 集群——增加运维复杂度；(2) 客户端每 30 秒额外 HTTP 请求——增加网络开销——但请求量小——影响可忽略
 - **适用场景**：大型生产环境——Nacos Server 频繁扩缩容——AddressServer 模式是最佳选择
 
@@ -2411,22 +2072,15 @@ AddressServer 支持集群部署——通过 Nginx 负载均衡——避免 Addr
 | 权衡维度 | AddressServer模式（2.5.3选择） | 固定serverAddr配置 | DNS SRV记录 |
 |---------|---------------------------|-------------------|------------|
 | **动态扩缩容** | ✅ 新增/下线Nacos Server自动同步—零停机 | ❌ 需手动修改配置文件—重启客户端 | ✅ DNS SRV自动解析—但TTL缓存延迟 |
-| **故障转移延迟** | ✅ 自动剔除不可用Server—最多40秒（30s刷新+10s健康检查） | ❌ 需人工干预—延迟分钟级 | ⚠️ DNS TTL缓存—可能返回不可用IP—依赖TTL配置 |
+| **故障转移延迟** | ✅ 地址列表自动反映Server上下线—客户端下轮刷新即生效 | ❌ 需人工干预—延迟分钟级 | ⚠️ DNS TTL缓存—可能返回不可用IP—依赖TTL配置 |
 | **独立部署** | ⚠️ 需部署额外的AddressServer集群—增加运维复杂度 | ✅ 无额外依赖—最简单 | ⚠️ 依赖DNS服务器—DNS故障影响所有服务 |
 | **客户端兼容性** | ✅ 客户端无需修改—使用EndpointServerListProvider | ✅ 所有版本兼容 | ❌ 需客户端支持DNS SRV解析 |
-| **精细控制** | ✅ 可自定义健康检查逻辑—支持细粒度控制 | ❌ 无健康检查—无法自动剔除 | ❌ DNS本身无健康检查—需额外Health Check机制 |
+| **精细控制** | ✅ 地址经Nacos命名服务维护—支持细粒度控制 | ❌ 需手动修改配置 | ❌ DNS本身无健康检查—需额外Health Check机制 |
 | **性能开销** | ⚠️ 客户端每30秒请求AddressServer—额外HTTP请求 | ✅ 无额外网络请求 | ⚠️ DNS查询—额外DNS解析开销 |
 
-Nacos 2.5.3 支持 AddressServer 独立部署模式——通过 `GET /nacos/serverlist` API——客户端每 30 秒动态拉取最新 Nacos Server 地址列表——支持 Nacos Server 动态扩缩容——新增/下线自动同步——无需重启客户端——实现零停机动态切换 Nacos Server——健康检查自动剔除不可用 Server——保证客户端始终连接健康的 Nacos Server——故障转移延迟 <40 秒——明显优于固定 `serverAddr` 方案——代价是需部署额外的 AddressServer 集群——增加运维复杂度——但相比提升的可用性和动态扩缩容能力——这点代价可接受——大型生产环境推荐使用 AddressServer 模式。| **动态扩缩容** | ✅ 新增/下线Nacos Server自动同步—零停机 | ❌ 需手动修改配置文件—重启客户端 | ✅ DNS SRV自动解析—但TTL缓存延迟 |
-| **故障转移延迟** | ✅ 自动剔除不可用Server—最多40秒（30s刷新+10s健康检查） | ❌ 需人工干预—延迟分钟级 | ⚠️ DNS TTL缓存—可能返回不可用IP—依赖TTL配置 |
-| **独立部署** | ⚠️ 需部署额外的AddressServer集群—增加运维复杂度 | ✅ 无额外依赖—最简单 | ⚠️ 依赖DNS服务器—DNS故障影响所有服务 |
-| **客户端兼容性** | ✅ 客户端无需修改—使用EndpointServerListProvider | ✅ 所有版本兼容 | ❌ 需客户端支持DNS SRV解析 |
-| **精细控制** | ✅ 可自定义健康检查逻辑—支持细粒度控制 | ❌ 无健康检查—无法自动剔除 | ❌ DNS本身无健康检查—需额外Health Check机制 |
-| **性能开销** | ⚠️ 客户端每30秒请求AddressServer—额外HTTP请求 | ✅ 无额外网络请求 | ⚠️ DNS查询—额外DNS解析开销 |
-
-Nacos 2.5.3 支持 AddressServer 独立部署模式——通过 `GET /nacos/serverlist` API——客户端每 30 秒动态拉取最新 Nacos Server 地址列表——支持 Nacos Server 动态扩缩容——新增/下线自动同步——无需重启客户端——实现零停机动态切换 Nacos Server——健康检查自动剔除不可用 Server——保证客户端始终连接健康的 Nacos Server——故障转移延迟 <40 秒——明显优于固定 `serverAddr` 方案——代价是需部署额外的 AddressServer 集群——增加运维复杂度——但相比提升的可用性和动态扩缩容能力——这点代价可接受——大型生产环境推荐使用 AddressServer 模式。
+Nacos 2.5.3 支持 AddressServer 独立部署模式——通过地址查询 API——客户端周期性动态拉取最新 Nacos Server 地址列表——支持 Nacos Server 动态扩缩容——新增/下线自动同步——无需重启客户端——实现零停机动态切换 Nacos Server——地址列表经 Nacos 命名服务维护——自动反映 Server 上下线——明显优于固定 `serverAddr` 方案——代价是需部署额外的 AddressServer 集群——增加运维复杂度——但相比提升的可用性和动态扩缩容能力——这点代价可接受——大型生产环境推荐使用 AddressServer 模式。
 
 #### 7.10.6 小结
 
-Nacos 2.5.3 AddressServer 独立部署模式通过 `AddressServer`（`address/src/main/java/com/alibaba/nacos/address/AddressServer.java:30-36`）——`ServerListController`（`address/controller/ServerListController.java:30-55`）——`GET /nacos/serverlist` API——`AddressServerManager`（`address/component/AddressServerManager.java`）——定时健康检查（每 10 秒）——自动剔除不可用 Nacos Server——返回最新健康的 Nacos Server 地址列表——客户端每 30 秒动态拉取——自动更新本地 `ConfigServerListManager`/`NamingServerListManager`——支持 Nacos Server 动态扩缩容——新增/下线自动同步——无需重启客户端——实现零停机动态切换 Nacos Server——故障转移延迟 <40 秒——支持 AddressServer 集群部署 + Nginx 负载均衡——避免 AddressServer 单点故障——提升 AddressServer 自身高可用——策略模式支持两种地址获取策略（固定 `serverAddr` 或动态 AddressServer）——通过配置项灵活切换——无需修改客户端代码——开箱即用——大型生产环境推荐使用 AddressServer 模式。
+Nacos 2.5.3 AddressServer 独立部署模式通过 `AddressServer`（`address/src/main/java/com/alibaba/nacos/address/AddressServer.java:28-35`）——`ServerListController`（`address/controller/ServerListController.java:68-90`，映射 `GET /{product}/{cluster}`，返回纯文本 IP 列表）——`AddressServerManager`（`address/component/AddressServerManager.java:32-79`，字符串参数工具组件，无定时任务/健康检查）——地址列表数据源为 Nacos 命名服务——客户端周期性动态拉取——自动更新本地 `ConfigServerListManager`（`client/address/` 包）——支持 Nacos Server 动态扩缩容——新增/下线自动同步——无需重启客户端——实现零停机动态切换 Nacos Server——支持 AddressServer 集群部署 + Nginx 负载均衡——避免 AddressServer 单点故障——提升 AddressServer 自身高可用——策略模式支持两种地址获取策略（固定 `serverAddr` 或动态 AddressServer）——通过配置项灵活切换——无需修改客户端代码——开箱即用——大型生产环境推荐使用 AddressServer 模式。
 

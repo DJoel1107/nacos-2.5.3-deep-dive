@@ -111,7 +111,7 @@ Config 模块由 controller → service → repository 三层纵向调用，横�
 
 **观察者 / 订阅-发布模式（Observer & Publish-Subscribe）**
 `NotifyCenter` 是核心的事件总线，`DumpService`、`AsyncNotifyService`、`LongPollingService`、`RpcConfigChangeNotifier` 都是订阅者。该模式的本质是把"发布者"与"消费方"解耦——`publishConfig` 无需知道谁关心这次变更。
-- Trade-off 1：事件总线带来解耦，但引入"事件丢失"风险。`NotifyCenter` 默认每个 topic 使用 `ringBufferSize`（默认 16384）大小的环形缓冲，同一 topic 的发布者与消费速度不匹配时可能覆盖旧事件。Nacos 通过 `lastModifiedTs` 时间戳 + dump 时的时间戳新旧校验（`ConfigCacheService.dumpWithMd5()` 中 `if (lastModified <= oldLastModified) return false`）来兜底，保证旧事件不会回写新缓存——这是"用事件发布换取低耦合、用时间戳换取最终一致性"的典型设计。
+- Trade-off 1：事件总线带来解耦，但引入"事件丢失"风险。`NotifyCenter` 默认每个 topic 使用 `ringBufferSize`（默认 16384）大小的环形缓冲，同一 topic 的发布者与消费速度不匹配时可能覆盖旧事件。Nacos 通过 `lastModifiedTs` 时间戳 + dump 时的时间戳新旧校验（`ConfigCacheService.dumpWithMd5()` 中 `if (lastModifiedTs < ConfigCacheService.getLastModifiedTs(groupKey)) { return true; }`——时间戳不新于本地缓存时直接跳过落盘并返回 true）来兜底，保证旧事件不会回写新缓存——这是"用事件发布换取低耦合、用时间戳换取最终一致性"的典型设计。
 
 **中介者模式（Mediator）：ConfigChangePublisher 作为统一网关**
 `ConfigChangePublisher` 是所有配置变更事件的唯一出口，内部还做了一道分发前过滤：当处于嵌入式存储（Derby）且非单机模式时直接 return（因为嵌入式存储下集群数据本就共享同一份本地库，无需再向自身派发）。这一设计把"是否应该派发事件"的判定集中到单一入口。
@@ -385,7 +385,7 @@ CREATE TABLE `config_info` (
 
 **写入路径中的表操作**（`ExternalConfigInfoPersistServiceImpl`）：
 - `insertOrUpdateCas()`（行 202）→ `updateConfigInfoCas()`（行 580）在事务内"先查后改"；
-- `updateConfigInfoAtomicCas()`（行 634）构造 `WHERE data_id=? AND group_id=? AND tenant_id=? AND md5=?` 的条件 UPDATE，md5 作为版本列参与比较（行 676-690）；
+- `updateConfigInfoAtomicCas()`（行 634）构造 `WHERE data_id=? AND group_id=? AND tenant_id=? AND md5=?` 的条件 UPDATE，md5 作为版本列参与比较（行 658-663）；
 - `updateConfigInfoAtomic()`（行 676）执行 `UPDATE config_info SET content=?, md5=?, ..., encrypted_data_key=? WHERE data_id=? AND group_id=? AND tenant_id=?`；
 - 写入前通过 `MD5Utils.md5Hex(configInfo.getContent(), Constants.PERSIST_ENCODE)` 计算新 md5（行 634）。
 
@@ -508,8 +508,8 @@ HTTP 长轮询（Long Polling）是 Nacos 面向老版本 SDK（1.x 及未升级
 
 需要说明的是，长轮询引擎关心的是「本地是否已把最新配置落好」，而非「数据库是否写入」。配置变更的完整事件链是：发布 → `ConfigDataChangeEvent` → DumpService 落盘 → `ConfigCacheService.dump` 成功后在 `CACHE` 中更新 MD5 与时间戳并 `NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))`。因此 LongPollingService 订阅的是 `LocalDataChangeEvent`（本地落盘完成信号），这保证唤醒客户端时本地文件与 JVM 缓存一定已是最新，客户端随后拉取不会读到旧值。引用如下：
 
-- `LongPollingService` 构造器（config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:147-168）：初始化 `allSubs`、调度 `StatTask`、注册 `LocalDataChangeEvent` 订阅器与 publisher。
-- `ConfigCacheService` 落盘后发布（config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:304）：`NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))`。
+- `LongPollingService` 构造器（config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:230-256）：初始化 `allSubs`、调度 `StatTask`、注册 `LocalDataChangeEvent` 订阅器与 publisher。
+- `ConfigCacheService` 落盘后发布（config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:367）：`NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))`。
 
 **（2）入口：addLongPollingClient() 五步处理**
 
@@ -644,19 +644,19 @@ HTTP 长轮询（Long Polling）是 Nacos 面向老版本 SDK（1.x 及未升级
 
 `DumpService` 拉取最新配置内容，调用 `ConfigCacheService` 的 dump 系列方法写入磁盘缓存与 JVM 缓存。`ConfigCacheService` 在 MD5/时间戳确实变化、成功更新缓存后，`NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))` 发出「本地已就绪」信号——这是**长轮询能安全推送的前提**：只有本地缓存与磁盘都已是新值，唤醒客户端去拉取才拿得到新内容。引用：
 
-- `ConfigCacheService` 变更后发布（config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:304）：dump 成功后 `publishEvent(new LocalDataChangeEvent(groupKey))`。
+- `ConfigCacheService` 变更后发布（config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:367）：dump 成功后 `publishEvent(new LocalDataChangeEvent(groupKey))`。
 
 **（3）唤醒侧：DataChangeTask 提前释放匹配连接**
 
 `LocalDataChangeEvent` 被 `LongPollingService` 构造器注册的订阅器捕获（onEvent 把事件包装成 `DataChangeTask`），提交到长轮询执行器。`DataChangeTask.run()` 遍历 `allSubs`，命中订阅了该分组的 `ClientLongPolling`，`iter.remove()` 摘除后 `sendResponse(singletonList(groupKey))` 通知其变更。于是挂起连接被「提前」释放（而非等待超时）。引用：
 
-- `LongPollingService` 构造器注册订阅器（config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:154-164）：`onEvent` 将 `LocalDataChangeEvent` 包装为 `DataChangeTask`。
+- `LongPollingService` 构造器注册订阅器（config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:239-254）：`onEvent` 将 `LocalDataChangeEvent` 包装为 `DataChangeTask`。
 
 **（4）客户端侧：先收 key、再拉内容**
 
 客户端收到服务端返回的变更分组 key 列表（`MD5Util.compareMd5ResultString` 编码），对每个变更 key 调用 `GET /v1/cs/configs?dataId=&group=` 拉取最新内容——`ConfigServletInner.doGetConfig()` 经配置查询链返回配置 JSON。拉取成功后，客户端本地 MD5 更新，下一轮长轮询探测携带新 MD5。引用：
 
-- `ConfigServletInner.doGetConfig()`（config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java:135-173）：`doGetConfig` 入口，经 `configQueryChainService.handle` 返回配置并按 V1/V2 版本分支写响应。
+- `ConfigServletInner.doGetConfig()`（config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java:135-160）：`doGetConfig` 入口，经 `configQueryChainService.handle` 返回配置并按 V1/V2 版本分支写响应。
 
 ### 3.9.3 完整时序图（变更路径 + 超时路径）
 
@@ -736,7 +736,7 @@ HTTP 长轮询（Long Polling）是 Nacos 面向老版本 SDK（1.x 及未升级
 
 `NotifySingleRpcTask` 继承 `AbstractDelayTask` 并实现 `merge(AbstractDelayTask task)`——注释说明「do nothing, tasks with the same dataId and group, later will replace the previous」。在延迟任务管理器（TaskManager）中，同一分组的后到任务会替换先到任务，避免对同一节点堆积同一分组的重复通知。引用：
 
-- `NotifySingleRpcTask.merge()`（config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:277-280）：同分组后任务替换前任务。
+- `NotifySingleRpcTask.merge()`（config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:296-299）：同分组后任务替换前任务。
 
 **（6）HTTP 遗留面：CommunicationController 仅剩查询**
 
@@ -789,7 +789,7 @@ Nacos 配置中心部署为多节点集群时，一个配置变更（发布、�
 
 #### 3.11.3.1 CommunicationController 双端点：订阅者信息查询
 
-`CommunicationController`（`config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java:116`）通过 `@RequestMapping(Constants.COMMUNICATION_CONTROLLER_PATH)` 映射到 `/v1/cs/communication` 路径。构造器注入了三个依赖：负责 HTTP 长轮询通道的 `LongPollingService`、负责 gRPC 订阅状态的 `ConfigChangeListenContext` 与全局连接管理 `ConnectionManager`，构成"一个端点聚合两条订阅通道"的设计。
+`CommunicationController`（`config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java:49-52`）通过 `@RequestMapping(Constants.COMMUNICATION_CONTROLLER_PATH)` 映射到 `/v1/cs/communication` 路径。构造器注入了三个依赖：负责 HTTP 长轮询通道的 `LongPollingService`、负责 gRPC 订阅状态的 `ConfigChangeListenContext` 与全局连接管理 `ConnectionManager`，构成"一个端点聚合两条订阅通道"的设计。
 
 **端点一：`getSubClientConfig()` —— 按 `dataId + group + tenant` 查询监听者**
 
@@ -861,7 +861,7 @@ public ConfigChangeClusterSyncResponse handle(ConfigChangeClusterSyncRequest req
 
 作为接收处理器的对称端，`AsyncNotifyService` 负责发出集群通知：
 
-`AsyncNotifyService`（`config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:61`）在构造器里订阅 `ConfigDataChangeEvent`（`onEvent`，行 94），并在 `onConfigChange` 中为集群每个成员生成 `NotifySingleRpcTask`，投递到有界通知队列 `rpcQueue`，由 `AsyncRpcTask`（`AsyncNotifyService$AsyncRpcTask.run()`，行 212）消费，经 gRPC 发送 `ConfigChangeClusterSyncRequest`。发送结果通过 `AsyncRpcNotifyCallBack` 回调处理：
+`AsyncNotifyService`（`config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:84`）在构造器里订阅 `ConfigDataChangeEvent`（`onEvent`，行 94），并在 `onConfigChange` 中为集群每个成员生成 `NotifySingleRpcTask`，投递到有界通知队列 `rpcQueue`，由 `AsyncRpcTask`（`AsyncNotifyService$AsyncRpcTask.run()`，行 212）消费，经 gRPC 发送 `ConfigChangeClusterSyncRequest`。发送结果通过 `AsyncRpcNotifyCallBack` 回调处理：
 
 - 成功时仅记录日志；
 - 失败或超时时将任务重新入队（`asyncNotifyService.asyncTaskExecute(task)`，`AsyncNotifyService$AsyncRpcNotifyCallBack.onResponse()`，行 349-368），通过 `AbstractDelayTask` 的延迟重试机制保证最终投递成功。
@@ -1468,7 +1468,7 @@ Beta 灰度以"客户端 IP"为切分维度，面向的是"特定机器验证"�
 
 | 维度 | BetaGrayRule | TagGrayRule |
 |------|--------------|-------------|
-| 匹配 label | `ClientIp`（`BetaGrayRule.CLIENT_IP_LABEL`） | `VIPServer-Tag`（`TagGrayRule.VIP_SERVER_TAG_LABEL`） |
+| 匹配 label | `ClientIp`（`BetaGrayRule.CLIENT_IP_LABEL`） | `Vipserver-Tag`（`TagGrayRule.VIP_SERVER_TAG_LABEL`） |
 | 规则类型 type | `beta` | `tag` |
 | 规则版本 version | `1.0.0` | `1.0.0` |
 | 默认优先级 priority | `Integer.MAX_VALUE` | `Integer.MAX_VALUE - 1` |
@@ -1478,7 +1478,7 @@ Beta 灰度以"客户端 IP"为切分维度，面向的是"特定机器验证"�
 
 ### 3.15.2 核心类关系图
 
-<div class="dgm"><div class="dgm-cap"><span class="no">3.15.2</span><span class="tt">Tag 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布 / 读取链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">GET/POST 携带 tag 参数</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> dataId + group + content + tag=xxx → publishConfig()</li><li><span class="fld">DELETE</span> dataId + group + tag=xxx → deleteConfig(tag)</li><li><span class="fld">GET</span> dataId + group + tag=xxx → inner.doGetConfig(tag)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if tag NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"tag_" + tag</span>，grayPriority = MAX − 1</li><li>configGrayModelMigrateService.persistTagv1()（兼容迁移）</li><li>publishConfigGray("tag", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager → TagGrayRule</span></div><ul><li>parse：tagValue = tag</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>config_info_gray.gray_name = <span class="fld">"tag_xxx"</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">[读取] ConfigServletInner.doGetConfig(tag)</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查询责任链</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">ConfigChainEntryHandler</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">GrayRuleMatchHandler</span><span class="s">match：客户端 labels 含 VIPServer-Tag=xxx → 命中 → 灰度</span></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">请求带 tag</span></div><ul><li>→ SpecialTagNotFoundHandler → SPECIAL_TAG_CONFIG_NOT_FOUND</li></ul></div><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">不带 tag</span></div><ul><li>→ FormalHandler（正式配置）</li></ul></div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">3.15.2</span><span class="tt">Tag 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布 / 读取链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">GET/POST 携带 tag 参数</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> dataId + group + content + tag=xxx → publishConfig()</li><li><span class="fld">DELETE</span> dataId + group + tag=xxx → deleteConfig(tag)</li><li><span class="fld">GET</span> dataId + group + tag=xxx → inner.doGetConfig(tag)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if tag NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"tag_" + tag</span>，grayPriority = MAX − 1</li><li>configGrayModelMigrateService.persistTagv1()（兼容迁移）</li><li>publishConfigGray("tag", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager → TagGrayRule</span></div><ul><li>parse：tagValue = tag</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>config_info_gray.gray_name = <span class="fld">"tag_xxx"</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">[读取] ConfigServletInner.doGetConfig(tag)</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查询责任链</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">ConfigChainEntryHandler</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">GrayRuleMatchHandler</span><span class="s">match：客户端 labels 含 Vipserver-Tag=xxx → 命中 → 灰度</span></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">请求带 tag</span></div><ul><li>→ SpecialTagNotFoundHandler → SPECIAL_TAG_CONFIG_NOT_FOUND</li></ul></div><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">不带 tag</span></div><ul><li>→ FormalHandler（正式配置）</li></ul></div></div></div></div></div>
 
 ### 3.15.3 源码走读
 
@@ -1519,7 +1519,7 @@ if (StringUtils.isNotBlank(configForm.getTag())) {
 
 ```java
 // TagGrayRule 关键结构 (2.5.3)
-public static final String VIP_SERVER_TAG_LABEL = VIPSERVER_TAG;  // 来自 constants, 值为 "VIPServer-Tag"
+public static final String VIP_SERVER_TAG_LABEL = VIPSERVER_TAG;  // 来自 constants, 值为 "Vipserver-Tag"
 public static final String TYPE_TAG = "tag";
 public static final String VERSION = "1.0.0";
 public static final int PRIORITY = Integer.MAX_VALUE - 1;
@@ -1538,7 +1538,7 @@ public boolean match(Map<String, String> labels) {
 }
 ```
 
-匹配本质是"**客户端上报的连接标签里若含 `VIPServer-Tag` 且其值等于本规则 tag，则命中**"的字符串等值比较。与 Beta 的 `HashSet.contains` 不同，Tag 是单值等值比较，无集合开销但有标签冲突风险（见 Trade-off）。
+匹配本质是"**客户端上报的连接标签里若含 `Vipserver-Tag` 且其值等于本规则 tag，则命中**"的字符串等值比较。与 Beta 的 `HashSet.contains` 不同，Tag 是单值等值比较，无集合开销但有标签冲突风险（见 Trade-off）。
 
 #### 3.15.3.4 读取链路：责任链 + SpecialTagNotFoundHandler
 
@@ -1612,15 +1612,15 @@ beta、多个 tag 灰度在同一 `config_info_gray` 下按 `gray_name` 隔离�
 - 方案 B：支持标签"值∈集合"、正则表达式、前缀匹配等表达能力更强的规则。
 - 量化对比：等值匹配实现零开销（O(1) 比较）、语义直白易审计；但表达能力弱，无法表达"区域为华南或华东"这类多值需求，需发布多条 tag 灰度。方案 B 表达力强但规则解析与校验复杂度上升（正则回溯风险、表达式安全）、排查困难。Nacos 的 tag 定位为**轻量单值标签**，以"简单可预期"为优先，把复杂规则下沉给 v2 灰度扩展；代价是复杂灰度场景需发布多条 tag，占用 `config_info_gray` 的条数与默认灰度版本上限（`nacos.config.gray.version.max.count`，默认 10）。
 
-**权衡三：VIPServer-Tag 单一标签 vs 多标签自由维度。**
+**权衡三：Vipserver-Tag 单一标签 vs 多标签自由维度。**
 
-- 方案 A：只认 `VIPServer-Tag` 这一固定 label 维度。
+- 方案 A：只认 `Vipserver-Tag` 这一固定 label 维度。
 - 方案 B：灰度规则可引用任意连接标签（region、env、版本号等）的组合。
-- 量化对比：方案 A 使匹配逻辑唯一且可预测，客户端接入只需约定单一 header，降低接入与排障成本；但把 tag 语义绑定在单一维度上，无法表达多维度联合灰度。方案 B 灵活但需要定义标签命名空间与组合规则，复杂度与滥用风险上升。Nacos 在此选择**单一维度 + 可扩展灰度规则体系**的平衡——内置只认 `VIPServer-Tag`，但通过 `GrayRule` SPI 为自定义多维规则预留扩展点。
+- 量化对比：方案 A 使匹配逻辑唯一且可预测，客户端接入只需约定单一 header，降低接入与排障成本；但把 tag 语义绑定在单一维度上，无法表达多维度联合灰度。方案 B 灵活但需要定义标签命名空间与组合规则，复杂度与滥用风险上升。Nacos 在此选择**单一维度 + 可扩展灰度规则体系**的平衡——内置只认 `Vipserver-Tag`，但通过 `GrayRule` SPI 为自定义多维规则预留扩展点。
 
 ### 3.15.6 小结
 
-Nacos 2.5.3 的 Tag 配置发布基于统一灰度模型实现：`tag=xxx` 被建模为 `gray_name="tag_xxx"` 的 `TagGrayRule`，匹配维度是客户端连接标签 `VIPServer-Tag`，并沿用"SPI 规则 + 责任链匹配"框架。其独特之处在于读取侧的 `SpecialTagNotFoundHandler`——带 tag 未命中时显式返回"tag 配置不存在"而不回落正式配置，严守灰度隔离边界。配合 beta 的优先级排序，Nacos 支持 beta 与多种 tag 灰度并存，构成了从"IP 白名单验证"到"标签化细分下发"的完整灰度能力栈。
+Nacos 2.5.3 的 Tag 配置发布基于统一灰度模型实现：`tag=xxx` 被建模为 `gray_name="tag_xxx"` 的 `TagGrayRule`，匹配维度是客户端连接标签 `Vipserver-Tag`，并沿用"SPI 规则 + 责任链匹配"框架。其独特之处在于读取侧的 `SpecialTagNotFoundHandler`——带 tag 未命中时显式返回"tag 配置不存在"而不回落正式配置，严守灰度隔离边界。配合 beta 的优先级排序，Nacos 支持 beta 与多种 tag 灰度并存，构成了从"IP 白名单验证"到"标签化细分下发"的完整灰度能力栈。
 
 ---
 ## 3.16 配置加密插件：SPI 扩展 + AES/GCM/NoPadding 加密实现
