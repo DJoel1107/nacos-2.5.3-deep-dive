@@ -673,7 +673,8 @@ Publish-Subscribe）</strong> <code>NotifyCenter</code>
 的发布者与消费速度不匹配时可能覆盖旧事件。Nacos 通过
 <code>lastModifiedTs</code> 时间戳 + dump
 时的时间戳新旧校验（<code>ConfigCacheService.dumpWithMd5()</code> 中
-<code>if (lastModified &lt;= oldLastModified) return false</code>）来兜底，保证旧事件不会回写新缓存——这是"用事件发布换取低耦合、用时间戳换取最终一致性"的典型设计。</li>
+<code>if (lastModifiedTs &lt; ConfigCacheService.getLastModifiedTs(groupKey)) { return true; }</code>——时间戳不新于本地缓存时直接跳过落盘并返回
+true）来兜底，保证旧事件不会回写新缓存——这是"用事件发布换取低耦合、用时间戳换取最终一致性"的典型设计。</li>
 </ul>
 <p><strong>中介者模式（Mediator）：ConfigChangePublisher
 作为统一网关</strong> <code>ConfigChangePublisher</code>
@@ -1051,7 +1052,7 @@ class="sourceCode sql"><code class="sourceCode sql"><span id="cb9-1"><a href="#c
 <code>updateConfigInfoCas()</code>（行 580）在事务内"先查后改"；</li>
 <li><code>updateConfigInfoAtomicCas()</code>（行 634）构造
 <code>WHERE data_id=? AND group_id=? AND tenant_id=? AND md5=?</code>
-的条件 UPDATE，md5 作为版本列参与比较（行 676-690）；</li>
+的条件 UPDATE，md5 作为版本列参与比较（行 658-663）；</li>
 <li><code>updateConfigInfoAtomic()</code>（行 676）执行
 <code>UPDATE config_info SET content=?, md5=?, ..., encrypted_data_key=? WHERE data_id=? AND group_id=? AND tenant_id=?</code>；</li>
 <li>写入前通过
@@ -1361,11 +1362,11 @@ LongPollingService 订阅的是
 JVM 缓存一定已是最新，客户端随后拉取不会读到旧值。引用如下：</p>
 <ul>
 <li><code>LongPollingService</code>
-构造器（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java#L147-L168" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java">config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:147-168</a>）：初始化
+构造器（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java#L230-L256" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java">config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:230-256</a>）：初始化
 <code>allSubs</code>、调度 <code>StatTask</code>、注册
 <code>LocalDataChangeEvent</code> 订阅器与 publisher。</li>
 <li><code>ConfigCacheService</code>
-落盘后发布（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java#L304" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java">config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:304</a>）：<code>NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))</code>。</li>
+落盘后发布（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java#L367" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java">config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:367</a>）：<code>NotifyCenter.publishEvent(new LocalDataChangeEvent(groupKey))</code>。</li>
 </ul>
 <p><strong>（2）入口：addLongPollingClient() 五步处理</strong></p>
 <p><code>addLongPollingClient()</code>
@@ -1696,7 +1697,7 @@ MD5/时间戳确实变化、成功更新缓存后，<code>NotifyCenter.publishEv
 发出「本地已就绪」信号——这是<strong>长轮询能安全推送的前提</strong>：只有本地缓存与磁盘都已是新值，唤醒客户端去拉取才拿得到新内容。引用：</p>
 <ul>
 <li><code>ConfigCacheService</code>
-变更后发布（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java#L304" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java">config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:304</a>）：dump
+变更后发布（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java#L367" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java">config/src/main/java/com/alibaba/nacos/config/server/service/ConfigCacheService.java:367</a>）：dump
 成功后
 <code>publishEvent(new LocalDataChangeEvent(groupKey))</code>。</li>
 </ul>
@@ -1710,7 +1711,7 @@ MD5/时间戳确实变化、成功更新缓存后，<code>NotifyCenter.publishEv
 通知其变更。于是挂起连接被「提前」释放（而非等待超时）。引用：</p>
 <ul>
 <li><code>LongPollingService</code>
-构造器注册订阅器（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java#L154-L164" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java">config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:154-164</a>）：<code>onEvent</code>
+构造器注册订阅器（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java#L239-L254" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java">config/src/main/java/com/alibaba/nacos/config/server/service/LongPollingService.java:239-254</a>）：<code>onEvent</code>
 将 <code>LocalDataChangeEvent</code> 包装为
 <code>DataChangeTask</code>。</li>
 </ul>
@@ -1722,7 +1723,7 @@ MD5/时间戳确实变化、成功更新缓存后，<code>NotifyCenter.publishEv
 经配置查询链返回配置 JSON。拉取成功后，客户端本地 MD5
 更新，下一轮长轮询探测携带新 MD5。引用：</p>
 <ul>
-<li><code>ConfigServletInner.doGetConfig()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java#L135-L173" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java">config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java:135-173</a>）：<code>doGetConfig</code>
+<li><code>ConfigServletInner.doGetConfig()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java#L135-L160" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java">config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigServletInner.java:135-160</a>）：<code>doGetConfig</code>
 入口，经 <code>configQueryChainService.handle</code> 返回配置并按 V1/V2
 版本分支写响应。</li>
 </ul>
@@ -1906,7 +1907,7 @@ EXCEPTION，同样 <code>asyncTaskExecute(task)</code>
 tasks with the same dataId and group, later will replace the
 previous」。在延迟任务管理器（TaskManager）中，同一分组的后到任务会替换先到任务，避免对同一节点堆积同一分组的重复通知。引用：</p>
 <ul>
-<li><code>NotifySingleRpcTask.merge()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java#L277-L280" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java">config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:277-280</a>）：同分组后任务替换前任务。</li>
+<li><code>NotifySingleRpcTask.merge()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java#L296-L299" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java">config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:296-299</a>）：同分组后任务替换前任务。</li>
 </ul>
 <p><strong>（6）HTTP 遗留面：CommunicationController
 仅剩查询</strong></p>
@@ -2030,7 +2031,7 @@ RPC</strong>：发布节点通过 <code>AsyncNotifyService</code> 构造
 <h3 id="3113-源码走读">3.11.3 源码走读</h3>
 <h4 id="31131-communicationcontroller-双端点订阅者信息查询">3.11.3.1
 CommunicationController 双端点：订阅者信息查询</h4>
-<p><code>CommunicationController</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java#L116" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java">config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java:116</a></code>）通过
+<p><code>CommunicationController</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java#L49-L52" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java">config/src/main/java/com/alibaba/nacos/config/server/controller/CommunicationController.java:49-52</a></code>）通过
 <code>@RequestMapping(Constants.COMMUNICATION_CONTROLLER_PATH)</code>
 映射到 <code>/v1/cs/communication</code>
 路径。构造器注入了三个依赖：负责 HTTP 长轮询通道的
@@ -2135,7 +2136,7 @@ dumpRequest</strong>：通知本身不携带落盘来源 IP，而是取用 gRPC
 变更通知的发起端：<code>AsyncNotifyService</code></h4>
 <p>作为接收处理器的对称端，<code>AsyncNotifyService</code>
 负责发出集群通知：</p>
-<p><code>AsyncNotifyService</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java#L61" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java">config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:61</a></code>）在构造器里订阅
+<p><code>AsyncNotifyService</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java#L84" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java">config/src/main/java/com/alibaba/nacos/config/server/service/notify/AsyncNotifyService.java:84</a></code>）在构造器里订阅
 <code>ConfigDataChangeEvent</code>（<code>onEvent</code>，行 94），并在
 <code>onConfigChange</code> 中为集群每个成员生成
 <code>NotifySingleRpcTask</code>，投递到有界通知队列
@@ -2581,7 +2582,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb13-1"><a href=
 配置文件名的组织方式：group/dataId 扁平路径</h4>
 <p>导出的每个配置条目名为
 <code>ci.getGroup() + Constants.CONFIG_EXPORT_ITEM_FILE_SEPARATOR + ci.getDataId()</code>，其中
-<code>CONFIG_EXPORT_ITEM_FILE_SEPARATOR = "/"</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/common/src/main/java/com/alibaba/nacos/api/common/Constants.java#L281" target="_blank" rel="noopener" title="common/src/main/java/com/alibaba/nacos/api/common/Constants.java">Constants.java:281</a></code>）。由
+<code>CONFIG_EXPORT_ITEM_FILE_SEPARATOR = "/"</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/api/src/main/java/com/alibaba/nacos/api/common/Constants.java#L281" target="_blank" rel="noopener" title="api/src/main/java/com/alibaba/nacos/api/common/Constants.java">Constants.java:281</a></code>）。由
 <code>ZipEntry</code> 对 <code>/</code>
 的处理机制，<code>groupA/foo.yaml</code> 在 ZIP
 中会被浏览器/解压软件渲染为 <code>groupA</code> 目录下的
@@ -3138,7 +3139,7 @@ label 不同</strong>：</p>
 <tr>
 <td>匹配 label</td>
 <td><code>ClientIp</code>（<code>BetaGrayRule.CLIENT_IP_LABEL</code>）</td>
-<td><code>VIPServer-Tag</code>（<code>TagGrayRule.VIP_SERVER_TAG_LABEL</code>）</td>
+<td><code>Vipserver-Tag</code>（<code>TagGrayRule.VIP_SERVER_TAG_LABEL</code>）</td>
 </tr>
 <tr>
 <td>规则类型 type</td>
@@ -3168,7 +3169,7 @@ label 不同</strong>：</p>
 <code>SpecialTagNotFoundHandler</code> 处理"请求带 Tag
 但无灰度命中"的边界，防止误读正式配置。</p>
 <h3 id="3152-核心类关系图">3.15.2 核心类关系图</h3>
-<div class="dgm"><div class="dgm-cap"><span class="no">3.15.2</span><span class="tt">Tag 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布 / 读取链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">GET/POST 携带 tag 参数</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> dataId + group + content + tag=xxx → publishConfig()</li><li><span class="fld">DELETE</span> dataId + group + tag=xxx → deleteConfig(tag)</li><li><span class="fld">GET</span> dataId + group + tag=xxx → inner.doGetConfig(tag)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if tag NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"tag_" + tag</span>，grayPriority = MAX − 1</li><li>configGrayModelMigrateService.persistTagv1()（兼容迁移）</li><li>publishConfigGray("tag", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager → TagGrayRule</span></div><ul><li>parse：tagValue = tag</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>config_info_gray.gray_name = <span class="fld">"tag_xxx"</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">[读取] ConfigServletInner.doGetConfig(tag)</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查询责任链</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">ConfigChainEntryHandler</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">GrayRuleMatchHandler</span><span class="s">match：客户端 labels 含 VIPServer-Tag=xxx → 命中 → 灰度</span></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">请求带 tag</span></div><ul><li>→ SpecialTagNotFoundHandler → SPECIAL_TAG_CONFIG_NOT_FOUND</li></ul></div><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">不带 tag</span></div><ul><li>→ FormalHandler（正式配置）</li></ul></div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">3.15.2</span><span class="tt">Tag 配置发布核心类关系图（2.5.3）</span><span class="src">自上而下 = 发布 / 读取链路</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigController.publishConfig()</span><span class="s">GET/POST 携带 tag 参数</span></div><div class="dgm-box-b"><div class="dgm-kv"><li><span class="fld">POST</span> dataId + group + content + tag=xxx → publishConfig()</li><li><span class="fld">DELETE</span> dataId + group + tag=xxx → deleteConfig(tag)</li><li><span class="fld">GET</span> dataId + group + tag=xxx → inner.doGetConfig(tag)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigOperationService.publishConfig()</span><span class="s">if tag NOT blank</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>grayName = <span class="fld">"tag_" + tag</span>，grayPriority = MAX − 1</li><li>configGrayModelMigrateService.persistTagv1()（兼容迁移）</li><li>publishConfigGray("tag", …)</li></div></div></div><div class="dgm-link"><div class="dgm-varrow dgm-varrow--accent"></div></div><div class="dgm-cols dgm-cols-2"><div class="dgm-card"><div class="h"><span class="t">publishConfigGray()</span></div></div><div class="dgm-card"><div class="h"><span class="t">GrayRuleManager → TagGrayRule</span></div><ul><li>parse：tagValue = tag</li></ul></div></div><div class="dgm-link"><div class="dgm-varrow"></div></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">ConfigInfoGrayPersistService.insertOrUpdateGray()</span></div><div class="dgm-box-b"><div class="dgm-kv"><li>config_info_gray.gray_name = <span class="fld">"tag_xxx"</span></li></div></div></div><div class="dgm-link"><div class="dgm-varrow"></div><span class="lbl">[读取] ConfigServletInner.doGetConfig(tag)</span></div><div class="dgm-box"><div class="dgm-box-h"><span class="t">查询责任链</span></div><div class="dgm-box-b"><div class="dgm-flow"><div class="dgm-step"><span class="t">ConfigChainEntryHandler</span></div><div class="dgm-far"></div><div class="dgm-step"><span class="t">GrayRuleMatchHandler</span><span class="s">match：客户端 labels 含 Vipserver-Tag=xxx → 命中 → 灰度</span></div></div><div class="dgm-cols dgm-cols-2" style="margin-top:10px;"><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">请求带 tag</span></div><ul><li>→ SpecialTagNotFoundHandler → SPECIAL_TAG_CONFIG_NOT_FOUND</li></ul></div><div class="dgm-card"><div class="h"><span class="k">未命中</span><span class="t">不带 tag</span></div><ul><li>→ FormalHandler（正式配置）</li></ul></div></div></div></div></div>
 
 <h3 id="3153-源码走读">3.15.3 源码走读</h3>
 <h4 id="31531-tag-发布入口与灰度链构造">3.15.3.1 Tag
@@ -3224,7 +3225,7 @@ tag 灰度"与"移除 beta"共享同一删除服务**，再次印证统一灰度
 <p><code>TagGrayRule</code>（<code>.../model/gray/TagGrayRule.java</code>）：</p>
 <div class="sourceCode" id="cb25"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="co">// TagGrayRule 关键结构 (2.5.3)</span></span>
-<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> VIP_SERVER_TAG_LABEL <span class="op">=</span> VIPSERVER_TAG<span class="op">;</span>  <span class="co">// 来自 constants, 值为 &quot;VIPServer-Tag&quot;</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> VIP_SERVER_TAG_LABEL <span class="op">=</span> VIPSERVER_TAG<span class="op">;</span>  <span class="co">// 来自 constants, 值为 &quot;Vipserver-Tag&quot;</span></span>
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> TYPE_TAG <span class="op">=</span> <span class="st">&quot;tag&quot;</span><span class="op">;</span></span>
 <span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="dt">final</span> <span class="bu">String</span> VERSION <span class="op">=</span> <span class="st">&quot;1.0.0&quot;</span><span class="op">;</span></span>
 <span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">static</span> <span class="dt">final</span> <span class="dt">int</span> PRIORITY <span class="op">=</span> <span class="bu">Integer</span><span class="op">.</span><span class="fu">MAX_VALUE</span> <span class="op">-</span> <span class="dv">1</span><span class="op">;</span></span>
@@ -3242,7 +3243,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb25-1"><a href=
 <span id="cb25-17"><a href="#cb25-17" aria-hidden="true" tabindex="-1"></a>    <span class="cf">return</span> labels<span class="op">.</span><span class="fu">containsKey</span><span class="op">(</span>VIP_SERVER_TAG_LABEL<span class="op">)</span> <span class="op">&amp;&amp;</span> tagValue<span class="op">.</span><span class="fu">equals</span><span class="op">(</span>labels<span class="op">.</span><span class="fu">get</span><span class="op">(</span>VIP_SERVER_TAG_LABEL<span class="op">));</span></span>
 <span id="cb25-18"><a href="#cb25-18" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p>匹配本质是"<strong>客户端上报的连接标签里若含
-<code>VIPServer-Tag</code> 且其值等于本规则
+<code>Vipserver-Tag</code> 且其值等于本规则
 tag，则命中</strong>"的字符串等值比较。与 Beta 的
 <code>HashSet.contains</code> 不同，Tag
 是单值等值比较，无集合开销但有标签冲突风险（见 Trade-off）。</p>
@@ -3359,10 +3360,10 @@ v2 灰度扩展；代价是复杂灰度场景需发布多条 tag，占用
 的条数与默认灰度版本上限（<code>nacos.config.gray.version.max.count</code>，默认
 10）。</li>
 </ul>
-<p><strong>权衡三：VIPServer-Tag 单一标签 vs
+<p><strong>权衡三：Vipserver-Tag 单一标签 vs
 多标签自由维度。</strong></p>
 <ul>
-<li>方案 A：只认 <code>VIPServer-Tag</code> 这一固定 label 维度。</li>
+<li>方案 A：只认 <code>Vipserver-Tag</code> 这一固定 label 维度。</li>
 <li>方案
 B：灰度规则可引用任意连接标签（region、env、版本号等）的组合。</li>
 <li>量化对比：方案 A 使匹配逻辑唯一且可预测，客户端接入只需约定单一
@@ -3370,14 +3371,14 @@ header，降低接入与排障成本；但把 tag
 语义绑定在单一维度上，无法表达多维度联合灰度。方案 B
 灵活但需要定义标签命名空间与组合规则，复杂度与滥用风险上升。Nacos
 在此选择<strong>单一维度 + 可扩展灰度规则体系</strong>的平衡——内置只认
-<code>VIPServer-Tag</code>，但通过 <code>GrayRule</code> SPI
+<code>Vipserver-Tag</code>，但通过 <code>GrayRule</code> SPI
 为自定义多维规则预留扩展点。</li>
 </ul>
 <h3 id="3156-小结">3.15.6 小结</h3>
 <p>Nacos 2.5.3 的 Tag 配置发布基于统一灰度模型实现：<code>tag=xxx</code>
 被建模为 <code>gray_name="tag_xxx"</code> 的
 <code>TagGrayRule</code>，匹配维度是客户端连接标签
-<code>VIPServer-Tag</code>，并沿用"SPI 规则 +
+<code>Vipserver-Tag</code>，并沿用"SPI 规则 +
 责任链匹配"框架。其独特之处在于读取侧的
 <code>SpecialTagNotFoundHandler</code>——带 tag 未命中时显式返回"tag
 配置不存在"而不回落正式配置，严守灰度隔离边界。配合 beta
@@ -4113,7 +4114,7 @@ Config 模块的健康状态信息。</p>
 <blockquote>
 <p><strong>本章基于 Nacos 2.5.3 源码分析生成。</strong></p>
 </blockquote>
-<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch active" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-13 16:08</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-03.html" style="color:inherit;text-decoration:none;">第 3 章：配置中心（Config）源码深度分析</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">3.1 Config
+<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch active" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-15 14:07</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-03.html" style="color:inherit;text-decoration:none;">第 3 章：配置中心（Config）源码深度分析</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">3.1 Config
 模块六大核心子包全景</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="" href="#31-config-模块六大核心子包全景">3.1 Config
 模块六大核心子包全景</a><a class="is-h3" href="#311-设计背景">3.1.1 设计背景</a><a class="is-h3" href="#312-核心类关系图六大子包全景">3.1.2
 核心类关系图：六大子包全景</a><a class="is-h3" href="#313-源码走读各子包核心类职责">3.1.3

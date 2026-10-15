@@ -489,7 +489,7 @@ FAQ。内容面向生产运维与集成开发，作为前 15
 源码与控制台实际行为核验。</p>
 <blockquote>
 <p><strong>版本基准</strong>：Nacos
-2.5.3（<code>upstream/nacos-2.5.3/</code>）<br />
+2.5.3（<code>src/nacos-2.5.3-src/</code>）<br />
 <strong>接口前缀</strong>：客户端访问 OpenAPI
 时默认在服务端口（8848）后拼接 <code>/nacos</code> 上下文（当
 <code>server.servlet.context-path=/nacos</code>）。</p>
@@ -517,7 +517,7 @@ Server→升级客户端→下线双写。</li>
 <h2 id="161-api-速查表">16.1 API 速查表</h2>
 <blockquote>
 <p>本节汇总五类 OpenAPI 的常用接口：<strong>配置管理 8+、服务管理
-7、实例管理 8、集群管理 3、认证鉴权 6</strong>。路径与方法取自 2.5.3
+7、实例管理 8、集群管理 5、认证鉴权 6</strong>。路径与方法取自 2.5.3
 源码控制器注解，参数省略次要项，完整契约以各控制器方法签名为准。</p>
 </blockquote>
 <h3 id="设计背景">设计背景</h3>
@@ -584,9 +584,16 @@ OpenAPI。速查表的意义在于：让运维与集成方能"一次查到位"�
 <tr>
 <td>GET</td>
 <td><code>/v1/cs/configs/listener</code></td>
+<td>查询配置监听者列表</td>
+<td><code>dataId,group</code></td>
+<td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java#L379" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java">ConfigController.java:379</a></td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/v1/cs/configs/listener</code></td>
 <td>配置监听（长轮询探测变更）</td>
 <td><code>Listening-Configs</code> 头</td>
-<td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java#L379" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java">ConfigController.java:379</a></td>
+<td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java#L350" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java">ConfigController.java:350</a></td>
 </tr>
 <tr>
 <td>POST</td>
@@ -618,9 +625,16 @@ OpenAPI。速查表的意义在于：让运维与集成方能"一次查到位"�
 </tr>
 <tr>
 <td>POST</td>
-<td><code>/v1/cs/configs?beta=true</code></td>
+<td><code>/v1/cs/configs</code></td>
 <td>发布灰度（Beta）配置</td>
-<td><code>betaIps</code></td>
+<td><code>betaIps</code> 请求头</td>
+<td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java#L158" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java">ConfigController.java:158</a>/215</td>
+</tr>
+<tr>
+<td>DELETE</td>
+<td><code>/v1/cs/configs?beta=true</code></td>
+<td>停止灰度（Beta）配置</td>
+<td><code>dataId,group</code></td>
 <td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java#L464" target="_blank" rel="noopener" title="config/src/main/java/com/alibaba/nacos/config/server/controller/ConfigController.java">ConfigController.java:464</a></td>
 </tr>
 </tbody>
@@ -763,7 +777,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb1-1"><a href="
 <td>GET</td>
 <td><code>/v1/ns/instance/statuses</code></td>
 <td>实例状态批量查询</td>
-<td><code>serviceName,pageNo,pageSize</code></td>
+<td><code>key</code></td>
 <td><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java#L436" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java">InstanceController.java:436</a></td>
 </tr>
 <tr>
@@ -818,15 +832,15 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="
 <td>GET</td>
 <td><code>/v1/ns/operator/distro/client</code></td>
 <td>Distro 客户端列表</td>
-<td>—</td>
+<td><code>ip,port</code></td>
 <td>OperatorController.java:194</td>
 </tr>
 <tr>
 <td>GET</td>
-<td><code>/v1/ns/cluster/health</code></td>
-<td>集群健康状态</td>
+<td><code>/v1/core/cluster/nodes</code></td>
+<td>集群节点列表（含健康状态）</td>
 <td>—</td>
-<td>ClusterController.java:47</td>
+<td>NacosClusterController.java:69</td>
 </tr>
 </tbody>
 </table>
@@ -904,12 +918,13 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb2-1"><a href="
 成功）、<code>message</code>、<code>data</code>；列表接口返回
 <code>pageItems</code>/<code>page</code> 分页结构（<code>Page</code>
 对象）。</li>
-<li><strong>鉴权头</strong>：3.0 起支持 <code>accessToken</code> 头与
-<code>username/password</code> 参数两传法，生产建议用
-<code>accessToken</code> 头。</li>
+<li><strong>鉴权头</strong>：支持
+<code>Authorization: Bearer &lt;token&gt;</code> 请求头与
+<code>accessToken</code> 参数两种传法，生产建议用 Bearer 请求头。</li>
 <li><strong>临时/持久实例</strong>：<code>ephemeral=true</code>
-走注册中心内存 + 心跳；持久实例需走 <code>PUT /v1/ns/instance</code>
-并配置持久化存储，二者接口参数不同，误用会互相覆盖。</li>
+走注册中心内存 + 心跳；持久实例注册统一走
+<code>POST /v1/ns/instance</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java#L110" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/controllers/InstanceController.java">InstanceController.java:110</a>，<code>PUT</code>
+为更新实例，:165）并配置持久化存储，二者接口参数不同，误用会互相覆盖。</li>
 </ul>
 <h3 id="trade-off-分析">Trade-off 分析</h3>
 <p>OpenAPI 的直接调用与
@@ -934,7 +949,7 @@ SDK 承载业务变更、以 API 承载排障脚本，并统一处理上下文�
 <h2 id="162-sql-表结构速查">16.2 SQL 表结构速查</h2>
 <blockquote>
 <p>本节列出 Nacos 核心业务表与用户权限表的结构，字段定义取自
-<code>distribution/conf/mysql-schema.sql</code>（2.5.3）。<strong>共 8
+<code>distribution/conf/mysql-schema.sql</code>（2.5.3）。<strong>共 10
 张表</strong>：<code>config_info</code>、<code>config_info_gray</code>、<code>his_config_info</code>、<code>config_tags_relation</code>、<code>group_capacity</code>、<code>tenant_capacity</code>、<code>tenant_info</code>、<code>users</code>、<code>roles</code>、<code>permissions</code>（前四张为配置体系，后六张为管控体系）。</p>
 </blockquote>
 <h3 id="设计背景-1">设计背景</h3>
@@ -1011,7 +1026,7 @@ SDK 承载业务变更、以 API 承载排障脚本，并统一处理上下文�
 <tr>
 <td><code>c_schema</code></td>
 <td>text</td>
-<td>配置模式（2.5.x 新增）</td>
+<td>配置模式（历史字段）</td>
 </tr>
 <tr>
 <td><code>encrypted_data_key</code></td>
@@ -1168,8 +1183,9 @@ CacheData）；启用了加密插件时 <code>encrypted_data_key</code>
 <p><strong><code>roles</code></strong>：<code>username</code>+<code>role</code>，联合唯一索引
 <code>idx_user_role</code>。</p>
 <p><strong><code>permissions</code></strong>：<code>role</code>+<code>resource</code>+<code>action</code>，联合唯一索引
-<code>uk_role_permission</code>；<code>resource</code> 形如
-<code>服务名:组名</code>、<code>action</code> 为读写操作标识。</p>
+<code>uk_role_permission</code>；<code>resource</code> 由
+<code>namespaceId</code>、<code>group</code>、<code>serviceName</code>
+三元组构成（命名空间:组:服务）、<code>action</code> 为读写操作标识。</p>
 <blockquote>
 <p><strong>权限模型</strong>：User → Role →
 Permission（RBAC），<code>AuthFilter</code>
@@ -1219,9 +1235,9 @@ Control）中间层模式</strong>：用户不直接持权限，而是经角色�
 运行机制设计，并标注对应源码/日志来源，避免"凭记忆瞎敲"。</p>
 <h3 id="1631-状态与指标查询curl">16.3.1 状态与指标查询（curl）</h3>
 <div class="sourceCode" id="cb3"><pre
-class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 集群健康状态</span></span>
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 集群节点状态</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/v1/ns/operator/metrics&#39;</span></span>
-<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/v1/ns/cluster/health&#39;</span></span>
+<span id="cb3-3"><a href="#cb3-3" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/v1/core/cluster/nodes&#39;</span></span>
 <span id="cb3-4"><a href="#cb3-4" aria-hidden="true" tabindex="-1"></a></span>
 <span id="cb3-5"><a href="#cb3-5" aria-hidden="true" tabindex="-1"></a><span class="co"># 节点运行指标（连接数/服务数/推送状态等）</span></span>
 <span id="cb3-6"><a href="#cb3-6" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-G</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/v1/ns/operator/metrics&#39;</span></span>
@@ -1229,10 +1245,13 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb3-1"><a href="
 <span id="cb3-8"><a href="#cb3-8" aria-hidden="true" tabindex="-1"></a><span class="co"># 运行时开关</span></span>
 <span id="cb3-9"><a href="#cb3-9" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/v1/ns/operator/switches&#39;</span></span>
 <span id="cb3-10"><a href="#cb3-10" aria-hidden="true" tabindex="-1"></a></span>
-<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Prometheus 指标端点（需开启）</span></span>
-<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/actuator/prometheus&#39;</span></span></code></pre></div>
-<p><strong>关键指标</strong>：<code>naming_count_cluster</code>（服务数）、<code>config_count_...</code>（配置数）、gRPC
-连接数、<code>http_server_requests</code>（QPS）——详见 13.2 指标表。</p>
+<span id="cb3-11"><a href="#cb3-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Prometheus 指标端点（需配置 nacos.prometheus.metrics.enabled=true 开启）</span></span>
+<span id="cb3-12"><a href="#cb3-12" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="st">&#39;http://127.0.0.1:8848/nacos/prometheus&#39;</span></span></code></pre></div>
+<p><strong>关键指标</strong>：<code>nacos_monitor</code>（通过
+<code>name</code> 标签区分
+<code>configCount</code>（配置数）、<code>longPolling</code>（长轮询数）、gRPC
+连接数等）、<code>nacos_config_subscriber</code>（配置订阅者数）、<code>nacos_naming_subscriber</code>/<code>nacos_naming_publisher</code>（服务订阅/发布者数）、<code>http_server_requests</code>（QPS）——详见
+13.2 指标表。</p>
 <h3 id="1632-配置查询与发布curl">16.3.2 配置查询与发布（curl）</h3>
 <div class="sourceCode" id="cb4"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 查询配置</span></span>
@@ -1267,8 +1286,10 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb5-1"><a href="
 <h3 id="1634-日志分析grep">16.3.4 日志分析（grep）</h3>
 <p>Nacos 客户端与服务端日志位置：</p>
 <ul>
-<li><strong>服务端</strong>：<code>&lt;nacos-home&gt;/logs/</code>：<code>nacos.log</code>（主日志）、<code>naming-server.log</code>、<code>config-server.log</code>、<code>remote.log</code>（gRPC/远程连接）、<code>access.log.2026-xx-xx</code>（访问日志）、<code>embedded-storage.log</code>。</li>
-<li><strong>客户端</strong>：<code>&lt;app&gt;/logs/</code>：<code>nacos-config.log</code>、<code>nacos-naming.log</code>、<code>nacos.log</code>（见
+<li><strong>服务端</strong>：<code>&lt;nacos-home&gt;/logs/</code>：<code>nacos.log</code>（主日志）、<code>naming-server.log</code>、<code>config-server.log</code>、<code>remote.log</code>（gRPC/远程连接）、<code>access_log.{date}.log</code>（访问日志）、<code>protocol-raft.log</code>（Raft
+协议日志）、<code>protocol-distro.log</code>（Distro
+协议日志）、<code>nacos-persistence.log</code>（持久化日志）。</li>
+<li><strong>客户端</strong>：<code>~/logs/nacos/</code>：<code>config.log</code>、<code>naming.log</code>、<code>remote.log</code>（见
 15.10 排障）。</li>
 </ul>
 <div class="sourceCode" id="cb6"><pre
@@ -1709,7 +1730,7 @@ Server → 升级客户端 →
 <li><strong>方式 B（同节点替换）</strong>：停一台→替换为
 2.5.3→拉起→验证，逐台滚动；停机窗口内该节点服务漂移。</li>
 <li><strong>每台验证</strong>：<code>curl /v1/ns/operator/metrics</code>
-正常、节点加入集群（<code>/v1/ns/cluster/health</code>）、日志无错误、配置/服务可正常读写。</li>
+正常、节点加入集群（<code>/v1/core/cluster/nodes</code>）、日志无错误、配置/服务可正常读写。</li>
 <li><strong>保持旧客户端可用</strong>：2.x 服务端兼容 1.x/2.x
 旧客户端短期运行，为客户端升级留窗口。</li>
 </ul>
@@ -1911,8 +1932,8 @@ dataId/group/tenant 不匹配，或配置尚未发布；用
 或权限不足；<code>nacos.core.auth.enabled=true</code> 需登录获取
 token。见 16.1/第 7 章。</li>
 <li><strong>集群脑裂怎么判断？</strong> 查
-<code>cluster/nodes</code>、Raft <code>leader</code>、DistroVerify
-状态；见 14.7。</li>
+<code>cluster/nodes</code>、Raft <code>leader</code>、Distro
+校验指标（<code>distroVerify</code> 相关计数）；见 14.7。</li>
 <li><strong>FullGC 频繁？</strong>
 实例/订阅量过大或堆过小，<code>jmap -histo:live</code> 定位大对象；见
 12/14.9。</li>
@@ -2021,7 +2042,7 @@ OpenAPI/数据模型 +
 源码，基线阈值与流程可执行、可回滚，FAQ
 指向深度章节形成双层检索。至此，Nacos 2.5.3 深度研究手册的第 16
 章（附录）全部完成。</p>
-<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch active" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-13 16:08</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-16.html" style="color:inherit;text-decoration:none;">第 16 章：附录</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">章节导读</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="" href="#章节导读">章节导读</a><a class="" href="#161-api-速查表">16.1 API 速查表</a><a class="is-h3" href="#设计背景">设计背景</a><a class="is-h3" href="#1611-配置管理接口configcontroller基路径-v1csconfigs">16.1.1
+<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch active" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-15 14:07</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-16.html" style="color:inherit;text-decoration:none;">第 16 章：附录</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">章节导读</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="" href="#章节导读">章节导读</a><a class="" href="#161-api-速查表">16.1 API 速查表</a><a class="is-h3" href="#设计背景">设计背景</a><a class="is-h3" href="#1611-配置管理接口configcontroller基路径-v1csconfigs">16.1.1
 配置管理接口（ConfigController，基路径
 /v1/cs/configs）</a><a class="is-h3" href="#1612-服务管理接口servicecontroller基路径-v1nsservice">16.1.2
 服务管理接口（ServiceController，基路径

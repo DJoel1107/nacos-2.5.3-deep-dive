@@ -529,12 +529,12 @@ Distro v2 将同步单元从"数据项"升级为"客户端（Client）"，以
 等一组类承载，旧的 Distro 一组类同样被移除。</p></li>
 </ul>
 <p><strong>版本验证结论（基于 2.5.3 实际源码）</strong>：在
-<code>/home/sandbox/.openclaw/workspace/repo/nacos分析/upstream/nacos-2.5.3/</code>
+<code>src/nacos-2.5.3-src/</code>
 下执行检索，<code>RaftConsistencyServiceImpl</code>、<code>RaftCore</code>、<code>RaftStore</code>、<code>NacosFSM</code>、<code>DistroConsistencyServiceImpl</code>
 均<strong>不存在</strong>；<code>consistency/</code>
 模块仅保留协议接口定义；Distro v2 实现全部位于
 <code>naming/.../consistency/ephemeral/distro/v2/</code>；CP 一致性通过
-<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/.../distributed/raft/JRaftProtocol.java</a></code> 封装外部 JRaft
+<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/.../distributed/raft/JRaftProtocol.java</a></code> 封装外部 JRaft
 实现。JRaft 依赖版本在根 <code>pom.xml</code> 中声明为
 <code>&lt;jraft-core.version&gt;1.3.14&lt;/jraft-core.version&gt;</code>。</p>
 <h4 id="4113-本章范围界定">4.1.1.3 本章范围界定</h4>
@@ -687,7 +687,7 @@ JRaft 库与持久化存储。关于集群管理与成员发现机制，参见�
 <p><code>ConsistencyProtocol&lt;T extends Config, P extends RequestProcessor&gt;</code>
 位于 <code>consistency/</code>
 模块根包，是全部一致性协议的顶层契约。它继承
-<code>CommandOperations</code>，定义了以下方法族（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L38-L117" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java:38-117</a>）：</p>
+<code>CommandOperations</code>，定义了以下方法族（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L38-L117" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java:38-117</a>）：</p>
 <ul>
 <li><code>init(T config)</code>：按传入的不同 <code>Config</code>
 实现完成协议初始化（JRaft
@@ -709,10 +709,10 @@ Leader、快照加载完成）。</li>
 <h4 id="4142-ap-与-cp-的语义分叉approtocol-与-cpprotocol">4.1.4.2 AP 与
 CP 的语义分叉：<code>APProtocol</code> 与 <code>CPProtocol</code></h4>
 <ul>
-<li><code>APProtocol&lt;C extends Config, P extends RequestProcessor4AP&gt; extends ConsistencyProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java#L30-L34" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java:30-34</a>）：空扩展接口，仅将泛型处理器约束为
+<li><code>APProtocol&lt;C extends Config, P extends RequestProcessor4AP&gt; extends ConsistencyProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java#L30-L34" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java">consistency/src/main/java/com/alibaba/nacos/consistency/ap/APProtocol.java:30-34</a>）：空扩展接口，仅将泛型处理器约束为
 <code>RequestProcessor4AP</code>，未新增任何方法。它承担"标记型"职责，表明实现方遵循
 AP 语义。</li>
-<li><code>CPProtocol&lt;C extends Config, P extends RequestProcessor4CP&gt; extends ConsistencyProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java#L31-L45" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java:31-45</a>）：除继承统一契约外，额外声明
+<li><code>CPProtocol&lt;C extends Config, P extends RequestProcessor4CP&gt; extends ConsistencyProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java#L31-L45" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java">consistency/src/main/java/com/alibaba/nacos/consistency/cp/CPProtocol.java:31-45</a>）：除继承统一契约外，额外声明
 <code>isLeader(String group)</code>，用于查询某个业务组（group）当前节点是否为
 Leader。这是 CP 模式"Leader 中心 + Follower
 转发"写入模型所必需的判定位能力；AP 模式无需该能力，因此未在 AP
@@ -720,58 +720,58 @@ Leader。这是 CP 模式"Leader 中心 + Follower
 </ul>
 <h4 id="4143-实现接入jraftprotocolcp-面">4.1.4.3
 实现接入：<code>JRaftProtocol</code>（CP 面）</h4>
-<p><code>JRaftProtocol extends AbstractConsistencyProtocol&lt;RaftConfig, RequestProcessor4CP&gt; implements CPProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L110-L113" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java:110-113</a>），构造函数中创建
+<p><code>JRaftProtocol extends AbstractConsistencyProtocol&lt;RaftConfig, RequestProcessor4CP&gt; implements CPProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L110-L113" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java:110-113</a>），构造函数中创建
 <code>JRaftServer</code> 与
 <code>JRaftMaintainService</code>。关键行为：</p>
 <ul>
-<li><code>init(RaftConfig config)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L127-L170" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:127-170</a>）：<code>initialized.compareAndSet(false, true)</code>
+<li><code>init(RaftConfig config)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L117-L159" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:117-159</a>）：<code>initialized.compareAndSet(false, true)</code>
 保证单次初始化；将 <code>RaftConfig</code> 注入 <code>raftServer</code>
 并启动；向共享 Publisher 注册 <code>RaftEvent</code> 订阅者，将 Leader /
 Term / 集群成员等事件同步至 <code>ProtocolMetaData</code>，再通过
 <code>injectProtocolMetaData</code> 写入本机 <code>Member</code>
 扩展字段 <code>raftMetaData</code>。</li>
-<li><code>getData(ReadRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L203-L207" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:203-207</a>）：调用
+<li><code>getData(ReadRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L167-L170" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:167-170</a>）：调用
 <code>aGetData</code> 并最多等待 5 秒；<code>aGetData</code> 委托
 <code>raftServer.get(request)</code>。</li>
-<li><code>write(WriteRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L213-L217" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:213-217</a>）：调用
+<li><code>write(WriteRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L178-L182" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:178-182</a>）：调用
 <code>writeAsync</code> 并最多等待 10 秒；<code>writeAsync</code> 委托
 <code>raftServer.commit(request.getGroup(), request, future)</code>。</li>
-<li><code>memberChange(Set&lt;String&gt;)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L219-L229" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:219-229</a>）：至多重试
+<li><code>memberChange(Set&lt;String&gt;)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L190-L198" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:190-198</a>）：至多重试
 5 次调用 <code>raftServer.peerChange(...)</code>，每次间隔 100ms。</li>
-<li><code>isLeader(String group)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L246-L251" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:246-251</a>）：通过
+<li><code>isLeader(String group)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L220-L226" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:220-226</a>）：通过
 <code>raftServer.findNodeByGroup(group)</code> 获取 JRaft
 <code>Node</code> 并返回 <code>node.isLeader()</code>；组不存在时抛出
 <code>NoSuchRaftGroupException</code>。</li>
 </ul>
 <h4 id="4144-实现接入distroprotocolap-面">4.1.4.4
 实现接入：<code>DistroProtocol</code>（AP 面）</h4>
-<p><code>DistroProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L54-L58" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java:54-58</a>）未直接实现
+<p><code>DistroProtocol</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L54-L58" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java:54-58</a>）未直接实现
 <code>APProtocol</code> 接口，而是作为 naming 侧 AP
 协议的<strong>调度中枢</strong>存在：它持有
 <code>ServerMemberManager</code>、<code>DistroComponentHolder</code>、<code>DistroTaskEngineHolder</code>，负责将业务侧的同步诉求转化为延迟任务并驱动执行。关键行为：</p>
 <ul>
-<li><code>startDistroTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L61-L69" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:61-69</a>）：单机模式下直接置
+<li><code>startDistroTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L61-L69" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:61-69</a>）：单机模式下直接置
 <code>isInitialized=true</code>；集群模式分别启动
 <code>startVerifyTask</code>（周期校验）与
 <code>startLoadTask</code>（全量加载）。</li>
-<li><code>sync(DistroKey, DataOperation)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L103-L109" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:103-109</a>）：对
+<li><code>sync(DistroKey, DataOperation)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L103-L109" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:103-109</a>）：对
 <code>allMembersWithoutSelf()</code> 中的每个成员逐一调用
 <code>syncToTarget</code>，实现"写一处、广播全集群"。</li>
-<li><code>syncToTarget(DistroKey, DataOperation, String, long)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L128-L139" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:128-139</a>）：构造带
+<li><code>syncToTarget(DistroKey, DataOperation, String, long)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L128-L139" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:128-139</a>）：构造带
 <code>targetServer</code> 的 <code>DistroKey</code>，封装为
 <code>DistroDelayTask</code> 投入
 <code>DistroDelayTaskExecuteEngine</code>。</li>
-<li><code>onReceive(DistroData)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L164-L178" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:164-178</a>）：按
+<li><code>onReceive(DistroData)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L164-L178" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:164-178</a>）：按
 <code>distroData.getDistroKey().getResourceType()</code> 从
 <code>DistroComponentHolder</code> 找到 <code>DistroDataProcessor</code>
 并调用 <code>processData</code>——这是对端数据落地的入口。</li>
 <li><code>onVerify</code> / <code>onQuery</code> /
-<code>onSnapshot</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L183-L232" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:183-232</a>）：分别路由到
+<code>onSnapshot</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L183-L232" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:183-232</a>）：分别路由到
 <code>processVerifyData</code>、<code>getDistroData</code>、<code>getDatumSnapshot</code>。</li>
 </ul>
 <h4 id="4145-上层统一入口protocolmanager">4.1.4.5
 上层统一入口：<code>ProtocolManager</code></h4>
-<p><code>ProtocolManager extends MemberChangeListener implements DisposableBean</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java#L46-L47" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java:46-47</a>）是协议实例的门面：通过
+<p><code>ProtocolManager extends MemberChangeListener implements DisposableBean</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java#L46-L47" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java">core/src/main/java/com/alibaba/nacos/core/distributed/ProtocolManager.java:46-47</a>）是协议实例的门面：通过
 <code>@Component(value="ProtocolManager")</code> 注册，持有
 <code>cpProtocol</code> 与 <code>apProtocol</code> 引用，由
 <code>getCpProtocol()</code> / <code>getApProtocol()</code>
@@ -890,27 +890,27 @@ Interface）思想一致：协议以 SPI 形式被平台自动发现与加载。
 <h3 id="423-源码走读">4.2.3 源码走读</h3>
 <h4 id="4231-consistencyprotocol协议统一契约">4.2.3.1
 <code>ConsistencyProtocol</code>：协议统一契约</h4>
-<p><code>ConsistencyProtocol&lt;T extends Config, P extends RequestProcessor&gt;</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L36-L117" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java:36-117</a>）是本章一致性的总纲接口。其在接口注释中明确了初始化顺序：先
+<p><code>ConsistencyProtocol&lt;T extends Config, P extends RequestProcessor&gt;</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L36-L117" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java:36-117</a>）是本章一致性的总纲接口。其在接口注释中明确了初始化顺序：先
 <code>init(Config)</code>，再由 <code>protocolMetaData()</code>
 获取元数据。核心方法语义如下：</p>
 <ul>
-<li><code>init(T config)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L48-L51" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:48-51</a>）：约定
+<li><code>init(T config)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L48-L51" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:48-51</a>）：约定
 <code>Config</code> 是协议所需的全部配置载体。JRaft
 需要选举超时、日志目录、快照任务间隔；若未来接入其他协议，其特化
 <code>Config</code> 承载对应参数。</li>
-<li><code>addRequestProcessors(Collection&lt;P&gt; processors)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L57-L60" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:57-60</a>）：协议实现据此注册业务处理器，并据此决定如何路由读写。</li>
+<li><code>addRequestProcessors(Collection&lt;P&gt; processors)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L57-L60" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:57-60</a>）：协议实现据此注册业务处理器，并据此决定如何路由读写。</li>
 <li><code>getData(ReadRequest)</code> /
-<code>aGetData(ReadRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L75-L86" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:75-86</a>）：同步读与异步读。<code>aGetData</code>
+<code>aGetData(ReadRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L75-L86" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:75-86</a>）：同步读与异步读。<code>aGetData</code>
 返回
 <code>CompletableFuture&lt;Response&gt;</code>，调用方自行编排等待/超时/组合。</li>
 <li><code>write(WriteRequest)</code> /
-<code>writeAsync(WriteRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L95-L107" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:95-107</a>）：同步写（返回提交结果
+<code>writeAsync(WriteRequest)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L95-L107" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:95-107</a>）：同步写（返回提交结果
 <code>Response</code>）与异步写（返回
 <code>CompletableFuture</code>）。接口注释明确：<code>WriteRequest</code>
 中已携带数据操作信息。</li>
-<li><code>memberChange(Set&lt;String&gt; addresses)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L111-L112" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:111-112</a>）：入参为
+<li><code>memberChange(Set&lt;String&gt; addresses)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L111-L112" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:111-112</a>）：入参为
 <code>ip:port</code> 集合，协议自行判定成员加入或离开。</li>
-<li><code>isReady()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L117" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:117</a>）：返回协议是否可工作。</li>
+<li><code>isReady()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java#L117" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/ConsistencyProtocol.java">ConsistencyProtocol.java:117</a>）：返回协议是否可工作。</li>
 </ul>
 <p><code>getData/write</code> 使用 protobuf 生成的
 <code>ReadRequest</code>/<code>WriteRequest</code>/<code>Response</code>（来自
@@ -918,7 +918,7 @@ Interface）思想一致：协议以 SPI 形式被平台自动发现与加载。
 4.2 契约层与业务解耦的关键。</p>
 <h4 id="4232-requestprocessor-家族业务处理器的抽象">4.2.3.2
 <code>RequestProcessor</code> 家族：业务处理器的抽象</h4>
-<p><code>RequestProcessor</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java</a>）是业务接入协议的处理器抽象，<code>RequestProcessor4AP</code>（consistency/.../ap/RequestProcessor4AP.java:29-31）与
+<p><code>RequestProcessor</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java">consistency/src/main/java/com/alibaba/nacos/consistency/RequestProcessor.java</a>）是业务接入协议的处理器抽象，<code>RequestProcessor4AP</code>（consistency/.../ap/RequestProcessor4AP.java:29-31）与
 <code>RequestProcessor4CP</code>（consistency/.../cp/RequestProcessor4CP.java:32-35）分别扩展它。</p>
 <p><code>RequestProcessor4CP</code> 额外提供
 <code>loadSnapshotOperate()</code>（consistency/.../cp/RequestProcessor4CP.java:41-49），默认返回
@@ -928,21 +928,21 @@ Interface）思想一致：协议以 SPI 形式被平台自动发现与加载。
 <h4 id="4233-serializer-与-serializefactory可插拔序列化">4.2.3.3
 <code>Serializer</code> 与
 <code>SerializeFactory</code>：可插拔序列化</h4>
-<p><code>Serializer</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L34-L89" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java:34-89</a>）定义序列化三套重载
+<p><code>Serializer</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L34-L89" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java:34-89</a>）定义序列化三套重载
 + 一个默认实现：</p>
 <ul>
 <li><code>deserialize(byte[])</code>、<code>deserialize(byte[], Class&lt;T&gt;)</code>、<code>deserialize(byte[], Type)</code>：提供从"裸字节"到"类型实例"的三种反序列化入口。</li>
-<li><code>deserialize(byte[], String classFullName)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L54-L70" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:54-70</a>）：<code>default</code>
+<li><code>deserialize(byte[], String classFullName)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L54-L70" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:54-70</a>）：<code>default</code>
 方法，通过
 <code>CLASS_CACHE</code>（<code>ConcurrentHashMap</code>，容量
 8）缓存类名到 <code>Class</code> 的映射，<code>computeIfAbsent</code>
 保证并发下每个类名只反射加载一次；加载异常时返回
 <code>null</code>。</li>
-<li><code>serialize(T)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L76-L79" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:76-79</a>）：对象转字节。</li>
-<li><code>name()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L85-L87" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:85-87</a>）：返回实现者名称，作为
+<li><code>serialize(T)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L76-L79" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:76-79</a>）：对象转字节。</li>
+<li><code>name()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java#L85-L87" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/Serializer.java">Serializer.java:85-87</a>）：返回实现者名称，作为
 <code>SerializeFactory</code> 的登记键。</li>
 </ul>
-<p><code>SerializeFactory</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L33-L52" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java:33-52</a>）是序列化实现发现的工厂：</p>
+<p><code>SerializeFactory</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L33-L52" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java:33-52</a>）是序列化实现发现的工厂：</p>
 <ul>
 <li>静态块中先登记默认的 <code>HessianSerializer</code>（键
 <code>HESSIAN_INDEX = "hessian"</code>），再通过
@@ -950,7 +950,7 @@ Interface）思想一致：协议以 SPI 形式被平台自动发现与加载。
 <strong>自动发现</strong> SPI 提供的其它 <code>Serializer</code>
 实现并按 <code>name().toLowerCase()</code> 加入
 <code>SERIALIZER_MAP</code>。</li>
-<li><code>getDefault()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L43-L46" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">SerializeFactory.java:43-46</a>）：返回默认序列化器；<code>getSerializer(String type)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L48-L51" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">SerializeFactory.java:48-51</a>）：按类型名取实现。</li>
+<li><code>getDefault()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L43-L46" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">SerializeFactory.java:43-46</a>）：返回默认序列化器；<code>getSerializer(String type)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java#L48-L51" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/SerializeFactory.java">SerializeFactory.java:48-51</a>）：按类型名取实现。</li>
 </ul>
 <p><code>ConsistencyProtocol</code>、<code>JRaftProtocol</code> 等通过
 <code>SerializeFactory.getDefault()</code> 获取序列化器（见
@@ -959,7 +959,7 @@ JRaftProtocol 中
 SPI 实现 + 一个 name"。</p>
 <h4 id="4234-snapshotoperationcp-快照操作契约">4.2.3.4
 <code>SnapshotOperation</code>：CP 快照操作契约</h4>
-<p><code>SnapshotOperation</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java#L29-L40" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java:29-40</a>）定义两个方法：</p>
+<p><code>SnapshotOperation</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java#L29-L40" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java">consistency/src/main/java/com/alibaba/nacos/consistency/snapshot/SnapshotOperation.java:29-40</a>）定义两个方法：</p>
 <ul>
 <li><code>onSnapshotSave(Writer writer, BiConsumer&lt;Boolean, Throwable&gt; callFinally)</code>：保存快照，完成后以
 <code>(是否成功, 异常)</code> 回调。</li>
@@ -975,9 +975,9 @@ SPI 实现 + 一个 name"。</p>
 <code>Config</code> 与
 <code>CommandOperations</code>：配置与运维命令</h4>
 <ul>
-<li><code>Config&lt;L extends RequestProcessor&gt; extends Serializable</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Config.java#L33-L34" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Config.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/Config.java:33-34</a>）：协议配置的抽象基类，要求可序列化。其具体实现
+<li><code>Config&lt;L extends RequestProcessor&gt; extends Serializable</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/Config.java#L33-L34" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/Config.java">consistency/src/main/java/com/alibaba/nacos/consistency/Config.java:33-34</a>）：协议配置的抽象基类，要求可序列化。其具体实现
 <code>RaftConfig</code> 位于 core 模块，承载 JRaft 参数。</li>
-<li><code>CommandOperations</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java" target="_blank" rel="noopener" title="consistency/consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java">consistency/consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java</a>）：声明
+<li><code>CommandOperations</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java" target="_blank" rel="noopener" title="consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java">consistency/src/main/java/com/alibaba/nacos/consistency/CommandOperations.java</a>）：声明
 <code>execute(Map&lt;String,String&gt; args)</code>
 运维命令入口，<code>ConsistencyProtocol</code>
 继承它，<code>JRaftProtocol</code> 通过
@@ -986,7 +986,7 @@ SPI 实现 + 一个 name"。</p>
 </ul>
 <h4 id="4236-模板基类abstractconsistencyprotocol">4.2.3.6
 模板基类：<code>AbstractConsistencyProtocol</code></h4>
-<p><code>AbstractConsistencyProtocol&lt;T extends Config, L extends RequestProcessor&gt;</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java#L15-L32" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java:15-32</a>）虽位于
+<p><code>AbstractConsistencyProtocol&lt;T extends Config, L extends RequestProcessor&gt;</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java#L15-L32" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java">core/src/main/java/com/alibaba/nacos/core/distributed/AbstractConsistencyProtocol.java:15-32</a>）虽位于
 core 模块，却是 consistency 契约与具体实现之间最重要的"模板桥"。它：</p>
 <ul>
 <li>持有 <code>protected final ProtocolMetaData metaData</code> 与
@@ -1124,7 +1124,7 @@ Distro 节点收到 <code>resourceType = "Nacos:Naming:v2:ClientData"</code>
 <h3 id="433-源码走读">4.3.3 源码走读</h3>
 <h4 id="4331-distroclientdataprocessor三合一数据面核心">4.3.3.1
 <code>DistroClientDataProcessor</code>：三合一数据面核心</h4>
-<p><strong>类声明与构造</strong>：<code>public class DistroClientDataProcessor extends SmartSubscriber implements DistroDataStorage, DistroDataProcessor</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L45-L47" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:45-47</a>）。构造函数注入
+<p><strong>类声明与构造</strong>：<code>public class DistroClientDataProcessor extends SmartSubscriber implements DistroDataStorage, DistroDataProcessor</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L58" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java:58</a>）。构造函数注入
 <code>ClientManager</code> 与 <code>DistroProtocol</code>，并调用
 <code>NotifyCenter.registerSubscriber(this, NamingEventPublisherFactory.getInstance())</code>
 完成事件订阅绑定（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L59-L63" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">DistroClientDataProcessor.java:59-63</a>）。</p>
@@ -1225,23 +1225,23 @@ Client，仅对"临时 + 本节点负责（isResponsibleClient）"者构造
 <code>DistroData(type=DataOperation.VERIFY)</code> 加入结果列表。</p>
 <h4 id="4332-distroclienttransportagent节点间传输代理">4.3.3.2
 <code>DistroClientTransportAgent</code>：节点间传输代理</h4>
-<p><strong>类声明</strong>：<code>public class DistroClientTransportAgent implements DistroTransportAgent</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L53-L55" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java:53-55</a>），注入
+<p><strong>类声明</strong>：<code>public class DistroClientTransportAgent implements DistroTransportAgent</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L53-L55" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java:53-55</a>），注入
 <code>ClusterRpcClientProxy</code> 与
 <code>ServerMemberManager</code>。</p>
-<p><strong>是否支持回调传输</strong>：<code>supportCallbackTransport()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L62" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:62</a>）返回
+<p><strong>是否支持回调传输</strong>：<code>supportCallbackTransport()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L62" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:62</a>）返回
 <code>true</code>，表明该传输代理支持带异步回调的传输方式，从而可选用回调路径（配
 <code>DistroRpcCallbackWrapper</code> /
 <code>DistroVerifyCallbackWrapper</code>）并对结果进行监控埋点。</p>
-<p><strong>目标存在性预检</strong>：<code>isNoExistTarget(String target)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L209-L211" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:209-211</a>）通过
+<p><strong>目标存在性预检</strong>：<code>isNoExistTarget(String target)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L209-L211" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:209-211</a>）通过
 <code>memberManager.hasMember(target)</code>
 判断目标是否仍是集群成员；不存在时视为"无需同步"（返回 <code>true</code>
 表示成功，因为目标已不参与）。</p>
-<p><strong>目标健康预检</strong>：<code>checkTargetServerStatusUnhealthy(Member member)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L213-L215" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:213-215</a>）返回
+<p><strong>目标健康预检</strong>：<code>checkTargetServerStatusUnhealthy(Member member)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L213-L215" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:213-215</a>）返回
 <code>null == member || !NodeState.UP.equals(member.getState()) || !clusterRpcClientProxy.isRunning(member)</code>。任一条件成立即视为目标不健康，放弃本次同步并告警——用"状态
 UP + RPC 存活"双重条件降低对故障节点的无效投递。</p>
-<p><strong>响应校验</strong>：<code>checkResponse(Response response)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L217-L219" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:217-219</a>）比对
+<p><strong>响应校验</strong>：<code>checkResponse(Response response)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L217-L219" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:217-219</a>）比对
 <code>ResponseCode.SUCCESS.getCode() == response.getResultCode()</code>。</p>
-<p><strong>同步数据（同步式）</strong>：<code>syncData(DistroData data, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L67-L87" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:67-87</a>）流程：</p>
+<p><strong>同步数据（同步式）</strong>：<code>syncData(DistroData data, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L67-L87" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:67-87</a>）流程：</p>
 <ol type="1">
 <li><code>isNoExistTarget</code> 为真则直接返回 <code>true</code>；</li>
 <li>构造 <code>DistroDataRequest(data, data.getType())</code>；</li>
@@ -1252,27 +1252,27 @@ UP + RPC 存活"双重条件降低对故障节点的无效投递。</p>
 判定结果；<code>NacosException</code> 时记录
 <code>[DISTRO-FAILED]</code> 并返回 <code>false</code>。</li>
 </ol>
-<p><strong>同步数据（回调式）</strong>：<code>syncData(DistroData data, String targetServer, DistroCallback callback)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L89-L109" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:89-109</a>）流程类似，但改用
+<p><strong>同步数据（回调式）</strong>：<code>syncData(DistroData data, String targetServer, DistroCallback callback)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L89-L109" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:89-109</a>）流程类似，但改用
 <code>clusterRpcClientProxy.asyncRequest(member, request, new DistroRpcCallbackWrapper(callback, member))</code>，并把健康预检失败路径改为
 <code>callback.onFailed(null)</code>。</p>
-<p><strong>同步校验数据（同步式）</strong>：<code>syncVerifyData(DistroData verifyData, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L111-L133" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:111-133</a>）在发送前执行一行关键操作：<code>verifyData.getDistroKey().setTargetServer(memberManager.getSelf().getAddress())</code>——<strong>把目标字段改写为本节点地址</strong>。其注释说明目的：让对端在处理时可以回调回"校验发起方"。随后以
+<p><strong>同步校验数据（同步式）</strong>：<code>syncVerifyData(DistroData verifyData, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L111-L133" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:111-133</a>）在发送前执行一行关键操作：<code>verifyData.getDistroKey().setTargetServer(memberManager.getSelf().getAddress())</code>——<strong>把目标字段改写为本节点地址</strong>。其注释说明目的：让对端在处理时可以回调回"校验发起方"。随后以
 <code>DataOperation.VERIFY</code> 构造请求并同步发送。</p>
-<p><strong>同步校验数据（回调式）</strong>：<code>syncVerifyData(DistroData verifyData, String targetServer, DistroCallback callback)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L135-L157" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:135-157</a>）使用
+<p><strong>同步校验数据（回调式）</strong>：<code>syncVerifyData(DistroData verifyData, String targetServer, DistroCallback callback)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L135-L157" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:135-157</a>）使用
 <code>DistroVerifyCallbackWrapper(targetServer, clientId, callback, member)</code>。该
 wrapper 在对端确认校验失败时（<code>onResponse</code> 且非成功码）发布
 <code>ClientVerifyFailedEvent(clientId, targetServer)</code> 并计数
 <code>NamingTpsMonitor.distroVerifyFail</code>，从而驱动"校验失败→立即补偿同步"的正反馈闭环。</p>
-<p><strong>查询数据</strong>：<code>getData(DistroKey key, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L159-L184" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:159-184</a>）构造
+<p><strong>查询数据</strong>：<code>getData(DistroKey key, String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L159-L184" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:159-184</a>）构造
 <code>QUERY</code> 类型的请求发送，响应成功则从
 <code>((DistroDataResponse) response).getDistroData()</code>
 取回数据，失败抛出 <code>DistroException</code>。</p>
-<p><strong>查询全量快照</strong>：<code>getDatumSnapshot(String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L186-L207" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:186-207</a>）以
+<p><strong>查询全量快照</strong>：<code>getDatumSnapshot(String targetServer)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L186-L207" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:186-207</a>）以
 <code>SNAPSHOT</code> 操作请求，并显式传入超时
 <code>DistroConfig.getInstance().getLoadDataTimeoutMillis()</code>（默认
 30000ms）——全量快照体积大，需要更长超时。</p>
 <p><strong>回调执行上下文</strong>：两个内部回调类
-<code>DistroRpcCallbackWrapper</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L221-L231" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:221-231</a>）与
-<code>DistroVerifyCallbackWrapper</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L275" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-275</a>）都通过
+<code>DistroRpcCallbackWrapper</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L221-L231" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:221-231</a>）与
+<code>DistroVerifyCallbackWrapper</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L275" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-275</a>）都通过
 <code>getExecutor()</code> 返回
 <code>GlobalExecutor.getCallbackExecutor()</code>
 指定回调执行线程域，<code>getTimeout()</code> 分别取同步超时
@@ -1280,7 +1280,7 @@ wrapper 在对端确认校验失败时（<code>onResponse</code> 且非成功码
 <code>verifyTimeoutMillis</code>（默认 3000ms）。</p>
 <h4 id="4333-distroclientverifyinfo轻量校验载体">4.3.3.3
 <code>DistroClientVerifyInfo</code>：轻量校验载体</h4>
-<p><code>DistroClientVerifyInfo implements Serializable</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java#L27-L28" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java">naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java:27-28</a>，<code>serialVersionUID=2223964944788737629L</code>）仅含两个字段：</p>
+<p><code>DistroClientVerifyInfo implements Serializable</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java#L27-L28" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java">naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientVerifyInfo.java:27-28</a>，<code>serialVersionUID=2223964944788737629L</code>）仅含两个字段：</p>
 <ul>
 <li><code>clientId</code>：被校验客户端 ID。</li>
 <li><code>revision</code>：该客户端当前修订号。</li>
@@ -1399,10 +1399,10 @@ key 聚合并延迟一定时间（默认
 <h3 id="443-源码走读">4.4.3 源码走读</h3>
 <h4 id="4431-装配入口distroclientcomponentregistry">4.4.3.1
 装配入口：<code>DistroClientComponentRegistry</code></h4>
-<p><code>@Component public class DistroClientComponentRegistry</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L40-L44" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java:40-44</a>）通过构造函数注入
+<p><code>@Component public class DistroClientComponentRegistry</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L40-L44" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java:40-44</a>）通过构造函数注入
 <code>ServerMemberManager</code>、<code>DistroProtocol</code>、<code>DistroComponentHolder</code>、<code>DistroTaskEngineHolder</code>、<code>ClientManagerDelegate</code>、<code>ClusterRpcClientProxy</code>
 六个依赖，展示其在链路中的"装配中枢"地位。</p>
-<p><code>@PostConstruct public void doRegister()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L67-L75" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">DistroClientComponentRegistry.java:67-75</a>）执行四步注册：</p>
+<p><code>@PostConstruct public void doRegister()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L67-L75" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">DistroClientComponentRegistry.java:67-75</a>）执行四步注册：</p>
 <ol type="1">
 <li>实例化
 <code>DistroClientDataProcessor(clientManager, distroProtocol)</code>；</li>
@@ -1419,7 +1419,7 @@ TYPE 下的存储、处理、传输、失败处理四类组件被一一绑定。
 中"distroProtocol.sync 按 type 查组件"的前提。</p>
 <h4 id="4432-核心注册表distrocomponentholder">4.4.3.2
 核心注册表：<code>DistroComponentHolder</code></h4>
-<p><code>@Component public class DistroComponentHolder</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java#L31-L33" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java:31-33</a>）用四个
+<p><code>@Component public class DistroComponentHolder</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java#L31-L33" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java">core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java:31-33</a>）用四个
 <code>HashMap</code> 分别保存按 <code>String type</code>
 索引的四类组件：</p>
 <ul>
@@ -1436,7 +1436,7 @@ TYPE 下的存储、处理、传输、失败处理四类组件被一一绑定。
 <h4 id="4433-增量同步链路逐步走读">4.4.3.3 增量同步链路逐步走读</h4>
 <p><strong>Step 1 事件产生与发布</strong>：本地 Client
 连接/状态变化时，naming 侧发布
-<code>ClientEvent</code>（<code>ClientChangedEvent</code>/<code>ClientDisconnectEvent</code>）。<code>ClientEvent</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java#L31-L83" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java">naming/naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java:31-83</a>）是一个事件基类，携带
+<code>ClientEvent</code>（<code>ClientChangedEvent</code>/<code>ClientDisconnectEvent</code>）。<code>ClientEvent</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java#L31-L83" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java">naming/src/main/java/com/alibaba/nacos/naming/core/v2/event/client/ClientEvent.java:31-83</a>）是一个事件基类，携带
 <code>Client</code>；其内部子类 <code>ClientChangedEvent</code>
 表示"Client 增删服务"，<code>ClientDisconnectEvent</code> 携带
 <code>isNative</code>
@@ -1450,9 +1450,9 @@ TYPE 下的存储、处理、传输、失败处理四类组件被一一绑定。
 4.3.3.1）通过 <code>distroProtocol.sync / syncToTarget</code>
 发起同步。</p>
 <p><strong>Step 3
-协议调度</strong>：<code>DistroProtocol.sync(DistroKey, DataOperation)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L103-L109" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java:103-109</a>）遍历
+协议调度</strong>：<code>DistroProtocol.sync(DistroKey, DataOperation)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L103-L109" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java:103-109</a>）遍历
 <code>memberManager.allMembersWithoutSelf()</code>，对每个成员调用
-<code>syncToTarget(distroKey, action, each.getAddress(), delay)</code>。<code>syncToTarget</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L128-L139" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:128-139</a>）构造
+<code>syncToTarget(distroKey, action, each.getAddress(), delay)</code>。<code>syncToTarget</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L128-L139" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">DistroProtocol.java:128-139</a>）构造
 <code>new DistroKey(distroKey.getResourceKey(), distroKey.getResourceType(), targetServer)</code>（补入目标地址），封装
 <code>DistroDelayTask</code> 后
 <code>distroTaskEngineHolder.getDelayTaskExecuteEngine().addTask(key, task)</code>。</p>
@@ -1467,7 +1467,7 @@ TYPE 下的存储、处理、传输、失败处理四类组件被一一绑定。
 的延迟任务在到期前合并，避免对同一目标的重复发送。延迟时间取自
 <code>DistroConfig.syncDelayMillis</code>（默认 1000ms）。</p>
 <p><strong>Step 5
-延迟任务处理器</strong>：<code>DistroDelayTaskProcessor.process(NacosTask)</code>（core/.../distro/task/delay/DistroDelayTaskProcessor.java:52-76）按
+延迟任务处理器</strong>：<code>DistroDelayTaskProcessor.process(NacosTask)</code>（core/.../distro/task/delay/DistroDelayTaskProcessor.java:45-64）按
 <code>distroDelayTask.getAction()</code> 分派：</p>
 <ul>
 <li><code>DELETE</code> →
@@ -1499,7 +1499,7 @@ TYPE 下的存储、处理、传输、失败处理四类组件被一一绑定。
 传输与对端接收</strong>：<code>DistroClientTransportAgent.syncData</code>（见
 4.3.3.2）经 <code>ClusterRpcClientProxy.sendRequest/asyncRequest</code>
 将 <code>DistroDataRequest</code> 送达目标成员；对端网络层收到后回调
-<code>DistroProtocol.onReceive(DistroData)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L164-L178" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:164-178</a>），按
+<code>DistroProtocol.onReceive(DistroData)</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L164-L178" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:164-178</a>），按
 <code>resourceType</code> 经
 <code>DistroComponentHolder.findDataProcessor(type)</code> 路由到
 <code>DistroClientDataProcessor.processData</code>（回 4.3.3.1 的
@@ -1514,7 +1514,7 @@ ADD/CHANGE/DELETE 处理）→ <code>handlerClientSyncData</code> →
 3000ms）重新投入延迟任务引擎——失败任务被回炉重试。</p>
 <h4 id="4434-周期校验链路逐步走读">4.4.3.4 周期校验链路逐步走读</h4>
 <p><strong>Step 1
-定时启动</strong>：<code>DistroProtocol.startVerifyTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L87-L91" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:87-91</a>）调用
+定时启动</strong>：<code>DistroProtocol.startVerifyTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L87-L91" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:87-91</a>）调用
 <code>GlobalExecutor.schedulePartitionDataTimedSync(new DistroVerifyTimedTask(...), verifyIntervalMillis)</code>，默认
 <code>verifyIntervalMillis=5000ms</code> 周期执行。</p>
 <p><strong>Step 2
@@ -1543,7 +1543,7 @@ member) 组合：先检查
 <code>clientManager.verifyClient(verifyData)</code>。<code>ClientManager.verifyClient</code>（naming/.../core/v2/client/manager/ClientManager.java，接口方法）核对客户端是否存在及
 <code>revision</code> 是否一致。</p>
 <p><strong>Step 5
-失败补偿（自愈）</strong>：若对端确认校验失败，<code>DistroClientTransportAgent.DistroVerifyCallbackWrapper.onResponse()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L275" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-275</a>）在非成功响应分支发布
+失败补偿（自愈）</strong>：若对端确认校验失败，<code>DistroClientTransportAgent.DistroVerifyCallbackWrapper.onResponse()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L275" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-275</a>）在非成功响应分支发布
 <code>ClientVerifyFailedEvent(clientId, targetServer)</code> 并累加
 <code>NamingTpsMonitor.distroVerifyFail</code>；该事件被
 <code>DistroClientDataProcessor.syncToVerifyFailedServer</code> 消费，以
@@ -1552,7 +1552,7 @@ member) 组合：先检查
 4.3.3.1）——校验发现的不一致被立即补偿修复。</p>
 <h4 id="4435-全量加载链路逐步走读">4.4.3.5 全量加载链路逐步走读</h4>
 <p><strong>Step 1
-定时启动</strong>：<code>DistroProtocol.startLoadTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L71-L83" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:71-83</a>，<code>startLoadTask()</code>
+定时启动</strong>：<code>DistroProtocol.startLoadTask()</code>（<a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L71-L83" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/.../distro/DistroProtocol.java:71-83</a>，<code>startLoadTask()</code>
 内部）提交
 <code>new DistroLoadDataTask(memberManager, distroComponentHolder, DistroConfig.getInstance(), loadCallback)</code>，<code>loadCallback.onSuccess</code>
 将 <code>isInitialized=true</code>（协议就绪），<code>onFailed</code> 置
@@ -1799,7 +1799,7 @@ AP
 <h3 id="453-源码走读">4.5.3 源码走读</h3>
 <h3 id="4531-失败重试链路从执行引擎到重试入队">4.5.3.1
 失败重试链路：从执行引擎到重试入队</h3>
-<p>同步失败的最原始触发点在传输层。<code>DistroClientTransportAgent.syncData(DistroData, String)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L80-L98" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/.../distro/v2/DistroClientTransportAgent.java:80-98</a></code>）在以下三类场景返回
+<p>同步失败的最原始触发点在传输层。<code>DistroClientTransportAgent.syncData(DistroData, String)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L67-L86" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/.../distro/v2/DistroClientTransportAgent.java:67-86</a></code>）在以下三类场景返回
 <code>false</code>：</p>
 <ul>
 <li>目标节点不在成员表：<code>isNoExistTarget(target)</code> 返回
@@ -1848,7 +1848,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb2-1"><a href="
 <span id="cb2-8"><a href="#cb2-8" aria-hidden="true" tabindex="-1"></a>    failedTaskHandler<span class="op">.</span><span class="fu">retry</span><span class="op">(</span><span class="fu">getDistroKey</span><span class="op">(),</span> <span class="fu">getDataOperation</span><span class="op">());</span></span>
 <span id="cb2-9"><a href="#cb2-9" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
 <p><code>DistroClientTaskFailedHandler</code> 在
-<code>DistroClientComponentRegistry.doRegister()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L71-L75" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">naming/.../distro/v2/DistroClientComponentRegistry.java:71-75</a></code>）中注册：</p>
+<code>DistroClientComponentRegistry.doRegister()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java#L71-L75" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientComponentRegistry.java">naming/.../distro/v2/DistroClientComponentRegistry.java:71-75</a></code>）中注册：</p>
 <div class="sourceCode" id="cb3"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb3-1"><a href="#cb3-1" aria-hidden="true" tabindex="-1"></a>DistroClientTaskFailedHandler taskFailedHandler <span class="op">=</span> <span class="kw">new</span> <span class="fu">DistroClientTaskFailedHandler</span><span class="op">(</span>taskEngineHolder<span class="op">);</span></span>
 <span id="cb3-2"><a href="#cb3-2" aria-hidden="true" tabindex="-1"></a>componentHolder<span class="op">.</span><span class="fu">registerFailedTaskHandler</span><span class="op">(</span>DistroClientDataProcessor<span class="op">.</span><span class="fu">TYPE</span><span class="op">,</span> taskFailedHandler<span class="op">);</span></span></code></pre></div>
@@ -1866,7 +1866,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb4-1"><a href="
 <code>DistroDelayTask</code>，然后调用 <code>addTask</code>
 将任务加入延迟引擎。</p>
 <p>关键在于 <code>addTask</code> 的<strong>按 key
-合并</strong>语义。<code>DistroDelayTask.merge(AbstractDelayTask)</code>（<code>core/distributed/distro/task/delay/DistroDelayTask.java: Hours73-82</code>）：</p>
+合并</strong>语义。<code>DistroDelayTask.merge(AbstractDelayTask)</code>（<code>core/distributed/distro/task/delay/DistroDelayTask.java:60-71</code>）：</p>
 <div class="sourceCode" id="cb5"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb5-1"><a href="#cb5-1" aria-hidden="true" tabindex="-1"></a><span class="at">@Override</span></span>
 <span id="cb5-2"><a href="#cb5-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">void</span> <span class="fu">merge</span><span class="op">(</span>AbstractDelayTask task<span class="op">)</span> <span class="op">{</span></span>
@@ -1897,7 +1897,7 @@ key 的多次重试会被合并为单个延迟任务。合并策略为：若新�
 <h3 id="4532-校验闭环采集--传输--验证--修复">4.5.3.2 校验闭环：采集 →
 传输 → 验证 → 修复</h3>
 <p>校验机制的总调度入口位于 <code>DistroProtocol</code>
-构造时启动的定时任务（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L87-L91" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/distributed/distro/DistroProtocol.java:87-91</a></code>）：</p>
+构造时启动的定时任务（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L87-L91" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/distributed/distro/DistroProtocol.java:87-91</a></code>）：</p>
 <div class="sourceCode" id="cb6"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb6-1"><a href="#cb6-1" aria-hidden="true" tabindex="-1"></a><span class="kw">private</span> <span class="dt">void</span> <span class="fu">startVerifyTask</span><span class="op">()</span> <span class="op">{</span></span>
 <span id="cb6-2"><a href="#cb6-2" aria-hidden="true" tabindex="-1"></a>    GlobalExecutor<span class="op">.</span><span class="fu">schedulePartitionDataTimedSync</span><span class="op">(</span><span class="kw">new</span> <span class="fu">DistroVerifyTimedTask</span><span class="op">(</span>memberManager<span class="op">,</span></span>
@@ -1942,7 +1942,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb7-1"><a href="
 <code>DistroVerifyExecuteTask</code>，实现"一份校验数据，对每个对等节点各校验一次"，而非广播式单任务发送。</li>
 </ol>
 <p>校验数据的采集来自
-<code>DistroClientDataProcessor.getVerifyData()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L245-L265" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">naming/.../distro/v2/DistroClientDataProcessor.java:245-265</a></code>）：</p>
+<code>DistroClientDataProcessor.getVerifyData()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L274-L292" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">naming/.../distro/v2/DistroClientDataProcessor.java:274-292</a></code>）：</p>
 <div class="sourceCode" id="cb8"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb8-1"><a href="#cb8-1" aria-hidden="true" tabindex="-1"></a><span class="at">@Override</span></span>
 <span id="cb8-2"><a href="#cb8-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="bu">List</span><span class="op">&lt;</span>DistroData<span class="op">&gt;</span> <span class="fu">getVerifyData</span><span class="op">()</span> <span class="op">{</span></span>
@@ -1969,13 +1969,13 @@ client（<code>clientManager.isResponsibleClient(client)</code>）、仅取
 <code>DistroClientVerifyInfo</code>。<code>revision</code> 是 client
 数据的单调递增版本号，每次实例注册/注销/批量发布均使其递增。</p>
 <p><code>DistroVerifyExecuteTask.run()</code>
-对每条校验数据调用传输代理的回调同步校验。<code>DistroClientTransportAgent.syncVerifyData(DistroData, String, DistroCallback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L145-L163" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/.../distro/v2/DistroClientTransportAgent.java:145-163</a></code>）有一个精巧设计：<strong>将
+对每条校验数据调用传输代理的回调同步校验。<code>DistroClientTransportAgent.syncVerifyData(DistroData, String, DistroCallback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L145-L163" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/.../distro/v2/DistroClientTransportAgent.java:145-163</a></code>）有一个精巧设计：<strong>将
 verify 数据的 targetServer
 替换为本节点地址</strong>（<code>verifyData.getDistroKey().setTargetServer(memberManager.getSelf().getAddress())</code>），使对端校验失败回调时能定向到数据源。随后发送
 <code>DataOperation.VERIFY</code> RPC 请求，通过内部类
 <code>DistroVerifyCallbackWrapper</code> 异步接收结果。</p>
 <p>对端收到 RPC 后路由至
-<code>DistroProtocol.onVerify(DistroData, String)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L183-L195" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/distributed/distro/DistroProtocol.java:183-195</a></code>）：</p>
+<code>DistroProtocol.onVerify(DistroData, String)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java#L183-L195" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/DistroProtocol.java">core/distributed/distro/DistroProtocol.java:183-195</a></code>）：</p>
 <div class="sourceCode" id="cb9"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">boolean</span> <span class="fu">onVerify</span><span class="op">(</span>DistroData distroData<span class="op">,</span> <span class="bu">String</span> sourceAddress<span class="op">)</span> <span class="op">{</span></span>
 <span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a>    <span class="bu">String</span> resourceType <span class="op">=</span> distroData<span class="op">.</span><span class="fu">getDistroKey</span><span class="op">().</span><span class="fu">getResourceType</span><span class="op">();</span></span>
@@ -2025,7 +2025,7 @@ revision），视为通过，同时刷新 <code>lastRenewTime</code>；</li>
 <li>版本不一致：记录日志后返回 <code>false</code>。</li>
 </ul>
 <p>校验失败信息通过 RPC
-响应返回发送方。<code>DistroVerifyCallbackWrapper.onResponse(Response)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L220-L230" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:220-230</a></code>）完成修复闭环：</p>
+响应返回发送方。<code>DistroVerifyCallbackWrapper.onResponse(Response)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L287-L298" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:287-298</a></code>）完成修复闭环：</p>
 <div class="sourceCode" id="cb12"><pre
 class="sourceCode java"><code class="sourceCode java"><span id="cb12-1"><a href="#cb12-1" aria-hidden="true" tabindex="-1"></a><span class="at">@Override</span></span>
 <span id="cb12-2"><a href="#cb12-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="dt">void</span> <span class="fu">onResponse</span><span class="op">(</span><span class="bu">Response</span> response<span class="op">)</span> <span class="op">{</span></span>
@@ -2284,7 +2284,7 @@ v2，所有注册项均使用
 <code>resourceType</code>
 即可一站式查找到该类型对应的传输代理、数据存储、数据处理器和失败重试处理器。</p>
 <p>注意 <code>registerDataProcessor</code> 内部调用
-<code>dataProcessorMap.putIfAbsent</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java#L65" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java">DistroComponentHolder.java:65</a></code>），避免同名处理器被覆盖，而其余三个
+<code>dataProcessorMap.putIfAbsent</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java#L65" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/distro/component/DistroComponentHolder.java">DistroComponentHolder.java:65</a></code>），避免同名处理器被覆盖，而其余三个
 <code>register*</code> 方法均使用
 <code>put</code>（可覆盖），此差异的语义是：数据处理器应当对每个
 <code>processType</code> 全局唯一，而传输代理等允许后续替换。</p>
@@ -2338,8 +2338,9 @@ client 校验有效性后构造 <code>DistroKey</code>，调用
 <code>distroProtocol.sync(distroKey, action)</code>
 向所有远端节点发起同步。每次同步前均通过
 <code>isInvalidClient(client)</code> 过滤非临时客户端（持久客户端由 Raft
-处理）和不归属本节点负责的客户端（由 <code>DistroMapper</code>
-决定）。</p>
+处理）和不归属本节点负责的客户端（由
+<code>ClientManager.isResponsibleClient()</code> 判定，v2
+中即本机直连客户端 <code>client.isNative()</code>）。</p>
 <p><strong>角色二：DistroDataStorage（数据提供）。</strong>
 提供四个方法供框架在需要获取本节点数据时调用：</p>
 <p><code>getDistroData(DistroKey distroKey)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java#L248-L256" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientDataProcessor.java">DistroClientDataProcessor.java:248-256</a></code>）按
@@ -2405,10 +2406,10 @@ DistroClientTransportAgent：v2 集群传输代理</h3>
 <p><code>DistroClientTransportAgent</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java</a></code>）实现了
 <code>DistroTransportAgent</code> 接口的全部七个方法，将 Distro
 框架的传输抽象映射到 Nacos 集群内部的 gRPC 通道。</p>
-<p><code>supportCallbackTransport()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java</a>:ADD/CHANGE/DELETE/VERIFY/SNAPSHOT/QUERY</code>）返回
+<p><code>supportCallbackTransport()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L61-L64" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:61-64</a></code>）返回
 <code>true</code>，表示该传输代理支持异步回调路径，使任务执行引擎在调用传输时走
 <code>doExecuteWithCallback()</code> 分支以获取成功/失败反馈。</p>
-<p><code>syncData(DistroData data, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L67-L84" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:67-84</a></code>）：构造
+<p><code>syncData(DistroData data, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L67-L84" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:67-84</a></code>）：构造
 <code>DistroDataRequest</code>，通过
 <code>clusterRpcClientProxy.sendRequest(member, request)</code>
 同步发送，调用 <code>checkResponse()</code> 校验响应码是否为
@@ -2417,10 +2418,10 @@ DistroClientTransportAgent：v2 集群传输代理</h3>
 视为成功）；<code>checkTargetServerStatusUnhealthy()</code>
 检查目标节点状态是否为 UP 且 RPC
 通道是否运行中（若不健康记录警告日志并返回 false）。</p>
-<p><code>syncData(DistroData data, String targetServer, DistroCallback callback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L89-L106" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:89-106</a></code>）：异步版本，通过
+<p><code>syncData(DistroData data, String targetServer, DistroCallback callback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L89-L106" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:89-106</a></code>）：异步版本，通过
 <code>clusterRpcClientProxy.asyncRequest(member, request, wrapper)</code>
 发送请求，wrapper 类型为内部类
-<code>DistroRpcCallbackWrapper</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L221-L257" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:221-257</a></code>）。它在
+<code>DistroRpcCallbackWrapper</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L221-L257" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:221-257</a></code>）。它在
 <code>onResponse</code> 中校验成功后调用
 <code>NamingTpsMonitor.distroSyncSuccess()</code> 并回调
 <code>distroCallback.onSuccess()</code>；失败则调用
@@ -2428,19 +2429,19 @@ DistroClientTransportAgent：v2 集群传输代理</h3>
 <code>distroCallback.onFailed()</code>。超时由
 <code>DistroConfig.getSyncTimeoutMillis()</code>（默认
 3000ms）控制。</p>
-<p><code>syncVerifyData(DistroData verifyData, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L111-L126" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:111-126</a></code>）与
-<code>syncVerifyData(DistroData verifyData, String targetServer, DistroCallback callback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L135-L147" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:135-147</a></code>）：结构与同步方法一致，差异在于请求的
+<p><code>syncVerifyData(DistroData verifyData, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L111-L126" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:111-126</a></code>）与
+<code>syncVerifyData(DistroData verifyData, String targetServer, DistroCallback callback)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L135-L147" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:135-147</a></code>）：结构与同步方法一致，差异在于请求的
 <code>DataOperation</code> 为
 <code>VERIFY</code>。同步校验版本中有一处精巧设计：先将
 <code>verifyData.getDistroKey().setTargetServer(memberManager.getSelf().getAddress())</code>，即把校验数据的
 targetServer
 替换为本节点地址，使对端在回调时能定位数据源向本节点发起补推。异步版本在失败回调中通过
-<code>DistroVerifyCallbackWrapper</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L297" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-297</a></code>）的
+<code>DistroVerifyCallbackWrapper</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L259-L297" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:259-297</a></code>）的
 <code>onResponse</code> 发布
 <code>ClientEvent.ClientVerifyFailedEvent</code> 触发补偿同步。</p>
-<p><code>getData(DistroKey key, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L159-L170" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:159-170</a></code>）：发送
+<p><code>getData(DistroKey key, String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L159-L183" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:159-183</a></code>）：发送
 <code>DataOperation.QUERY</code> 请求从远端拉取特定 client
-数据。<code>getDatumSnapshot(String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L186-L191" target="_blank" rel="noopener" title="naming/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:186-191</a></code>）：发送
+数据。<code>getDatumSnapshot(String targetServer)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java#L185-L207" target="_blank" rel="noopener" title="naming/src/main/java/com/alibaba/nacos/naming/consistency/ephemeral/distro/v2/DistroClientTransportAgent.java">DistroClientTransportAgent.java:185-207</a></code>）：发送
 <code>DataOperation.SNAPSHOT</code> 请求拉取全量快照，超时由
 <code>DistroConfig.getLoadDataTimeoutMillis()</code>（默认
 30000ms）控制。</p>
@@ -2550,9 +2551,10 @@ Pattern）</strong>：<code>DistroComponentHolder</code>
 存储各类角色实例，暴露 <code>register*</code>/<code>find*</code>
 接口。<code>DistroClientComponentRegistry.doRegister()</code> 一次性注册
 v2 全量组件——这是「注册与使用分离」的典范：框架在运行时通过
-<code>resourceType</code> 查找到对应实现，无需知道具体实现类。v1（旧
-Datum 实现）与 v2（新 Client 实现）通过不同的 <code>TYPE</code> 值在同一
-<code>DistroComponentHolder</code> 中并存，实现零冲突共存。</p></li>
+<code>resourceType</code> 查找到对应实现，无需知道具体实现类。2.5.3 中
+v1 实现已移除，<code>DistroComponentHolder</code> 仅注册 v2
+一套组件；若未来多数据面共存可按不同 <code>TYPE</code>
+各自注册实现零冲突。</p></li>
 <li><p><strong>策略模式（Strategy）</strong>：<code>DistroTransportAgent</code>、<code>DistroDataStorage</code>、<code>DistroDataProcessor</code>、<code>DistroFailedTaskHandler</code>
 均为策略接口。<code>DistroClientTransportAgent</code> 封装基于 gRPC
 的传输策略；若未来需要切换 HTTP 或消息队列传输，只需实现新的
@@ -2877,10 +2879,9 @@ tag 做哈希后对列表大小取模，得到 <code>[0, servers.size()-1]</code
 responsibleTag 是 <code>serviceName</code>（以服务粒度分布），v2 的
 responsibleTag 是 <code>ip:port</code>（以 client 粒度分布）。v2 下
 <code>HealthCheckCommonV2</code> 调用
-<code>distroMapper.responsible(serviceName)</code>（见
-<code>naming/healthcheck/v2/processor/HealthCheckCommonV2.java:103</code>），仍以
-<code>serviceName</code>
-为粒度判定健康检查归属，这是因为健康检查任务本身是服务维度的。</p>
+<code>distroMapper.responsible(task.getClient().getResponsibleId())</code>，以
+client 的负责标识（<code>ip:port</code>
+连接标识）为粒度判定健康检查归属，这是因为健康检查任务本身是服务维度的。</p>
 <h3 id="4734-远端-owner-查询mapsrv">4.7.3.4 远端 owner
 查询：<code>mapSrv()</code></h3>
 <p><code>DistroMapper.mapSrv()</code>（<code>naming/core/DistroMapper.java:110-122</code>）提供查询某个
@@ -3326,7 +3327,7 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb25-1"><a href=
 <span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a>    <span class="kw">this</span><span class="op">.</span><span class="fu">raftServer</span> <span class="op">=</span> <span class="kw">new</span> <span class="fu">JRaftServer</span><span class="op">();</span>                    <span class="co">// 不通过 Spring IOC，直接 new</span></span>
 <span id="cb25-4"><a href="#cb25-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">this</span><span class="op">.</span><span class="fu">jRaftMaintainService</span> <span class="op">=</span> <span class="kw">new</span> <span class="fu">JRaftMaintainService</span><span class="op">(</span>raftServer<span class="op">);</span></span>
 <span id="cb25-5"><a href="#cb25-5" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
-<p><code>init(RaftConfig)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L107-L148" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:107-148</a></code>）通过
+<p><code>init(RaftConfig)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L117-L159" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:117-159</a></code>）通过
 <code>AtomicBoolean</code> 确保单次初始化。该方法依次执行：（1）注册
 <code>RaftEvent.class</code> 到 <code>NotifyCenter</code>
 共享发布器；（2）调用 <code>raftServer.init(this.raftConfig)</code>
@@ -3337,7 +3338,7 @@ Group；（4）注册 <code>RaftEvent</code> 订阅者，监听 Leader
 <code>ProtocolMetaData</code> 并通过
 <code>ServerMemberManager.update(Member)</code> 写入本节点的扩展字段
 <code>raftMetaData</code>。</p>
-<p><strong>写请求路径。</strong><code>write(WriteRequest)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L162-L168" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:162-168</a></code>）调用
+<p><strong>写请求路径。</strong><code>write(WriteRequest)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L178-L182" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:178-182</a></code>）调用
 <code>writeAsync(request).get(10_000L, TimeUnit.MILLISECONDS)</code>
 同步等待最多 10 秒，底层委托
 <code>raftServer.commit(request.getGroup(), request, new CompletableFuture&lt;&gt;())</code>。<code>writeAsync</code>
@@ -3345,19 +3346,19 @@ Group；（4）注册 <code>RaftEvent</code> 订阅者，监听 Leader
 <code>JRaftServer.commit()</code> 在 Raft 日志提交后通过
 <code>FailoverClosureImpl</code> 完成
 <code>CompletableFuture</code>。</p>
-<p><strong>读请求路径。</strong><code>getData(ReadRequest)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L150-L153" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:150-153</a></code>）调用
+<p><strong>读请求路径。</strong><code>getData(ReadRequest)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L167-L170" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:167-170</a></code>）调用
 <code>aGetData(request).get(5_000L, TimeUnit.MILLISECONDS)</code>
 同步等待最多 5
-秒。<code>aGetData</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L156-L159" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:156-159</a></code>）委托
+秒。<code>aGetData</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L173-L175" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:173-175</a></code>）委托
 <code>raftServer.get(request)</code> 执行 ReadIndex 线性一致性读：先通过
 <code>node.readIndex()</code> 确认当前已提交的 commitIndex，避免读到旧
 Leader 的 stale data；若 ReadIndex 失败则降级为 Leader
 直读（<code>readFromLeader</code>）。</p>
-<p><strong>成员变更。</strong><code>memberChange(Set&lt;String&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L171-L178" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:171-178</a></code>）最多重试
+<p><strong>成员变更。</strong><code>memberChange(Set&lt;String&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L190-L198" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:190-198</a></code>）最多重试
 5 次调用
 <code>raftServer.peerChange(jRaftMaintainService, addresses)</code>，每次失败间隔
 100ms。若 5 次全部失败，记录 warning 日志。</p>
-<p><strong>关闭流程。</strong><code>shutdown()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L181-L187" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:181-187</a></code>）通过双重
+<p><strong>关闭流程。</strong><code>shutdown()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java#L201-L206" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">JRaftProtocol.java:201-206</a></code>）通过双重
 CAS（<code>initialized</code> +
 <code>shutdowned</code>）确保仅关闭一次，调用
 <code>raftServer.shutdown()</code> 依次关闭所有 Raft Group 的 Node 和
@@ -3368,11 +3369,11 @@ JRaftServer：Multi-Raft Group 管理器</h4>
 JRaft 库与 Nacos 之间的核心桥接层，管理多个 Raft Group
 的生命周期。其核心数据结构为
 <code>Map&lt;String, RaftGroupTuple&gt; multiRaftGroup</code>，其中
-<code>RaftGroupTuple</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L536-L571" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:536-571</a></code>）封装了
+<code>RaftGroupTuple</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L547-L575" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:547-575</a></code>）封装了
 <code>Node</code>（JRaft
 库原生节点对象）、<code>RequestProcessor</code>（业务处理器引用）、<code>RaftGroupService</code>（Raft
 Group 服务门面）和 <code>NacosStateMachine</code>（状态机实例）。</p>
-<p><strong>初始化阶段。</strong><code>init(RaftConfig)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L127-L165" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:127-165</a></code>）执行以下关键步骤：</p>
+<p><strong>初始化阶段。</strong><code>init(RaftConfig)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L153-L188" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:153-188</a></code>）执行以下关键步骤：</p>
 <ol type="1">
 <li><strong>配置选举参数</strong>：从 <code>raftConfig</code> 读取
 <code>RAFT_ELECTION_TIMEOUT_MS</code>（默认 5000ms）设置到
@@ -3393,7 +3394,7 @@ JRaft 内置 Metrics 记录功能。</li>
 CliService</strong>：<code>RaftServiceFactory.createAndInitCliService(cliOptions)</code>
 创建用于节点加入/移除集群的 CLI 服务。</li>
 </ol>
-<p><strong>启动阶段。</strong><code>start()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L167-L190" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:167-190</a></code>）通过
+<p><strong>启动阶段。</strong><code>start()</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L190-L219" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:190-219</a></code>）通过
 <code>isStarted</code> 标志确保单次启动。核心步骤如下：</p>
 <ol type="1">
 <li><strong>初始化 NodeManager</strong>：遍历
@@ -3411,7 +3412,7 @@ RaftRpcFactory 上注册
 <code>createMultiRaftGroup(processors)</code> 为每个
 <code>RequestProcessor4CP</code> 创建独立的 Raft Group。</li>
 </ol>
-<p><strong><code>createMultiRaftGroup(Collection&lt;RequestProcessor4CP&gt;)</code></strong>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L192-L235" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:192-235</a></code>）是本类中最重要的方法。逻辑如下：</p>
+<p><strong><code>createMultiRaftGroup(Collection&lt;RequestProcessor4CP&gt;)</code></strong>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L221-L273" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:221-273</a></code>）是本类中最重要的方法。逻辑如下：</p>
 <ol type="1">
 <li>若 <code>isStarted</code> 为 false（即在 <code>start()</code>
 方法调用 <code>createMultiRaftGroup</code>
@@ -3448,7 +3449,7 @@ Group</strong>：<code>new RaftGroupService(groupName, localPeerId, copy, rpcSer
 <code>cliClientService</code> 刷新 <code>RouteTable</code> 中的 Leader
 和 Configuration。</li>
 </ol>
-<p><strong>写请求处理。</strong><code>commit(String group, Message data, CompletableFuture&lt;Response&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L273-L293" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:273-293</a></code>）通过
+<p><strong>写请求处理。</strong><code>commit(String group, Message data, CompletableFuture&lt;Response&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L320-L340" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:320-340</a></code>）通过
 <code>findTupleByGroup(group)</code> 获取
 <code>RaftGroupTuple</code>。若当前节点是 Leader，直接调用
 <code>applyOperation(node, data, closure)</code> 将数据包装为 JRaft
@@ -3456,13 +3457,13 @@ Group</strong>：<code>new RaftGroupService(groupName, localPeerId, copy, rpcSer
 <code>invokeToLeader(group, data, rpcRequestTimeoutMs, closure)</code>
 通过 <code>cliClientService.getRpcClient().invokeAsync()</code>
 将请求转发给 Leader。</p>
-<p><code>applyOperation(Node, Message, FailoverClosure)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L383-L403" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:383-403</a></code>）在数据头部追加
+<p><code>applyOperation(Node, Message, FailoverClosure)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L397-L419" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:397-419</a></code>）在数据头部追加
 2 字节请求类型标记（<code>REQUEST_TYPE_FIELD_TAG</code> +
 <code>REQUEST_TYPE_READ</code>/<code>REQUEST_TYPE_WRITE</code>）后调用
 <code>node.apply(task)</code> 提交日志。<code>Task.setDone()</code>
 设置的 <code>NacosClosure</code> 负责在日志被状态机 apply 后将结果回填到
 <code>FailoverClosure</code>。</p>
-<p><code>invokeToLeader</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L405-L441" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:405-441</a></code>）通过
+<p><code>invokeToLeader</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L421-L452" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:421-452</a></code>）通过
 <code>RouteTable.getInstance().selectLeader(group)</code> 获取 Leader
 <code>Endpoint</code>，若为 null 抛出
 <code>NoLeaderException</code>；否则通过
@@ -3480,7 +3481,7 @@ commitIndex，业务处理器 <code>processor.onRequest(request)</code>
 失败（<code>MetricsMonitor.raftReadIndexFailed()</code>
 自增计数），降级为 <code>readFromLeader(request, future)</code>
 将读请求转发给 Leader 执行。</p>
-<p><strong>成员变更。</strong><code>peerChange(JRaftMaintainService, Set&lt;String&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L443-L474" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:443-474</a></code>）计算旧成员集合与新成员集合的差集得到需移除的节点，遍历所有
+<p><strong>成员变更。</strong><code>peerChange(JRaftMaintainService, Set&lt;String&gt;)</code>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java#L454-L481" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftServer.java">JRaftServer.java:454-481</a></code>）计算旧成员集合与新成员集合的差集得到需移除的节点，遍历所有
 Raft Group，对每个 Group 构造 <code>JRaftConstants.REMOVE_PEERS</code>
 命令参数调用 <code>JRaftMaintainService.execute(params)</code>
 执行节点移除。全部 Group 成功才返回 true。</p>
@@ -3583,7 +3584,7 @@ id="4835-辅助组件raftconfig--raftsysconstants--failoverclosure">4.8.3.5
 同步映射存储全部 Raft 可调参数（key 参见
 <code>RaftSysConstants</code>），<code>selfAddress</code> 和
 <code>members</code> 管理当前节点地址与集群成员集合。</p>
-<p><strong>RaftSysConstants</strong>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/consistency/raft/RaftSysConstants.java#L29-L194" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/consistency/raft/RaftSysConstants.java">raft/RaftSysConstants.java:29-194</a></code>）：定义全部
+<p><strong>RaftSysConstants</strong>（<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/RaftSysConstants.java#L29-L194" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/RaftSysConstants.java">raft/RaftSysConstants.java:29-194</a></code>）：定义全部
 Raft 可调参数的 key
 常量及其默认值，覆盖选举超时（<code>DEFAULT_ELECTION_TIMEOUT=5000ms</code>）、快照间隔（<code>DEFAULT_RAFT_SNAPSHOT_INTERVAL_SECS=1800s</code>）、最大日志条目数（<code>DEFAULT_MAX_ENTRIES_SIZE=1024</code>）、最大日志体大小（<code>DEFAULT_MAX_BODY_SIZE=512KB</code>）、日志存储缓冲区（<code>DEFAULT_MAX_APPEND_BUFFER_SIZE=256KB</code>）、Disruptor
 缓冲大小（<code>DEFAULT_DISRUPTOR_BUFFER_SIZE=16384</code>）等 15+
@@ -3592,13 +3593,13 @@ Raft 可调参数的 key
 JRaft <code>Closure</code> 接口，增加 <code>setResponse(Response)</code>
 和 <code>setThrowable(Throwable)</code> 方法，用于在 JRaft
 任务回调中传递业务响应或异常。</p>
-<p><strong>FailoverClosureImpl</strong>（<code>raft/utils/FailoverClosureImpl.java:28-ерх</code>）：<code>FailoverClosure</code>
+<p><strong>FailoverClosureImpl</strong>（<code>raft/utils/FailoverClosureImpl.java:31-64</code>）：<code>FailoverClosure</code>
 的默认实现，持有 <code>CompletableFuture&lt;Response&gt;</code>，在
 <code>run(Status)</code> 中判断 <code>status.isOk()</code>：成功则
 <code>future.complete(data)</code>；失败则将
 <code>throwable</code>（若有）包装为 <code>ConsistencyException</code>
 后 <code>future.completeExceptionally(...)</code>。</p>
-<p><strong>NacosClosure</strong>（<code>raft/NacosClosure.java:超</code>）：JRaft
+<p><strong>NacosClosure</strong>（<code>raft/NacosClosure.java:30-66</code>）：JRaft
 <code>Closure</code> 的 Nacos 封装，内部持有
 <code>NacosStatus</code>（扩展 JRaft <code>Status</code>，额外携带
 <code>Response data</code> 和 <code>Throwable throwable</code>）。在
@@ -3670,9 +3671,9 @@ Nacos 的 <code>Writer</code>/<code>Reader</code> 抽象。适配层使上层 CP
 <td><strong>代码规模</strong></td>
 <td><code>RaftCore</code> ~1200行 + <code>NacosFSM</code> ~400行 +
 网络层 ~500行 = ~2100行自研代码</td>
-<td>适配层 ~2000行（<code>JRaftProtocol</code> 160行 +
-<code>JRaftServer</code> ~550行 + <code>NacosStateMachine</code> ~220行
-+ 工具类 ~500行）</td>
+<td>适配层约 2100 行（<code>JRaftProtocol</code> 232 行 +
+<code>JRaftServer</code> 约 575 行 + <code>NacosStateMachine</code> 约
+290 行 + 工具类约 500 行）</td>
 </tr>
 <tr>
 <td><strong>Raft 实现质量</strong></td>
@@ -3744,8 +3745,8 @@ benchmark）。<code>max_entries_size=1024</code>、<code>max_body_size=512KB</c
 <code>com.alipay.sofa.jraft.*</code> 20+ 个类）。若 JRaft 大版本（如
 2.x）发生 API breaking
 change，<code>JRaftServer</code>、<code>NacosStateMachine</code>、<code>JRaftUtils</code>
-需同步修改。但 JRaft 1.3.x 作为 LTS 版本已稳定维护超过 ---|---|---|---|
-2 年，API 稳定性较高。</li>
+需同步修改。但 JRaft 1.3.x 作为 LTS 版本已稳定维护超过 2 年，API
+稳定性较高。</li>
 <li><strong>快照灵活度降低</strong>：自研 <code>NacosFSM</code>
 可直接访问 Nacos 内部数据结构进行快照；JRaft 模式需通过
 <code>SnapshotOperation</code> 接口将业务数据序列化为文件，再由 JRaft
@@ -3825,7 +3826,7 @@ core"的模块边界划分，使得一致性协议成为可替换的插件而非
 <h3 id="492-核心架构与类关系">4.9.2 核心架构与类关系</h3>
 <p><code>JRaftProtocol</code> 继承链与主要依赖关系如下：</p>
 <div class="sourceCode" id="cb26"><pre
-class="sourceCode java"><code class="sourceCode java"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co">// JRaftProtocol 声明结构（2.5.3, <a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java" target="_blank" rel="noopener" title="core/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/distributed/raft/JRaftProtocol.java</a>）</span></span>
+class="sourceCode java"><code class="sourceCode java"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co">// JRaftProtocol 声明结构（2.5.3, <a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java" target="_blank" rel="noopener" title="core/src/main/java/com/alibaba/nacos/core/distributed/raft/JRaftProtocol.java">core/distributed/raft/JRaftProtocol.java</a>）</span></span>
 <span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="kw">public</span> <span class="kw">class</span> JRaftProtocol <span class="kw">extends</span> AbstractConsistencyProtocol<span class="op">&lt;</span>RaftConfig<span class="op">,</span> RequestProcessor4CP<span class="op">&gt;</span></span>
 <span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a>        <span class="kw">implements</span> CPProtocol<span class="op">&lt;</span>RaftConfig<span class="op">,</span> RequestProcessor4CP<span class="op">&gt;</span> <span class="op">{</span></span>
 <span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a>    <span class="kw">private</span> <span class="dt">final</span> <span class="bu">AtomicBoolean</span> initialized <span class="op">=</span> <span class="kw">new</span> <span class="bu">AtomicBoolean</span><span class="op">(</span><span class="kw">false</span><span class="op">);</span></span>
@@ -5209,7 +5210,7 @@ Leader，日志比较与回放确保数据收敛统一。这套机制将 CAP
 <blockquote>
 <p><strong>本章基于 Nacos 2.5.3 源码分析生成。</strong></p>
 </blockquote>
-<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch active" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-13 16:08</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-04.html" style="color:inherit;text-decoration:none;">第 4 章：一致性协议（JRaft &amp; Distro）深度分析</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">4.1.1 设计背景</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="is-h3" href="#411-设计背景">4.1.1 设计背景</a><a class="is-h3" href="#412-ap-vs-cp-的-cap-权衡矩阵">4.1.2 AP vs CP 的 CAP
+<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch active" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-15 14:07</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-04.html" style="color:inherit;text-decoration:none;">第 4 章：一致性协议（JRaft &amp; Distro）深度分析</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">4.1.1 设计背景</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="is-h3" href="#411-设计背景">4.1.1 设计背景</a><a class="is-h3" href="#412-ap-vs-cp-的-cap-权衡矩阵">4.1.2 AP vs CP 的 CAP
 权衡矩阵</a><a class="is-h3" href="#413-核心类关系图nacos-253-一致性抽象分层">4.1.3
 核心类关系图：Nacos 2.5.3 一致性抽象分层</a><a class="is-h3" href="#414-源码走读">4.1.4 源码走读</a><a class="is-h3" href="#415-设计模式分析与-trade-off">4.1.5 设计模式分析与
 Trade-off</a><a class="is-h3" href="#416-小结">4.1.6 小结</a><a class="" href="#42-consistency-独立模块协议-spi-接口层">4.2 consistency/

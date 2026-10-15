@@ -507,15 +507,16 @@ Sentinel 做熔断降级。</p>
 <li><strong>配置链路</strong>:<code>bootstrap.yml</code> →
 <code>NacosPropertySourceLocator</code> →
 <code>ConfigService.getConfig</code> → <code>ClientWorker</code> →
-gRPC(gRPC Remote Procedure Call) 长连接与长轮询。</li>
+gRPC(gRPC Remote Procedure Call) 长连接（服务端变更经
+<code>ConfigChangeNotifyRequest</code> 主动推送）。</li>
 <li><strong>注册与发现链路</strong>:<code>@EnableDiscoveryClient</code>
 → <code>NacosServiceRegistry</code> →
 <code>NacosNamingService.registerInstance</code> → gRPC 双向流 → 服务端
 <code>InstanceOperatorClientImpl</code>。</li>
 <li><strong>服务调用链路</strong>:<code>@LoadBalanced</code>
-RestTemplate → <code>NacosServerList</code> →
-<code>NacosNamingService.selectInstances</code> → Ribbon 负载均衡 →
-<code>ServiceInstance</code> 列表注入。</li>
+RestTemplate → <code>ServiceInstanceListSupplier</code> →
+<code>NacosNamingService.selectInstances</code> → Spring Cloud
+LoadBalancer 选实例 → <code>ServiceInstance</code> 列表注入。</li>
 </ol>
 <blockquote>
 <p><strong>章节约定</strong>:本章所有源码引用均基于 Nacos 2.5.3
@@ -991,7 +992,7 @@ ID(非名称),用于多环境 / 多租户隔离。</li>
 <code>bootstrap.yml</code> 的属性翻译成 Nacos 客户端的
 <code>Properties</code>,是从配置集成切入 Nacos 客户端的正确入口。</p>
 <h3 id="核心架构关系图-1">核心架构关系图</h3>
-<div class="dgm"><div class="dgm-cap"><span class="no">图 15-2</span><span class="tt">bootstrap 上下文 → Nacos 配置中心加载时序</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">SpringApplication.run()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">bootstrap 上下文</div><div class="sd">bootstrap.yml 被读取 · spring.cloud.nacos.config.* 属性</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosPropertySourceLocator.locate(environment)</div><div class="sd">把属性翻译成 Properties</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosFactory.createConfigService(properties)</div><div class="sd">↓ nacos-client</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosConfigService → ClientWorker → gRPC 长连接</div><div class="sd">├ 首次全量拉取　└ 长轮询监听（30s 间隔 + 服务端 29.5s 挂起）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">PropertySources 注入主上下文</div><div class="sd">@Value / @ConfigurationProperties 完成绑定</div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-2</span><span class="tt">bootstrap 上下文 → Nacos 配置中心加载时序</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">SpringApplication.run()</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">bootstrap 上下文</div><div class="sd">bootstrap.yml 被读取 · spring.cloud.nacos.config.* 属性</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosPropertySourceLocator.locate(environment)</div><div class="sd">把属性翻译成 Properties</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosFactory.createConfigService(properties)</div><div class="sd">↓ nacos-client</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosConfigService → ClientWorker → gRPC 长连接</div><div class="sd">├ 首次全量拉取　└ gRPC 订阅监听（服务端变更实时推送）</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">PropertySources 注入主上下文</div><div class="sd">@Value / @ConfigurationProperties 完成绑定</div></div></div></div></div>
 
 <h3 id="源码走读从-bootstrapyml-到-configservice">源码走读:从
 bootstrap.yml 到 ConfigService</h3>
@@ -1101,8 +1102,7 @@ class="sourceCode yaml"><code class="sourceCode yaml"><span id="cb8-1"><a href="
 <code>ephemeral</code></strong>:临时实例(<code>ephemeral: true</code>)采用客户端主动心跳续约
 + 服务端超时剔除,注册与发现走 gRPC 双向流,故障实例能在约 15 秒(取决于
 <code>preserved.heart.beat.timeout</code>)内被摘除。持久实例(<code>ephemeral: false</code>)由服务端
-<code>Raft</code>/<code>Distro</code>
-持久化,适用于需要精确记录实例存活历史的场景,但摘除时机更依赖服务端判断。生产微服务默认临时实例即可。</p>
+jraft（Raft）持久化存储,适用于需要精确记录实例存活历史的场景,但摘除时机更依赖服务端判断。生产微服务默认临时实例即可。</p>
 </blockquote>
 <h3 id="异常场景与排查-1">异常场景与排查</h3>
 <p><strong>异常 1:未启用 bootstrap
@@ -1252,9 +1252,9 @@ Properties)模式</strong>:<code>bootstrap.yml</code> 的 Spring 属性在
 <p>「配置动态刷新」是配置中心存在的核心价值:在不重启应用的前提下,让已注入的配置值随远端变更而更新。Spring
 Cloud Alibaba 的刷新链路由三层协作完成:</p>
 <ol type="1">
-<li><strong>远端监听</strong>:<code>ClientWorker</code> 通过长轮询监听
-dataId
-变化。服务端在配置变更时推送或由客户端周期轮询差异,<code>CacheData</code>
+<li><strong>远端监听</strong>:<code>ClientWorker</code> 通过 gRPC
+长连接监听 dataId 变化。服务端在配置变更时经
+<code>ConfigChangeNotifyRequest</code> 主动推送,<code>CacheData</code>
 感知变化后触发 <code>Listener.receiveConfigInfo</code>。</li>
 <li><strong>Spring 事件</strong>:<code>NacosContextRefresher</code>
 在监听回调里发布 <code>RefreshEvent</code>,交给
@@ -1271,7 +1271,7 @@ dataId
 变成"可销毁重建"的代理--属性变化时销毁旧实例、按需创建新实例,从而间接刷新
 <code>@Value</code>。</p>
 <p><strong>刷新粒度与惰性重建</strong>:<code>ClientWorker</code>
-为每个已订阅的 dataId 维护独立的监听任务,长轮询超时与重试由
+为每个已订阅的 dataId 维护独立的监听任务,gRPC 长连接监听的超时与重试由
 <code>ConfigRpcTransportClient</code>(gRPC 版
 agent)的监听参数控制。当变更事件到达,<code>NacosContextRefresher</code>
 通过 <code>RefreshScope.destroy()</code> 使作用域内 Bean 失效,并在下一次
@@ -1282,18 +1282,18 @@ agent)的监听参数控制。当变更事件到达,<code>NacosContextRefresher<
 相比简单属性覆盖的不同之处:它保证新值一致性地进入 Bean 内全部
 <code>@Value</code> 字段。</p>
 <h3 id="核心架构关系图-2">核心架构关系图</h3>
-<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">push / long-polling</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker 长轮询线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">gRPC 推送</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker gRPC 监听线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
 
 <h3 id="源码走读cachedata-监听与-md5-校验">源码走读:CacheData 监听与 MD5
 校验</h3>
-<p>客户端侧变化感知的核心是 <code>ClientWorker</code>
-内的长轮询。配置的差异检测依赖 <code>CacheData.checkListenerMd5</code>
-与推送线程。Nacos 2.5.3 中,长轮询由
-<code>ConfigRpcTransportClient</code>(gRPC 版
-agent)的监听线程维护,服务端变更会通过
+<p>客户端侧变化感知的核心是 <code>ClientWorker</code> 内的 gRPC
+长连接监听。配置的差异检测依赖 <code>CacheData.checkListenerMd5</code>
+与推送线程。Nacos 2.5.3 中,gRPC 长连接监听由
+<code>ConfigRpcTransportClient</code>(经 <code>RpcClient</code> 发送
+<code>ConfigBatchListenRequest</code>)的监听线程维护,服务端变更通过
 <code>ConfigChangeNotifyRequest</code>
-或轮询响应触达客户端,客户端用最新内容与本地缓存 <code>CacheData</code>
-比对 <code>md5</code>,一致则忽略,不一致则回调监听器完成刷新(差异检测入口
+推送触达客户端,客户端用最新内容与本地缓存 <code>CacheData</code> 比对
+<code>md5</code>,一致则忽略,不一致则回调监听器完成刷新(差异检测入口
 <code>CacheData.checkListenerMd5()</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java#L342-L345" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java">client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java:342-345</a></code>))。</p>
 <p>在服务端侧,配置变更事件由 <code>ConfigChangePublisher</code>
 发布。客户端收到变更后,关键的"是否需要回调"判断发生在
@@ -1436,7 +1436,7 @@ key,客户端可能收到多次变更通知,但 <code>CacheData</code> 按 dataI
 <h3 id="异常场景与排查-2">异常场景与排查</h3>
 <p><strong>异常 1:配置改了、控制台能看见变更,但 <code>@Value</code>
 不更新</strong></p>
-<p>症状:日志有长轮询推送或 <code>RefreshEvent</code>
+<p>症状:日志有 gRPC 变更推送或 <code>RefreshEvent</code>
 发布,但字段值不变。根因:Bean 未标注 <code>@RefreshScope</code>,或
 <code>refresh-enabled=false</code>。处理:为承载 <code>@Value</code> 的
 Bean 加 <code>@RefreshScope</code>,确认开关为 <code>true</code>。</p>
@@ -1631,9 +1631,8 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb14-1"><a href=
 <p>(<code>NacosNamingService.getAllInstances()</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java#L254-L264" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java">client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java:254-264</a></code>,核心实现在
 <code>getAllInstances(serviceName, groupName, clusters, subscribe)</code>
 中经 <code>getServiceInfo</code> 拉取本地缓存实例))</p>
-<p><code>getAllInstances</code>
-内部会优先返回本地缓存(由长轮询/订阅维护),避免每次查询都打服务端,只有缓存未就绪时才发起
-gRPC
+<p><code>getAllInstances</code> 内部会优先返回本地缓存(由 gRPC
+订阅推送维护),避免每次查询都打服务端,只有缓存未就绪时才发起 gRPC
 查询。这解释了为何消费端首次调用可能稍有延迟(需等订阅建立缓存),后续调用几乎零额外
 IO。</p>
 <h3 id="服务注册与发现完整示例">服务注册与发现完整示例</h3>
@@ -1802,7 +1801,8 @@ IP。处理:显式配置
 <code>ephemeral</code> 语义确认摘除是否合理。</p>
 <p><strong>异常 4:实例列表长期不更新(缓存陈旧)</strong></p>
 <p>症状:服务端实例已下线,消费端仍持续调用旧实例。根因:<code>watch.enabled=false</code>
-关闭了订阅,或客户端与服务端长轮询断开未重连(版本/网络问题)。处理:确认
+关闭了订阅,或客户端与服务端 gRPC
+长连接断开未重连(版本/网络问题)。处理:确认
 <code>watch.enabled=true</code>、检查 gRPC 长连接状态与客户端版本(见
 15.10)。</p>
 <p><strong>异常 5:临时/持久实例语义理解错导致的摘除异常</strong></p>
@@ -1875,8 +1875,8 @@ Nacos。<strong>通用业务逻辑用 <code>DiscoveryClient</code>,需要 Nacos
 </ul>
 <p><strong>决策点 2:订阅缓存 vs 每次实时查询</strong></p>
 <ul>
-<li>启用订阅(<code>subscribe=true</code>,默认):本地维护实例缓存 +
-长轮询增量更新,查询快且能感知实例变化;但每个订阅目标都维护一条长连接,服务多时连接开销上升。</li>
+<li>启用订阅(<code>subscribe=true</code>,默认):本地维护实例缓存 + gRPC
+订阅推送增量更新,查询快且能感知实例变化;但每个订阅目标都维护一条长连接,服务多时连接开销上升。</li>
 <li>关闭订阅实时查:节约连接,但每次查询走服务端,延迟高且瞬时压力大。生产上对频繁查询的服务应开启订阅。</li>
 </ul>
 <p><strong>决策点 3:<code>getServices()</code> 全量 vs
@@ -2434,7 +2434,7 @@ ID 而非显示名;<code>group</code> 默认为
 <code>DEFAULT_GROUP</code>,建议仅作业务分组不改环境语义;<code>file-extension</code>
 决定配置内容解析格式(<code>yaml</code> /
 <code>properties</code>),必须与控制台发布格式一致;<code>refresh-enabled=true</code>
-时客户端通过长轮询监听变更并刷新 <code>@RefreshScope</code>
+时客户端通过 gRPC 长连接监听变更并刷新 <code>@RefreshScope</code>
 Bean;<code>shared-configs</code> / <code>extension-configs</code>
 用于加载非 <code>{app}.{ext}</code> 命名前缀的公共或扩展配置,其
 <code>refresh</code> 子项独立控制是否参与监听。</p>
@@ -2592,7 +2592,7 @@ namespace,重启客户端使缓存重建(<code>ClientWorker</code> 缓存 key �
 <code>dataId+group+tenant</code>,见源码走读)。</p>
 <p><strong>异常 4:<code>refresh-enabled=false</code>
 导致配置变更不生效</strong></p>
-<p>症状:控制台改配置、长轮询日志有推送,但业务 Bean
+<p>症状:控制台改配置、gRPC 推送日志有推送,但业务 Bean
 仍是旧值。根因:<code>refresh-enabled=false</code> 只加载不监听,或
 <code>@RefreshScope</code> 未加在 Bean 上。处理:确认
 <code>refresh-enabled=true</code> 且目标 Bean 声明了
@@ -2763,7 +2763,8 @@ class="sourceCode java"><code class="sourceCode java"><span id="cb30-1"><a href=
 <span id="cb30-13"><a href="#cb30-13" aria-hidden="true" tabindex="-1"></a>        agent<span class="op">.</span><span class="fu">notifyListenConfig</span><span class="op">();</span></span>
 <span id="cb30-14"><a href="#cb30-14" aria-hidden="true" tabindex="-1"></a>    <span class="op">}</span></span>
 <span id="cb30-15"><a href="#cb30-15" aria-hidden="true" tabindex="-1"></a><span class="op">}</span></span></code></pre></div>
-<p>其后,规则变更经长轮询/推送返回后,<code>CacheData.checkListenerMd5</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java#L342-L346" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java">CacheData.java:342-346</a></code>)比对
+<p>其后,规则变更经 gRPC
+推送返回后,<code>CacheData.checkListenerMd5</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java#L342-L346" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/config/impl/CacheData.java">CacheData.java:342-346</a></code>)比对
 md5 差异,仅在内容变化时回调业务
 listener,避免无意义高频刷新。<code>NacosDataSource</code> 的 listener
 拿到新规则 JSON 后调用 <code>FlowRuleManager.loadRules</code>
@@ -2986,8 +2987,8 @@ URL 资源名冲突。</p>
 <p>症状:在 Nacos
 控制台改了规则,部分实例立即生效、部分不生效。根因:各实例的
 <code>dataId</code>/<code>groupId</code>
-不一致,或订阅中断未重连。处理:核对所有实例数据源四元组一致,检查客户端版本与长轮询状态(见
-15.10)。</p>
+不一致,或订阅中断未重连。处理:核对所有实例数据源四元组一致,检查客户端版本与
+gRPC 长连接状态(见 15.10)。</p>
 <p><strong>异常 5:熔断降级不触发或过度触发</strong></p>
 <p>症状:慢调用/异常比例达到阈值却未降级,或正常流量被误降级。根因:<code>degrade</code>
 规则的 <code>grade</code>(0=慢调用 RT、1=异常比例、2=异常数)与
@@ -3902,7 +3903,7 @@ register 是否成功、订阅缓存、ephemeral 语义、网络。</li>
 →
 业务异常),再按层回查配置与版本</strong>。本节给出三类问题的系统化排查步骤与常见根因表。</p>
 <h3 id="核心架构关系图-9">核心架构关系图</h3>
-<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">push / long-polling</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker 长轮询线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
+<div class="dgm"><div class="dgm-cap"><span class="no">图 15-3</span><span class="tt">@RefreshScope 配置动态刷新调用链</span></div><div class="dgm-stages"><div class="dgm-stage"><span class="sn"></span><div><div class="st">Nacos 服务端配置变更</div><div class="sd">gRPC 推送</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">ClientWorker gRPC 监听线程发现 CacheData 变化</div><div class="sd">CacheData.checkListenerMd5</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">Listener.receiveConfigInfo(newContent)</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">NacosContextRefresher → 发布 RefreshEvent</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshEventListener.onApplicationEvent</div><div class="sd">清空 RefreshScope 缓存</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">RefreshScope.destroy()</div><div class="sd">下次 getBean 时重建 @RefreshScope Bean</div></div></div><div class="dgm-stage"><span class="sn"></span><div><div class="st">@Value("${order.timeout:3000}") 重新注入</div><div class="sd">取到新值</div></div></div></div></div>
 
 <h3 id="排障前置日志与可观测性配置">排障前置:日志与可观测性配置</h3>
 <p>切入三大问题前,先建立观测底座,否则排查只能靠猜。Nacos
@@ -3919,24 +3920,19 @@ register 是否成功、订阅缓存、ephemeral 语义、网络。</li>
 </thead>
 <tbody>
 <tr>
-<td><code>nacos-config.log</code></td>
-<td>配置拉取/长轮询/变更日志</td>
+<td><code>~/logs/nacos/config.log</code></td>
+<td>配置拉取/变更日志</td>
 <td>配置不生效问题</td>
 </tr>
 <tr>
-<td><code>nacos-naming.log</code></td>
-<td>服务注册/订阅/心跳日志</td>
+<td><code>~/logs/nacos/naming.log</code></td>
+<td>服务注册/订阅/重连日志</td>
 <td>服务发现失败问题</td>
 </tr>
 <tr>
-<td><code>nacos.log</code></td>
-<td>连接/鉴权/异常聚合</td>
+<td><code>~/logs/nacos/remote.log</code></td>
+<td>gRPC 连接细节（握手/重连/推送）</td>
 <td>版本与连接问题</td>
-</tr>
-<tr>
-<td><code>nacos-client.log</code></td>
-<td>客户端整体运行</td>
-<td>综合定位</td>
 </tr>
 </tbody>
 </table>
@@ -4041,7 +4037,8 @@ Bean 缺失(如 <code>NacosConfigManager</code> 未装配),是 Boot 与 SCA
 无法刷新(15.3)。</li>
 <li><strong>排除本地干扰</strong>:<code>LocalConfigInfoProcessor</code>
 的 failover / snapshot 文件可能覆盖远端配置(15.2 三级降级)--检查
-<code>~/.nacos/naming/</code> 或约定目录下的 failover 文件。</li>
+<code>~/nacos/config/data/config-data(-tenant)</code> 下的 failover
+文件(命名空间配置在 <code>config-data-tenant</code> 子目录)。</li>
 </ol>
 <div class="sourceCode" id="cb48"><pre
 class="sourceCode bash"><code class="sourceCode bash"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 确认应用从哪个命名空间/dataId 读配置(开启 nacos 客户端 debug 日志)</span></span>
@@ -4109,7 +4106,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb48-1"><a href=
 <li><strong>确认注册成功</strong>:查客户端注册日志与服务端实例列表(Nacos
 控制台 → 服务管理)。</li>
 <li><strong>确认订阅缓存就绪</strong>:<code>getInstances</code>
-依赖订阅缓存,首次调用可能需等待长轮询建立(15.4)。</li>
+依赖订阅缓存,首次调用可能需等待 gRPC 订阅建立(15.4)。</li>
 <li><strong>核对 <code>ephemeral</code>
 与网络</strong>:临时实例需心跳可达;多网卡/容器场景 <code>ip</code>
 自动探测可能取错,需显式指定 <code>ip</code>(15.2)。</li>
@@ -4127,7 +4124,7 @@ class="sourceCode bash"><code class="sourceCode bash"><span id="cb48-1"><a href=
 默认只返回通过健康/启用/权重过滤的实例--当实例心跳失联(健康检查未过)时即出现"控制台有、客户端空",此时应优先查心跳与服务健康自检,而非服务名拼写。</p>
 </blockquote>
 <p>进一步,若要诊断"实例是被过滤排除还是根本没拿到",可对比两组列表:<code>getInstances</code>(经健康/启用/权重过滤)与
-<code>getAllInstances</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java#L218-L239" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java">NacosNamingService.java:218-239</a></code>,直接返回
+<code>getAllInstances</code>(<code><a class="src-link" href="https://github.com/alibaba/nacos/blob/2.5.3/client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java#L256-L264" target="_blank" rel="noopener" title="client/src/main/java/com/alibaba/nacos/client/naming/NacosNamingService.java">NacosNamingService.java:256-264</a></code>,直接返回
 <code>ServiceInfo.hosts</code>
 原始列表、不做健康过滤)。两者集合差即为被健康检查剔除的实例,据此能快速定位是服务未注册、未订阅,还是健康检查未通过。</p>
 <p>若实例拓扑需要"变更即感知"而非轮询,可用显式 <code>subscribe</code>
@@ -4250,7 +4247,7 @@ healthy 与元数据。日志定位能把"配置、版本、网络"的干扰先�
 <tr>
 <td>配置不生效</td>
 <td>bootstrap 开关 → dataId 三元组 → <code>@RefreshScope</code></td>
-<td><code>nacos-config.log</code>、debug 属性源顺序</td>
+<td><code>config.log</code>、debug 属性源顺序</td>
 </tr>
 <tr>
 <td>服务发现失败</td>
@@ -4415,7 +4412,7 @@ classpath 中的 <code>nacos-client</code> 版本单一可控(15.1 /
 源码走读对象:<code>client/</code>(nacos-client)模块 · 章节目标 ~66,000
 字</p>
 </blockquote>
-<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch active" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-13 16:08</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-15.html" style="color:inherit;text-decoration:none;">第 15 章：Spring Cloud Alibaba 集成最佳实践</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">章节导读</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="" href="#章节导读">章节导读</a><a class="is-h3" href="#设计背景">设计背景</a><a class="is-h3" href="#核心架构关系图">核心架构关系图</a><a class="is-h3" href="#源码走读nacos-client-的依赖根基">源码走读:nacos-client
+<aside class="wiki-side" id="wiki-side"><div class="wiki-brand"><div class="wiki-brand-row"><span class="wiki-logo"><a href="index.html">Nacos 2.5.3 深度研究</a></span><button class="wiki-close" id="wiki-close" title="收起侧栏">✕</button></div><span class="wiki-sub-logo">Source-level Deep Dive</span></div><div class="wiki-search-wrap"><input class="wiki-search" id="wiki-search" type="search" placeholder="搜索章节内容…" autocomplete="off"></div><div class="wiki-results" id="wiki-results"></div><div class="wiki-part">第一部分 · 架构与设计</div><a class="wiki-ch" href="nacos-chapter-01.html"><span class="cn">1</span><span>Nacos 2.5.3 整体架构概述</span></a><a class="wiki-ch" href="nacos-chapter-02.html"><span class="cn">2</span><span>注册中心（Naming）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-03.html"><span class="cn">3</span><span>配置中心（Config）源码深度分析</span></a><a class="wiki-ch" href="nacos-chapter-04.html"><span class="cn">4</span><span>一致性协议（JRaft &amp; Distro）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-05.html"><span class="cn">5</span><span>集群管理（Core）+ 客户端 SDK 深度分析</span></a><div class="wiki-part">第二部分 · 持久化与扩展</div><a class="wiki-ch" href="nacos-chapter-06.html"><span class="cn">6</span><span>持久化层（persistence）深度分析</span></a><a class="wiki-ch" href="nacos-chapter-07.html"><span class="cn">7</span><span>认证安全、控制台与周边模块</span></a><a class="wiki-ch" href="nacos-chapter-08.html"><span class="cn">8</span><span>插件体系与 SPI 扩展机制</span></a><div class="wiki-part">第三部分 · 配置与部署</div><a class="wiki-ch" href="nacos-chapter-09.html"><span class="cn">9</span><span>全量配置项详解</span></a><a class="wiki-ch" href="nacos-chapter-10.html"><span class="cn">10</span><span>生产环境部署架构</span></a><a class="wiki-ch" href="nacos-chapter-11.html"><span class="cn">11</span><span>高可用架构设计</span></a><a class="wiki-ch" href="nacos-chapter-12.html"><span class="cn">12</span><span>性能调优深度分析</span></a><div class="wiki-part">第四部分 · 运维与实践</div><a class="wiki-ch" href="nacos-chapter-13.html"><span class="cn">13</span><span>监控运维</span></a><a class="wiki-ch" href="nacos-chapter-14.html"><span class="cn">14</span><span>故障排查指南</span></a><a class="wiki-ch active" href="nacos-chapter-15.html"><span class="cn">15</span><span>Spring Cloud Alibaba 集成最佳实践</span></a><a class="wiki-ch" href="nacos-chapter-16.html"><span class="cn">16</span><span>附录</span></a><div class="wiki-stamp">build 2026-10-15 14:07</div></aside><button class="wiki-fab" id="wiki-fab" aria-label="打开菜单">☰</button><div class="wiki-crumb" id="wiki-crumb"><span class="c-ch"><a href="nacos-chapter-15.html" style="color:inherit;text-decoration:none;">第 15 章：Spring Cloud Alibaba 集成最佳实践</a></span><span class="c-sep">→</span><span class="c-sec" id="wiki-crumb-sec">章节导读</span><span class="c-tools"><button id="wiki-btn-theme" title="切换暗色/亮色主题">🌙 主题</button><button id="wiki-btn-width" title="切换阅读宽度">↔ 宽度</button></span></div><nav class="wiki-pagetoc has" id="wiki-pagetoc"><div class="pt-title">本页目录</div><a class="" href="#章节导读">章节导读</a><a class="is-h3" href="#设计背景">设计背景</a><a class="is-h3" href="#核心架构关系图">核心架构关系图</a><a class="is-h3" href="#源码走读nacos-client-的依赖根基">源码走读:nacos-client
 的依赖根基</a><a class="is-h3" href="#推荐配置清单producer-端完整示例">推荐配置清单(Producer
 端完整示例)</a><a class="is-h3" href="#依赖树的逐项说明配置项--组件维度">依赖树的逐项说明(配置项 /
 组件维度)</a><a class="is-h3" href="#异常场景与排查">异常场景与排查</a><a class="is-h3" href="#生产参数推荐表">生产参数推荐表</a><a class="is-h3" href="#trade-off-分析">Trade-off 分析</a><a class="is-h3" href="#设计模式分析">设计模式分析</a><a class="is-h3" href="#小结">小结</a><a class="is-h3" href="#设计背景-1">设计背景</a><a class="is-h3" href="#核心架构关系图-1">核心架构关系图</a><a class="is-h3" href="#源码走读从-bootstrapyml-到-configservice">源码走读:从
